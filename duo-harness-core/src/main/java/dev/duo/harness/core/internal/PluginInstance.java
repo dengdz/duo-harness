@@ -9,7 +9,6 @@ import dev.duo.harness.core.api.PluginStatus;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -192,17 +191,6 @@ final class PluginInstance {
             throw new PluginException("等待插件 " + pluginName + " 启动被中断", e);
         }
         rethrowFailureIfAny();
-    }
-
-    /** 带超时等待（诊断入口）。 */
-    PluginState await(long timeout, TimeUnit unit) throws InterruptedException {
-        started.await(timeout, unit);
-        return state();
-    }
-
-    /** apply 使用的私有作用域。 */
-    ContextImpl scopeContext() {
-        return scope;
     }
 
     /** 仅供日志与诊断输出。 */
