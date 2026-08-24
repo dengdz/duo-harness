@@ -13,6 +13,7 @@
 
   <modules>
     <module>duo-harness-core</module>
+    <module>duo-harness-tools</module>
   </modules>
 
   <properties>
