@@ -6,7 +6,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginHandle;
-import dev.duo.harness.core.api.PluginStatus;
+import dev.duo.harness.core.api.events.PluginStatus;
 import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolsService;
 

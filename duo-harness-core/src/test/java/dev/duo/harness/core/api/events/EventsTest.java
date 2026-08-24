@@ -1,7 +1,10 @@
-package dev.duo.harness.core.api;
+package dev.duo.harness.core.api.events;
 
-import dev.duo.harness.core.api.events.EventListener;
-import dev.duo.harness.core.api.events.WaterfallListener;
+import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.PluginHandle;
+import dev.duo.harness.core.api.Disposable;
+import dev.duo.harness.core.api.PluginException;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

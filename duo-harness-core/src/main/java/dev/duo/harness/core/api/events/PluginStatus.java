@@ -1,4 +1,6 @@
-package dev.duo.harness.core.api;
+package dev.duo.harness.core.api.events;
+
+import dev.duo.harness.core.api.PluginState;
 
 /**
  * 插件实例状态迁移事件载荷：经 {@code ctx.emit(PluginStatus.EVENT, status)}

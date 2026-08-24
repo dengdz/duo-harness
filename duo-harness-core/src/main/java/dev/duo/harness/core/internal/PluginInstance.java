@@ -4,7 +4,7 @@ import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginState;
-import dev.duo.harness.core.api.PluginStatus;
+import dev.duo.harness.core.api.events.PluginStatus;
 
 import java.util.Set;
 import java.util.TreeSet;

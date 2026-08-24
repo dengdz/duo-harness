@@ -1,7 +1,8 @@
-package dev.duo.harness.core.api;
+package dev.duo.harness.core.api.boot;
 
-import dev.duo.harness.core.api.boot.Boot;
-import dev.duo.harness.core.api.boot.BootException;
+import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.Disposable;
+import dev.duo.harness.core.api.Plugin;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -118,9 +119,9 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                   - id: consumer
-                    name: dev.duo.harness.core.api.BootTest$ConsumerPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$ConsumerPlugin
                 """);
         ConsumerPlugin.ACTIVATIONS.set(0);
 
@@ -136,9 +137,9 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: consumer
-                    name: dev.duo.harness.core.api.BootTest$ConsumerPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$ConsumerPlugin
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                 """);
         ConsumerPlugin.ACTIVATIONS.set(0);
 
@@ -153,7 +154,7 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                     disabled: true
                 """);
 
@@ -168,7 +169,7 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: echo
-                    name: dev.duo.harness.core.api.BootTest$EchoPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$EchoPlugin
                     config:
                       prefix: "回声"
                       times: 3
@@ -185,7 +186,7 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: consumer
-                    name: dev.duo.harness.core.api.BootTest$ConsumerPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$ConsumerPlugin
                 """);
         ConsumerPlugin.ACTIVATIONS.set(0);
 
@@ -202,7 +203,7 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: broken
-                    name: dev.duo.harness.core.api.BootTest$BrokenPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$BrokenPlugin
                 """);
 
         BootException e = assertThrows(BootException.class, () -> Boot.from(file));
@@ -216,7 +217,7 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: echo
-                    name: dev.duo.harness.core.api.BootTest$EchoPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$EchoPlugin
                     config:
                       prefix: "缺 times 字段"
                 """);
@@ -246,9 +247,9 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                   - id: broken
-                    name: dev.duo.harness.core.api.BootTest$BrokenPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$BrokenPlugin
                 """);
         GreeterPlugin.DISPOSALS.set(0);
 
@@ -279,7 +280,7 @@ class BootTest {
     void missingIdFailsAtParseStage() throws Exception {
         Path file = writeYaml("""
                 plugins:
-                  - name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                  - name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                 """);
 
         BootException e = assertThrows(BootException.class, () -> Boot.from(file));
@@ -294,7 +295,7 @@ class BootTest {
                 plugins:
                   -
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                 """);
 
         BootException e = assertThrows(BootException.class, () -> Boot.from(file));
@@ -308,9 +309,9 @@ class BootTest {
         Path file = writeYaml("""
                 plugins:
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
                   - id: greeter
-                    name: dev.duo.harness.core.api.BootTest$EchoPlugin
+                    name: dev.duo.harness.core.api.boot.BootTest$EchoPlugin
                     config:
                       prefix: "重复"
                       times: 1

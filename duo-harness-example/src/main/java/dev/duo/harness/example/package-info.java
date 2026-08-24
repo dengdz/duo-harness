@@ -1,8 +1,7 @@
 /**
- * M1 示例插件集与 Demo 入口：演示内核全部机制——服务注入（视图接口）、
- * 工具三段管线（准入否决/结果治理）、配置驱动 boot（含 disabled 行）、
- * 依赖驱动生命周期（拔服务级联停止、状态迁移叙述）。
- *
- * <p>一条命令运行：{@code mvn -pl duo-harness-example exec:java}</p>
+ * duo-harness-example 模块根包：M1 示例插件集与 Demo 入口——每种扩展形态
+ * 一个类（主要类型：GreetingPlugin/GreetingClientPlugin 服务提供者与消费者、
+ * EchoToolPlugin 工具插件、ToolGuardPlugin 管线拦截、DemoMain 可测入口）。
+ * 运行方式见 docs/01-入门/运行Demo。
  */
 package dev.duo.harness.example;
