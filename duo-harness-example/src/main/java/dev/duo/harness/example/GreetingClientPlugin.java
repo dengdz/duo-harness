@@ -14,7 +14,7 @@ public final class GreetingClientPlugin implements Plugin<Void> {
 
     @Override
     public Set<String> inject() {
-        return Set.of("greeting");
+        return Set.of(GreetingService.SERVICE_NAME);
     }
 
     @Override
@@ -25,7 +25,7 @@ public final class GreetingClientPlugin implements Plugin<Void> {
     @Override
     public Disposable apply(Context ctx, Void config) {
         GreetingService greeting = ctx.as(GreetingView.class).greeting();
-        ctx.emit("demo/log", "消费者经视图获得: " + greeting.greet("世界"));
+        ctx.emit(DemoMain.DEMO_LOG_CHANNEL, "消费者经视图获得: " + greeting.greet("世界"));
         return null;
     }
 }

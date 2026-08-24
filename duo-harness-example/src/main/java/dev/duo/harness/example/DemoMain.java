@@ -24,6 +24,12 @@ import java.util.Set;
  */
 public final class DemoMain {
 
+    /** demo 叙述通道的事件名（插件发、main 收，共用约定）。 */
+    public static final String DEMO_LOG_CHANNEL = "demo/log";
+
+    /** 级联演示的临时服务名。 */
+    static final String TEMP_SERVICE_NAME = "temp-news";
+
     private DemoMain() {
     }
 
@@ -45,7 +51,7 @@ public final class DemoMain {
                         + ": " + status.from() + " -> " + status.to());
                 return null;
             });
-            ctx.on("demo/log", message -> {
+            ctx.on(DEMO_LOG_CHANNEL, message -> {
                 out.println("  [demo] " + message);
                 return null;
             });
@@ -56,13 +62,15 @@ public final class DemoMain {
         JsonMapper json = JsonMapper.builder().build();
 
         out.println("[工具] 正常执行:");
-        printResult(out, tools.execute("echo", json.createObjectNode().put("input", "世界")));
+        printResult(out, tools.execute(EchoToolPlugin.TOOL_NAME, json.createObjectNode().put("input", "世界")));
 
         out.println("[工具] 准入否决（参数含敏感词）:");
-        printResult(out, tools.execute("echo", json.createObjectNode().put("input", "危险操作")));
+        printResult(out, tools.execute(EchoToolPlugin.TOOL_NAME,
+                json.createObjectNode().put("input", "危险操作")));
 
         out.println("[工具] post-execute 结果治理:");
-        printResult(out, tools.execute("echo", json.createObjectNode().put("input", "第二次调用")));
+        printResult(out, tools.execute(EchoToolPlugin.TOOL_NAME,
+                json.createObjectNode().put("input", "第二次调用")));
 
         out.println("[级联] 运行时挂临时服务提供者与消费者，再拔掉提供者:");
         PluginHandle provider = root.plugin(new TempProviderPlugin(), null);
@@ -95,7 +103,7 @@ public final class DemoMain {
 
         @Override
         public Disposable apply(Context ctx, Void config) {
-            return ctx.provide("temp-news", "临时消息");
+            return ctx.provide(TEMP_SERVICE_NAME, "临时消息");
         }
     }
 
@@ -103,7 +111,7 @@ public final class DemoMain {
     static final class TempConsumerPlugin implements Plugin<Void> {
         @Override
         public Set<String> inject() {
-            return Set.of("temp-news");
+            return Set.of(TEMP_SERVICE_NAME);
         }
 
         @Override
@@ -113,7 +121,7 @@ public final class DemoMain {
 
         @Override
         public Disposable apply(Context ctx, Void config) {
-            ctx.emit("demo/log", "临时消费者激活，读到服务: " + ctx.hasService("temp-news"));
+            ctx.emit(DEMO_LOG_CHANNEL, "临时消费者激活，读到服务: " + ctx.hasService(TEMP_SERVICE_NAME));
             return null;
         }
     }

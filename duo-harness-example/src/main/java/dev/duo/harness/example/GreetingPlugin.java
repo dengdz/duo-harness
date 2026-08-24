@@ -21,7 +21,8 @@ public final class GreetingPlugin implements Plugin<GreetingPlugin.Config> {
 
     @Override
     public Disposable apply(Context ctx, Config config) {
-        ctx.provide("greeting", (GreetingService) name -> config.prefix() + ", " + name + "!");
+        ctx.provide(GreetingService.SERVICE_NAME,
+                (GreetingService) name -> config.prefix() + ", " + name + "!");
         return null;
     }
 }

@@ -17,6 +17,9 @@ import java.util.Set;
  */
 public final class EchoToolPlugin implements Plugin<Void> {
 
+    /** 注册的工具名（guard 与 demo 执行方共用约定）。 */
+    public static final String TOOL_NAME = "echo";
+
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME);
@@ -33,7 +36,7 @@ public final class EchoToolPlugin implements Plugin<Void> {
         return tools.register(ctx, new ToolDefinition() {
             @Override
             public String name() {
-                return "echo";
+                return TOOL_NAME;
             }
 
             @Override

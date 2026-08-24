@@ -23,7 +23,7 @@ public final class ToolGuardPlugin implements Plugin<Void> {
     public Disposable apply(Context ctx, Void config) {
         Disposable pre = ctx.on(ToolsService.PRE_EXECUTE,
                 (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
-                    if ("echo".equals(exec.toolName())
+                    if (EchoToolPlugin.TOOL_NAME.equals(exec.toolName())
                             && exec.args().path("input").asText("").contains("危险")) {
                         exec.deny("参数含敏感词（治理插件否决）");
                         return false;
