@@ -1,0 +1,156 @@
+package dev.duo.harness.core.internal;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
+import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.Disposable;
+import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.PluginConfigException;
+import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.PluginHandle;
+
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
+
+/**
+ * Context 的默认实现：一个实例 = 一个插件实例的作用域。
+ *
+ * <p>用 ReentrantLock 而非 synchronized 保护副作用栈——虚拟线程模型下
+ * synchronized 会 pin 载体线程（ADR-0002 后果条款）。</p>
+ */
+public final class DefaultContext implements Context {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final ReentrantLock lock = new ReentrantLock();
+    /** 副作用栈：注册序入栈，销毁时逆序弹出。 */
+    private final Deque<RegisteredDisposable> effects = new ArrayDeque<>();
+    private final AtomicBoolean disposed = new AtomicBoolean();
+
+    @Override
+    public <C> PluginHandle plugin(Plugin<C> plugin, Object rawConfig) {
+        if (disposed.get()) {
+            throw new PluginException("作用域已销毁，拒绝加载插件 " + plugin.getClass().getName());
+        }
+        String pluginName = plugin.getClass().getName();
+        C config = bindConfig(plugin, rawConfig, pluginName);
+
+        DefaultContext child = new DefaultContext();
+        try {
+            Disposable overall = plugin.apply(child, config);
+            if (overall != null) {
+                child.effect(overall);
+            }
+        } catch (Exception e) {
+            // 失败即清理：apply 半途注册的副作用不残留
+            child.disposeQuietly();
+            throw new PluginException("插件 " + pluginName + " 启动失败", e);
+        }
+        // 子实例的销毁作为本作用域的副作用，父销毁级联到子（注册序保证子先于父的后续 effect 回滚）
+        effect(child::dispose);
+        return new PluginHandleImpl(child);
+    }
+
+    @Override
+    public Disposable effect(Disposable disposer) {
+        RegisteredDisposable registered = new RegisteredDisposable(disposer);
+        lock.lock();
+        try {
+            // 检查必须在锁内：否则"已销毁仍注册"的副作用会压进永不回滚的栈，静默丢失
+            if (disposed.get()) {
+                throw new PluginException("作用域已销毁，拒绝注册副作用");
+            }
+            effects.push(registered);
+        } finally {
+            lock.unlock();
+        }
+        return registered::disposeOnce;
+    }
+
+    @Override
+    public void dispose() {
+        if (!disposed.compareAndSet(false, true)) {
+            return;
+        }
+        PluginException failure = null;
+        while (true) {
+            RegisteredDisposable registered;
+            lock.lock();
+            try {
+                registered = effects.pollFirst();
+            } finally {
+                lock.unlock();
+            }
+            if (registered == null) {
+                break;
+            }
+            // 兄弟副作用的失败互不掩盖：首个作为主异常，其余挂 suppressed
+            try {
+                registered.disposeOnce();
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = new PluginException("作用域销毁时副作用回滚失败", e);
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    /** 启动失败路径的清理：回滚错误吞掉——原始启动异常才是调用方要看到的主错误。 */
+    private void disposeQuietly() {
+        try {
+            dispose();
+        } catch (PluginException ignored) {
+            // 主错误（启动失败）已在异常链上，清理错误不再叠加以免掩盖
+        }
+    }
+
+    private static <C> C bindConfig(Plugin<C> plugin, Object rawConfig, String pluginName) {
+        Class<C> configType = plugin.configType();
+        if (configType == null || rawConfig == null) {
+            if (rawConfig != null) {
+                throw new PluginConfigException(
+                        "插件 " + pluginName + " 不接受配置（configType 为 null），却收到了 rawConfig", null);
+            }
+            return null;
+        }
+        try {
+            return MAPPER.convertValue(rawConfig, configType);
+        } catch (IllegalArgumentException e) {
+            throw new PluginConfigException(
+                    "插件 " + pluginName + " 配置绑定失败: " + bindingPath(e) + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** 提取 Jackson 绑定错误的字段路径，供点名式报错定位到行内字段。 */
+    private static String bindingPath(IllegalArgumentException e) {
+        if (e.getCause() instanceof MismatchedInputException mismatched) {
+            String reference = mismatched.getPathReference();
+            return reference == null || reference.isEmpty() ? "<根>" : reference;
+        }
+        return "<未知位置>";
+    }
+
+    /** 单个副作用的幂等移除器：只在栈中存在时执行一次。 */
+    private static final class RegisteredDisposable {
+
+        private final Disposable disposer;
+        private final AtomicBoolean done = new AtomicBoolean();
+
+        RegisteredDisposable(Disposable disposer) {
+            this.disposer = disposer;
+        }
+
+        void disposeOnce() throws Exception {
+            if (done.compareAndSet(false, true)) {
+                disposer.dispose();
+            }
+        }
+    }
+}
