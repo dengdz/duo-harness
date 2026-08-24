@@ -19,6 +19,8 @@ public interface Context {
      *
      * @param rawConfig 原始配置（Map / JsonNode）；插件无 config 类型时须为 {@code null}
      * @return 插件实例句柄；实例的销毁已注册为本作用域的副作用，随本作用域级联回滚
+     * @throws PluginConfigException rawConfig 无法绑定到 config 类型（点名插件与字段路径）
+     * @throws PluginException 本作用域已销毁，或插件启动失败（cause 保留原始异常）
      */
     <C> PluginHandle plugin(Plugin<C> plugin, Object rawConfig);
 
@@ -26,6 +28,7 @@ public interface Context {
      * 注册可逆副作用：本作用域销毁时按注册逆序执行。
      *
      * @return 幂等的移除器——手动调用等同提前回收，重复调用无副作用
+     * @throws PluginException 本作用域已销毁，拒绝注册（副作用不会静默丢失）
      */
     Disposable effect(Disposable disposer);
 

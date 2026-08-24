@@ -1,5 +1,6 @@
 package dev.duo.harness.core.internal;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import dev.duo.harness.core.api.Context;
@@ -22,7 +23,12 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public final class DefaultContext implements Context {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    /**
+     * 严格绑定：config record 缺字段即失败（错误前移到加载时刻，ADR-0003）。
+     * Jackson 默认容忍缺失（引用类型补 null、原始类型补 0），会掩盖配置错误。
+     */
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES);
 
     private final ReentrantLock lock = new ReentrantLock();
     /** 副作用栈：注册序入栈，销毁时逆序弹出。 */
@@ -43,13 +49,16 @@ public final class DefaultContext implements Context {
             if (overall != null) {
                 child.effect(overall);
             }
+            // 挂载进父作用域也可能失败（父被并发销毁时 effect 拒绝）——
+            // 已启动的 child 必须回滚，否则成为无人回收的泄漏实例
+            effect(child::dispose);
+        } catch (PluginException e) {
+            child.disposeQuietly();
+            throw e;
         } catch (Exception e) {
-            // 失败即清理：apply 半途注册的副作用不残留
             child.disposeQuietly();
             throw new PluginException("插件 " + pluginName + " 启动失败", e);
         }
-        // 子实例的销毁作为本作用域的副作用，父销毁级联到子（注册序保证子先于父的后续 effect 回滚）
-        effect(child::dispose);
         return new PluginHandleImpl(child);
     }
 

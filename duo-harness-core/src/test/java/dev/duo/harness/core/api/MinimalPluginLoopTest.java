@@ -80,6 +80,35 @@ class MinimalPluginLoopTest {
     }
 
     @Test
+    void missingRequiredFieldFailsBinding() {
+        Context root = Context.root();
+        Plugin<GreetingConfig> plugin = new RecordingPlugin(new ArrayList<>());
+
+        PluginConfigException e = assertThrows(PluginConfigException.class,
+                () -> root.plugin(plugin, Map.of("times", 1)));
+        assertTrue(e.getMessage().contains(RecordingPlugin.class.getName()),
+                "报错应点名插件: " + e.getMessage());
+    }
+
+    @Test
+    void disposeAggregatesRollbackErrorsWithSuppressed() {
+        Context root = Context.root();
+        root.effect(() -> {
+            throw new IllegalStateException("先注册的错");
+        });
+        root.effect(() -> {
+            throw new IllegalStateException("后注册的错");
+        });
+
+        PluginException e = assertThrows(PluginException.class, root::dispose);
+
+        // 逆序执行：后注册的先抛 → 成为主异常 cause；先注册的原始异常进 suppressed，互不掩盖
+        assertEquals("后注册的错", e.getCause().getMessage());
+        assertEquals(1, e.getSuppressed().length);
+        assertEquals("先注册的错", e.getSuppressed()[0].getMessage());
+    }
+
+    @Test
     void applyFailureRollsBackAndPreservesCause() {
         List<String> log = new ArrayList<>();
         Context root = Context.root();
