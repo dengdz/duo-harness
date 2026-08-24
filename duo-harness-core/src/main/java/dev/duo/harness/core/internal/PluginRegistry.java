@@ -17,6 +17,7 @@ final class PluginRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(PluginRegistry.class);
 
+    /** 全部插件实例（含挂起与活跃）；CoW 快照迭代支持传导中注册新实例。 */
     private final List<PluginInstance> instances = new CopyOnWriteArrayList<>();
 
     void register(PluginInstance instance) {
