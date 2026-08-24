@@ -24,4 +24,4 @@ mvn -pl duo-harness-example -am package exec:java
 ## 想改着玩
 
 - 编辑 `duo-harness-example/src/main/resources/demo.yml`：翻转 `disabled`、改 config 前缀、增删行，重跑命令即见形态变化
-- 示例插件源码在 `duo-harness-example` 的 `dev.duo.harness.example` 包——每个类演示一种扩展形态（服务提供者 / 消费者 / 工具插件 / 管线拦截者）
+- 示例插件源码在 `duo-harness-example` 的 `dev.duo.harness.example` 包树——`greeting`（服务对）与 `tools`（工具与治理）两个功能子包，每个类演示一种扩展形态
