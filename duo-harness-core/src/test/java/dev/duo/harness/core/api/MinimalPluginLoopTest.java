@@ -145,7 +145,11 @@ class MinimalPluginLoopTest {
             }
         };
 
-        PluginException e = assertThrows(PluginException.class, () -> root.plugin(failing, null));
+        // 启动失败不阻断 plugin()：错误统一经 handle（awaitStartup 重抛，六态模型）
+        PluginHandle handle = root.plugin(failing, null);
+        assertEquals(PluginState.FAILED, handle.state());
+
+        PluginException e = assertThrows(PluginException.class, handle::awaitStartup);
         assertTrue(e.getCause() instanceof IllegalStateException);
         assertEquals("业务炸了", e.getCause().getMessage());
         // 半途注册的副作用被清理，不留残留

@@ -9,8 +9,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * 插件实例登记簿：挂根作用域、全树共享。
  *
- * <p>承担服务可用性变化的传导：provide 后唤醒挂起实例、注销后停止依赖方
- * 实例——epoch 重载（服务回归自动重启）由后续工单在此扩展。
+ * <p>服务提供/注销的传导统一为"依赖该服务的实例复查 epoch 指纹"——
+ * 指纹变化驱动实例在六态间迁移（启动/卸载/重启），取代盲目的
+ * 单向停止，从根本上化解注销与新注册竞态中的误停窗口。
  * CopyOnWriteArrayList 的快照迭代允许传导过程中注册新实例（apply 内级联加载）。</p>
  */
 final class PluginRegistry {
@@ -28,25 +29,25 @@ final class PluginRegistry {
         instances.remove(instance);
     }
 
-    /** 服务就绪：唤醒依赖该服务的挂起实例（startOrDefer 自查其余依赖）。 */
-    void onServiceAvailable(ServiceRegistry services, String name) {
-        for (PluginInstance instance : instances) {
-            if (instance.state() == PluginInstance.State.PENDING && instance.inject().contains(name)) {
-                boolean started = instance.startOrDefer(services);
-                if (!started) {
-                    log.warn("服务 {} 就绪后唤醒插件 {} 失败（错误经 awaitStartup 抛出）",
-                            name, instance.pluginName());
-                }
-            }
-        }
+    /** 服务就绪：依赖该服务的实例复查（PENDING 者据此启动）。 */
+    void onServiceAvailable(String name) {
+        recheckDependentsOf(name);
     }
 
-    /** 服务注销：停止依赖该服务的活跃实例；失败只记日志，不影响兄弟实例。 */
+    /** 服务注销：依赖该服务的实例复查（ACTIVE 者据此卸载回 PENDING）。 */
     void onServiceUnavailable(String name) {
+        recheckDependentsOf(name);
+    }
+
+    private void recheckDependentsOf(String name) {
         for (PluginInstance instance : instances) {
-            if (instance.state() == PluginInstance.State.ACTIVE && instance.inject().contains(name)) {
-                log.info("服务 {} 注销，停止依赖它的插件 {}", name, instance.pluginName());
-                instance.stop();
+            if (instance.inject().contains(name)) {
+                try {
+                    instance.recheck();
+                } catch (RuntimeException e) {
+                    // 单实例传导异常不阻断兄弟实例的复查
+                    log.warn("服务 {} 变化后复查插件 {} 异常", name, instance.pluginName(), e);
+                }
             }
         }
     }

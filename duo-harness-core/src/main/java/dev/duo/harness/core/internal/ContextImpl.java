@@ -86,9 +86,8 @@ public final class ContextImpl implements Context {
         C config = bindConfig(plugin, rawConfig, pluginName);
         Set<String> inject = Objects.requireNonNull(plugin.inject(),
                 "inject() 返回 null（无依赖请返回空集）");
-        ContextImpl child = new ContextImpl(this.events, this.services, this.pluginInstances, inject);
-        PluginInstance instance =
-                new PluginInstance(this.pluginInstances, child, plugin, config, pluginName, inject);
+        PluginInstance instance = new PluginInstance(
+                this.pluginInstances, this.events, this.services, plugin, config, pluginName, inject);
         this.pluginInstances.register(instance);
         try {
             // 实例销毁作为本作用域副作用：父销毁级联停子（幂等）
@@ -97,11 +96,9 @@ public final class ContextImpl implements Context {
             instance.dispose();
             throw e;
         }
-        boolean activated = instance.startOrDefer(this.services);
-        if (!activated) {
-            // 同步启动失败：保持调用方直接拿到错误（cause 保留原始异常）
-            throw new PluginException("插件 " + pluginName + " 启动失败", instance.failure());
-        }
+        instance.recheck();
+        // 启动失败不在此抛：错误统一经 handle（awaitStartup 重抛 / state=FAILED）——
+        // 同步与异步（唤醒）路径语义一致（DSH fiber 同款）
         return new PluginHandleImpl(instance);
     }
 
@@ -201,7 +198,7 @@ public final class ContextImpl implements Context {
         try {
             Disposable effectBound = effect(remover);
             // 先绑定 effect（防作用域并发销毁产生僵尸服务），再唤醒依赖方
-            this.pluginInstances.onServiceAvailable(this.services, name);
+            this.pluginInstances.onServiceAvailable(name);
             return effectBound;
         } catch (PluginException e) {
             try {
