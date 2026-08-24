@@ -6,6 +6,10 @@ package dev.duo.harness.core.api;
  */
 public class PluginConfigException extends PluginException {
 
+    public PluginConfigException(String message) {
+        super(message);
+    }
+
     public PluginConfigException(String message, Throwable cause) {
         super(message, cause);
     }

@@ -17,12 +17,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Context 的默认实现：一个实例 = 一个插件实例的作用域。
+ * Context 的实现：一个实例 = 一个插件实例的作用域。
  *
  * <p>用 ReentrantLock 而非 synchronized 保护副作用栈——虚拟线程模型下
  * synchronized 会 pin 载体线程（ADR-0002 后果条款）。</p>
  */
-public final class DefaultContext implements Context {
+public final class ContextImpl implements Context {
 
     /**
      * 严格绑定：config record 缺字段即失败（错误前移到加载时刻，ADR-0003）。
@@ -31,9 +31,11 @@ public final class DefaultContext implements Context {
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES);
 
+    /** 副作用栈的互斥访问。不用 synchronized：虚拟线程下会 pin 载体线程。 */
     private final ReentrantLock lock = new ReentrantLock();
     /** 副作用栈：注册序入栈，销毁时逆序弹出。 */
     private final Deque<RegisteredDisposable> effects = new ArrayDeque<>();
+    /** 销毁标记：CAS 保证 dispose 幂等；effect/plugin 据此拒绝注册。 */
     private final AtomicBoolean disposed = new AtomicBoolean();
 
     @Override
@@ -45,7 +47,7 @@ public final class DefaultContext implements Context {
         String pluginName = plugin.getClass().getName();
         C config = bindConfig(plugin, rawConfig, pluginName);
 
-        DefaultContext child = new DefaultContext();
+        ContextImpl child = new ContextImpl();
         try {
             Disposable overall = plugin.apply(child, config);
             if (overall != null) {
@@ -115,7 +117,9 @@ public final class DefaultContext implements Context {
         }
     }
 
-    /** 启动失败路径的清理：回滚错误吞掉——原始启动异常才是调用方要看到的主错误。 */
+    /**
+     * 启动失败路径的清理：回滚错误吞掉——原始启动异常才是调用方要看到的主错误。
+     */
     private void disposeQuietly() {
         try {
             dispose();
@@ -130,13 +134,15 @@ public final class DefaultContext implements Context {
             if (configType == null) {
                 return null;
             }
-            // 声明了 config 类型就必须提供配置——静默传 null 会让插件在 apply 深处 NPE，报错远离根因
+            // 声明了 config 类型就必须提供配置——静默传 null 会让插件在
+            // apply 深处 NPE，报错远离根因
             throw new PluginConfigException(
-                    "插件 " + pluginName + " 声明了 config 类型 " + configType.getName() + "，却未提供配置", null);
+                    "插件 " + pluginName + " 声明了 config 类型 " + configType.getName()
+                            + "，却未提供配置");
         }
         if (configType == null) {
             throw new PluginConfigException(
-                    "插件 " + pluginName + " 不接受配置（configType 为 null），却收到了 rawConfig", null);
+                    "插件 " + pluginName + " 不接受配置（configType 为 null），却收到了 rawConfig");
         }
         try {
             return MAPPER.convertValue(rawConfig, configType);

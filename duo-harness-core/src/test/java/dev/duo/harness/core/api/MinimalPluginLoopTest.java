@@ -121,7 +121,8 @@ class MinimalPluginLoopTest {
 
         PluginException e = assertThrows(PluginException.class, root::dispose);
 
-        // 逆序执行：后注册的先抛 → 成为主异常 cause；先注册的原始异常进 suppressed，互不掩盖
+        // 逆序执行：后注册的先抛 → 成为主异常 cause；
+        // 先注册的原始异常进 suppressed，互不掩盖
         assertEquals("后注册的错", e.getCause().getMessage());
         assertEquals(1, e.getSuppressed().length);
         assertEquals("先注册的错", e.getSuppressed()[0].getMessage());
