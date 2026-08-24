@@ -42,4 +42,81 @@ public interface Context {
      * @throws PluginException 聚合全部回滚错误（兄弟副作用的失败互不掩盖，见 suppressed）
      */
     void dispose();
+
+    // === 事件 ===
+
+    /**
+     * 注册普通事件监听器（emit / parallel / serial / bail 派发）。
+     * 监听器表全树共享：任意作用域注册，任意作用域派发均可见。
+     *
+     * @return 幂等移除器；注册同时是本作用域的副作用，随作用域销毁自动摘除
+     * @throws NullPointerException event 或 listener 为 null
+     * @throws PluginException 本作用域已销毁
+     */
+    Disposable on(String event, EventListener listener);
+
+    /**
+     * 注册瀑布管线监听器（waterfall 派发），与普通监听器分表互不影响。
+     * 注册序即洋葱层序：先注册者为最外层。
+     *
+     * <p><b>类型一致性约定</b>：监听器表存在泛型擦除，同一事件名的全部注册
+     * 与全部派发必须使用一致的 T/R——错配不会在编译期暴露，
+     * 而是在派发时以 ClassCastException（包装进 PluginException）失败。</p>
+     *
+     * @return 幂等移除器；随本作用域销毁自动摘除
+     * @throws NullPointerException event 或 listener 为 null
+     * @throws PluginException 本作用域已销毁
+     */
+    <T, R> Disposable on(String event, WaterfallListener<T, R> listener);
+
+    /**
+     * 广播：同步按注册序逐个调用，忽略返回值；监听器异常隔离
+     * （记 warn 日志，不传染兄弟监听与派发方）。
+     *
+     * @throws NullPointerException event 为 null
+     */
+    void emit(String event, Object args);
+
+    /**
+     * 并发广播：每个监听器一个虚拟线程，等待全部完成；
+     * 有失败则聚合抛出（首个为主异常，其余 suppressed）。
+     *
+     * @throws NullPointerException event 为 null
+     * @throws PluginException 任一监听器失败（聚合），或等待线程被中断
+     */
+    void parallel(String event, Object args);
+
+    /**
+     * 顺序投票：按注册序调用，首个非 null 返回值即终值并终止链
+     * （false 是合法投票值）；监听器异常包装后上抛派发方。
+     *
+     * @return 首个非 null 投票值；全员弃权返回 null
+     * @throws NullPointerException event 为 null
+     * @throws PluginException 监听器抛错时包装上抛（cause 保留原始异常）
+     */
+    Object serial(String event, Object args);
+
+    /**
+     * 同步投票：同步阻塞模型下与 {@link #serial} 语义等价，
+     * 保留 DSH 词汇以对齐事件分派模式命名。
+     *
+     * @throws NullPointerException event 为 null
+     * @throws PluginException 同 {@link #serial}
+     */
+    Object bail(String event, Object args);
+
+    /**
+     * 瀑布管线：监听器洋葱包裹终端默认行为，先注册者为最外层；
+     * 监听器不调 next 即否决（内层与终端不执行）。
+     *
+     * <p>类型一致性约定同 {@link #on(String, WaterfallListener)}：
+     * 派发的 T/R 必须与该事件名全部注册一致，错配在派发时失败。</p>
+     *
+     * @param args 初始载荷，逐层可改写
+     * @param terminal 终端默认行为（无监听器拦截时执行）
+     * @return 最外层监听器的返回值（或终端返回值）
+     * @throws NullPointerException event 或 terminal 为 null
+     * @throws PluginException 监听器或终端抛错时包装上抛（cause 保留原始异常）
+     */
+    <T, R> R waterfall(String event, T args, WaterfallNext<T, R> terminal);
 }

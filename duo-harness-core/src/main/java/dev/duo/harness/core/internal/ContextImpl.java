@@ -5,10 +5,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
+import dev.duo.harness.core.api.EventListener;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginConfigException;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginHandle;
+import dev.duo.harness.core.api.WaterfallListener;
+import dev.duo.harness.core.api.WaterfallNext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -24,6 +29,8 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public final class ContextImpl implements Context {
 
+    private static final Logger log = LoggerFactory.getLogger(ContextImpl.class);
+
     /**
      * 严格绑定：config record 缺字段即失败（错误前移到加载时刻，ADR-0003）。
      * Jackson 默认容忍缺失（引用类型补 null、原始类型补 0），会掩盖配置错误。
@@ -37,6 +44,18 @@ public final class ContextImpl implements Context {
     private final Deque<RegisteredDisposable> effects = new ArrayDeque<>();
     /** 销毁标记：CAS 保证 dispose 幂等；effect/plugin 据此拒绝注册。 */
     private final AtomicBoolean disposed = new AtomicBoolean();
+    /** 事件总线：根创建、全树共享；子作用域经继承构造器获得同一实例。 */
+    private final EventsImpl events;
+
+    /** 根作用域构造：创建共享事件总线。public 供 api 包 Context.root() 跨包创建。 */
+    public ContextImpl() {
+        this.events = new EventsImpl();
+    }
+
+    /** 子作用域构造：继承根的事件总线（监听器表全树共享）。 */
+    ContextImpl(EventsImpl events) {
+        this.events = events;
+    }
 
     @Override
     public <C> PluginHandle plugin(Plugin<C> plugin, Object rawConfig) {
@@ -47,7 +66,7 @@ public final class ContextImpl implements Context {
         String pluginName = plugin.getClass().getName();
         C config = bindConfig(plugin, rawConfig, pluginName);
 
-        ContextImpl child = new ContextImpl();
+        ContextImpl child = new ContextImpl(this.events);
         try {
             Disposable overall = plugin.apply(child, config);
             if (overall != null) {
@@ -118,14 +137,81 @@ public final class ContextImpl implements Context {
     }
 
     /**
-     * 启动失败路径的清理：回滚错误吞掉——原始启动异常才是调用方要看到的主错误。
+     * 启动失败路径的清理：回滚错误只记 warn——
+     * 原始启动异常才是调用方要看到的主错误。
      */
     private void disposeQuietly() {
         try {
             dispose();
-        } catch (PluginException ignored) {
-            // 主错误（启动失败）已在异常链上，清理错误不再叠加以免掩盖
+        } catch (PluginException e) {
+            log.warn("启动失败后的回滚清理出错（主错误优先，不掩盖启动异常）", e);
         }
+    }
+
+    // === 事件 ===
+
+    @Override
+    public Disposable on(String event, EventListener listener) {
+        Objects.requireNonNull(event, "event");
+        Objects.requireNonNull(listener, "listener");
+        Disposable remover = events.add(event, listener);
+        return registerRemoverAsEffect(remover);
+    }
+
+    @Override
+    public <T, R> Disposable on(String event, WaterfallListener<T, R> listener) {
+        Objects.requireNonNull(event, "event");
+        Objects.requireNonNull(listener, "listener");
+        Disposable remover = events.addWaterfall(event, listener);
+        return registerRemoverAsEffect(remover);
+    }
+
+    /**
+     * 监听器入表后挂 effect；若作用域恰好并发销毁导致 effect 拒绝，
+     * 补偿摘除防僵尸监听。
+     */
+    private Disposable registerRemoverAsEffect(Disposable remover) {
+        try {
+            return effect(remover);
+        } catch (PluginException e) {
+            try {
+                remover.dispose();
+            } catch (Exception cleanup) {
+                log.warn("监听器补偿摘除失败", cleanup);
+            }
+            throw e;
+        }
+    }
+
+    @Override
+    public void emit(String event, Object args) {
+        Objects.requireNonNull(event, "event");
+        events.emit(event, args);
+    }
+
+    @Override
+    public void parallel(String event, Object args) {
+        Objects.requireNonNull(event, "event");
+        events.parallel(event, args);
+    }
+
+    @Override
+    public Object serial(String event, Object args) {
+        Objects.requireNonNull(event, "event");
+        return events.serial(event, args);
+    }
+
+    @Override
+    public Object bail(String event, Object args) {
+        Objects.requireNonNull(event, "event");
+        return events.serial(event, args);
+    }
+
+    @Override
+    public <T, R> R waterfall(String event, T args, WaterfallNext<T, R> terminal) {
+        Objects.requireNonNull(event, "event");
+        Objects.requireNonNull(terminal, "terminal");
+        return events.waterfall(event, args, terminal);
     }
 
     private static <C> C bindConfig(Plugin<C> plugin, Object rawConfig, String pluginName) {
