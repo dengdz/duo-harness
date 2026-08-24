@@ -7,7 +7,7 @@ import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginHandle;
 import dev.duo.harness.core.api.PluginException;
-import dev.duo.harness.core.api.WaterfallListener;
+import dev.duo.harness.core.api.events.WaterfallListener;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

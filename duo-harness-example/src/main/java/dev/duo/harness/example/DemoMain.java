@@ -1,7 +1,7 @@
 package dev.duo.harness.example;
 
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import dev.duo.harness.core.api.Boot;
+import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;

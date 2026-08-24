@@ -5,13 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
-import dev.duo.harness.core.api.EventListener;
+import dev.duo.harness.core.api.events.EventListener;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginConfigException;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginHandle;
-import dev.duo.harness.core.api.WaterfallListener;
-import dev.duo.harness.core.api.WaterfallNext;
+import dev.duo.harness.core.api.events.WaterfallListener;
+import dev.duo.harness.core.api.events.WaterfallNext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

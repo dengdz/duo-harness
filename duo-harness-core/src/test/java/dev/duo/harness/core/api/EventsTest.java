@@ -1,5 +1,7 @@
 package dev.duo.harness.core.api;
 
+import dev.duo.harness.core.api.events.EventListener;
+import dev.duo.harness.core.api.events.WaterfallListener;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;

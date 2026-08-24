@@ -1,4 +1,4 @@
-package dev.duo.harness.core.api;
+package dev.duo.harness.core.api.events;
 
 /**
  * 普通事件监听器：emit / parallel / serial / bail 派发的统一形状。

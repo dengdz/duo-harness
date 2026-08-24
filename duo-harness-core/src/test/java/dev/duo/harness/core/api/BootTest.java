@@ -1,5 +1,7 @@
 package dev.duo.harness.core.api;
 
+import dev.duo.harness.core.api.boot.Boot;
+import dev.duo.harness.core.api.boot.BootException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

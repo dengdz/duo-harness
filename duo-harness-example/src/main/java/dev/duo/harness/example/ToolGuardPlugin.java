@@ -3,7 +3,7 @@ package dev.duo.harness.example;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
-import dev.duo.harness.core.api.WaterfallListener;
+import dev.duo.harness.core.api.events.WaterfallListener;
 import dev.duo.harness.tools.ToolExecution;
 import dev.duo.harness.tools.ToolsService;
 

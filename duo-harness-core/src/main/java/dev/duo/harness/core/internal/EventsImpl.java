@@ -1,10 +1,10 @@
 package dev.duo.harness.core.internal;
 
 import dev.duo.harness.core.api.Disposable;
-import dev.duo.harness.core.api.EventListener;
+import dev.duo.harness.core.api.events.EventListener;
 import dev.duo.harness.core.api.PluginException;
-import dev.duo.harness.core.api.WaterfallListener;
-import dev.duo.harness.core.api.WaterfallNext;
+import dev.duo.harness.core.api.events.WaterfallListener;
+import dev.duo.harness.core.api.events.WaterfallNext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -1,4 +1,6 @@
-package dev.duo.harness.core.api;
+package dev.duo.harness.core.api.boot;
+
+import dev.duo.harness.core.api.PluginException;
 
 import java.util.List;
 

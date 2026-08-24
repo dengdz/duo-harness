@@ -1,8 +1,13 @@
 package dev.duo.harness.core.api;
 
+import dev.duo.harness.core.api.events.EventListener;
+import dev.duo.harness.core.api.events.WaterfallListener;
+import dev.duo.harness.core.api.events.WaterfallNext;
+
 /**
- * 插件能看到的唯一句柄：子插件的挂载点、可逆副作用的注册点。
- * 一个 Context 实例对应一个插件实例的作用域，子插件获得子 Context。
+ * 插件能看到的唯一句柄：子插件的挂载点、可逆副作用的注册点、服务的发布与
+ * 寻址入口、事件的监听与派发入口。一个 Context 实例对应一个插件实例的作用域，
+ * 子插件获得子 Context。
  */
 public interface Context {
 

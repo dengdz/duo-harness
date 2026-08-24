@@ -1,6 +1,12 @@
-package dev.duo.harness.core.api;
+package dev.duo.harness.core.api.boot;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.PluginConfigException;
+import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.PluginHandle;
+import dev.duo.harness.core.api.PluginState;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
