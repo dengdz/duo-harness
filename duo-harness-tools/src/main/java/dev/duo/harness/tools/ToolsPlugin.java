@@ -1,8 +1,9 @@
 package dev.duo.harness.tools;
 
+import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
-import dev.duo.harness.core.api.Context;
+import dev.duo.harness.tools.internal.ToolsServiceImpl;
 
 /**
  * 工具域挂载插件：apply 时发布 "tools" 服务；无配置。
@@ -17,8 +18,6 @@ public final class ToolsPlugin implements Plugin<Void> {
 
     @Override
     public Disposable apply(Context ctx, Void config) {
-        dev.duo.harness.tools.internal.ToolsServiceImpl impl =
-                new dev.duo.harness.tools.internal.ToolsServiceImpl(ctx);
-        return ctx.provide(ToolsService.SERVICE_NAME, impl);
+        return ctx.provide(ToolsService.SERVICE_NAME, new ToolsServiceImpl(ctx));
     }
 }
