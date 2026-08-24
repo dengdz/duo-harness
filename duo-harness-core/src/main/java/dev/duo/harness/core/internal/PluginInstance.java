@@ -137,7 +137,10 @@ final class PluginInstance {
 
             if (state() == PluginState.UNLOADING) {
                 unloadActiveScope();
-                settle(PluginState.PENDING);
+                // 条件迁移：若并发 dispose 已推进终态，不得把 DISPOSED 复活成 PENDING
+                if (!settleIfCurrent(PluginState.UNLOADING, PluginState.PENDING)) {
+                    return;
+                }
                 broadcast(PluginState.UNLOADING, PluginState.PENDING);
                 continue;
             }
@@ -158,39 +161,6 @@ final class PluginInstance {
         }
     }
 
-    /** apply 执行与收态；返回是否继续复查循环。 */
-    private boolean runApplyAndSettle(String target) {
-        if (scope == null) {
-            scope = newScope(); // 重启路径：上次卸载已置空，apply 需要新作用域
-        }
-        try {
-            Disposable overall = runApply();
-            lock.lock();
-            try {
-                if (state != PluginState.LOADING) {
-                    // apply 期间被外部 dispose/停止：scope 已由对方回滚，尊重其迁移
-                    scope = null;
-                    started.countDown();
-                    return false;
-                }
-                if (overall != null) {
-                    scope.effect(overall);
-                }
-                epoch = target;
-                state = PluginState.ACTIVE;
-            } finally {
-                lock.unlock();
-            }
-            started.countDown();
-            broadcast(PluginState.LOADING, PluginState.ACTIVE);
-            return true;
-        } catch (Exception e) {
-            markFailed(e);
-            started.countDown();
-            return false;
-        }
-    }
-
     /** dispose 入口（handle.dispose 与级联回滚共用；幂等）。 */
     void dispose() {
         PluginState from;
@@ -207,7 +177,7 @@ final class PluginInstance {
         started.countDown();
         registry.unregister(this);
         unloadActiveScope();
-        settle(PluginState.DISPOSED);
+        settleIfCurrent(PluginState.UNLOADING, PluginState.DISPOSED);
         // 卸载与销毁两段迁移都对外广播，起点取进入 UNLOADING 之前的状态
         broadcast(from, PluginState.UNLOADING);
         broadcast(PluginState.UNLOADING, PluginState.DISPOSED);
@@ -246,11 +216,53 @@ final class PluginInstance {
         events.emit(PluginStatus.EVENT, new PluginStatus(pluginName, from, to));
     }
 
-    /** 锁内置态并锁外广播。 */
-    private void settle(PluginState to) {
+    /** apply 执行与收态；返回是否继续复查循环。 */
+    private boolean runApplyAndSettle(String target) {
+        if (scope == null) {
+            scope = newScope(); // 重启路径：上次卸载已置空，apply 需要新作用域
+        }
+        try {
+            Disposable overall = runApply();
+            lock.lock();
+            try {
+                if (state != PluginState.LOADING) {
+                    // apply 期间被外部 dispose/停止：scope 已由对方回滚，尊重其迁移
+                    scope = null;
+                    started.countDown();
+                    return false;
+                }
+                if (overall != null) {
+                    scope.effect(overall);
+                }
+                epoch = target;
+                state = PluginState.ACTIVE;
+            } finally {
+                lock.unlock();
+            }
+            started.countDown();
+            broadcast(PluginState.LOADING, PluginState.ACTIVE);
+            return true;
+        } catch (Exception e) {
+            markFailed(e);
+            started.countDown();
+            return false;
+        }
+    }
+
+    /**
+     * 条件置态：仅当当前仍处 expected 态才迁移到 to。
+     * 防并发场景下终态被覆盖（如 dispose 已推进 DISPOSED 后被 recheck 复活成 PENDING）。
+     *
+     * @return 是否实际发生迁移
+     */
+    private boolean settleIfCurrent(PluginState expected, PluginState to) {
         lock.lock();
         try {
+            if (state != expected) {
+                return false;
+            }
             state = to;
+            return true;
         } finally {
             lock.unlock();
         }
@@ -289,18 +301,16 @@ final class PluginInstance {
     /** 启动失败收尾：FAILED 终态 + 回滚半启动 scope + 广播。 */
     private void markFailed(Exception error) {
         failure = error;
-        lock.lock();
-        try {
-            state = PluginState.FAILED;
-        } finally {
-            lock.unlock();
-        }
+        // 条件迁移：apply 期间若被并发 dispose 抢先迁移，尊重其终态，不覆盖
+        boolean marked = settleIfCurrent(PluginState.LOADING, PluginState.FAILED);
         ContextImpl current = scope;
         scope = null;
         if (current != null) {
             current.disposeQuietly();
         }
-        broadcast(PluginState.LOADING, PluginState.FAILED);
+        if (marked) {
+            broadcast(PluginState.LOADING, PluginState.FAILED);
+        }
     }
 
     private void rethrowFailureIfAny() {
