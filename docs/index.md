@@ -18,3 +18,4 @@ Java 插件化 AI agent harness：内核为自研轻量插件容器，能力（�
 - 架构决策记录：[docs/adr/](adr/)
 - 参考项目研究：[docs/research/](research/)
 - 已知限制（唯一权威清单）：[limitations.md](limitations.md)
+- 工程设施说明（面向 agent 技能）：[docs/agents/](agents/)——[domain.md](agents/domain.md)（领域文档消费方式）、[issue-tracker.md](agents/issue-tracker.md)（本地工单规范）
