@@ -148,6 +148,23 @@ public final class ContextImpl implements Context {
         }
     }
 
+    /**
+     * 监听器入表后挂 effect；若作用域恰好并发销毁导致 effect 拒绝，
+     * 补偿摘除防僵尸监听。
+     */
+    private Disposable registerRemoverAsEffect(Disposable remover) {
+        try {
+            return effect(remover);
+        } catch (PluginException e) {
+            try {
+                remover.dispose();
+            } catch (Exception cleanup) {
+                log.warn("监听器补偿摘除失败", cleanup);
+            }
+            throw e;
+        }
+    }
+
     // === 事件 ===
 
     @Override
@@ -164,23 +181,6 @@ public final class ContextImpl implements Context {
         Objects.requireNonNull(listener, "listener");
         Disposable remover = events.addWaterfall(event, listener);
         return registerRemoverAsEffect(remover);
-    }
-
-    /**
-     * 监听器入表后挂 effect；若作用域恰好并发销毁导致 effect 拒绝，
-     * 补偿摘除防僵尸监听。
-     */
-    private Disposable registerRemoverAsEffect(Disposable remover) {
-        try {
-            return effect(remover);
-        } catch (PluginException e) {
-            try {
-                remover.dispose();
-            } catch (Exception cleanup) {
-                log.warn("监听器补偿摘除失败", cleanup);
-            }
-            throw e;
-        }
     }
 
     @Override

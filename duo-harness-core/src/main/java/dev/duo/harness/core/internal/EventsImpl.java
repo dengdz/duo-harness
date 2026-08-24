@@ -26,18 +26,23 @@ final class EventsImpl {
 
     private static final Logger log = LoggerFactory.getLogger(EventsImpl.class);
 
+    /** 虚拟线程名前缀：事件名 + 序号拼接（thread dump 可区分监听器）。 */
+    private static final String THREAD_NAME_PREFIX = "duo-event-";
+
     /** 普通监听器表：emit/parallel/serial/bail 派发消费。值实为 CopyOnWriteArrayList。 */
     private final Map<String, List<EventListener>> listeners = new ConcurrentHashMap<>();
     /** 瀑布监听器表：waterfall 派发消费；与普通表分立，避免形状错配。 */
     private final Map<String, List<WaterfallListener<Object, Object>>> waterfallListeners =
             new ConcurrentHashMap<>();
 
+    /** 普通监听器入表，返回幂等摘除器。 */
     Disposable add(String event, EventListener listener) {
         List<EventListener> list = listeners.computeIfAbsent(event, k -> new CopyOnWriteArrayList<>());
         list.add(listener);
         return () -> list.remove(listener);
     }
 
+    /** 瀑布监听器入表（擦除为 Object 形状），返回幂等摘除器。 */
     @SuppressWarnings("unchecked")
     <T, R> Disposable addWaterfall(String event, WaterfallListener<T, R> listener) {
         List<WaterfallListener<Object, Object>> list =
@@ -46,6 +51,7 @@ final class EventsImpl {
         return () -> list.remove(listener);
     }
 
+    /** 广播派发：异常隔离（warn 日志），不传染兄弟与派发方。 */
     void emit(String event, Object args) {
         for (EventListener listener : listeners.getOrDefault(event, List.of())) {
             try {
@@ -58,17 +64,18 @@ final class EventsImpl {
         }
     }
 
+    /** 并发派发：每监听器一虚拟线程，失败聚合为主异常 + suppressed。 */
     void parallel(String event, Object args) {
         List<EventListener> all = listeners.getOrDefault(event, List.of());
         if (all.isEmpty()) {
             return;
         }
-        List<Exception> errors = Collections.synchronizedList(new ArrayList<>());
+        List<Exception> errors = Collections.synchronizedList(new ArrayList<>(all.size()));
         List<Thread> workers = new ArrayList<>(all.size());
         int index = 0;
         for (EventListener listener : all) {
             // 每个监听器一个虚拟线程（ADR-0002 并发模型）；序号入名，thread dump 可区分
-            String workerName = "duo-event-" + event + "-" + index++;
+            String workerName = THREAD_NAME_PREFIX + event + "-" + index++;
             workers.add(Thread.ofVirtual().name(workerName).unstarted(() -> {
                 try {
                     listener.on(args);
@@ -96,6 +103,7 @@ final class EventsImpl {
         }
     }
 
+    /** 顺序投票：首个非 null 返回值即终值并终止链；监听器异常包装上抛。 */
     Object serial(String event, Object args) {
         for (EventListener listener : listeners.getOrDefault(event, List.of())) {
             Object result;
@@ -113,6 +121,7 @@ final class EventsImpl {
         return null;
     }
 
+    /** 瀑布派发：从终端逆序包装洋葱链，先注册者最外层；不调 next 即否决。 */
     @SuppressWarnings("unchecked")
     <T, R> R waterfall(String event, T args, WaterfallNext<T, R> terminal) {
         List<WaterfallListener<Object, Object>> layers =
