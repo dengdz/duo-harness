@@ -101,6 +101,7 @@ public final class Boot {
                     "解析配置文件失败（非法 YAML 或结构不符，应有 plugins: [行...]）: "
                             + configFile, e);
         }
+        java.util.Set<String> seenIds = new java.util.HashSet<>(rows.size() * 2);
         for (PluginRow row : rows) {
             if (row == null) {
                 // YAML 列表的杂散 "-" 项会解析为 null：按结构错误报告而非 NPE
@@ -110,6 +111,11 @@ public final class Boot {
             if (row.id() == null || row.id().isBlank()) {
                 throw new BootException(BootException.Stage.PARSE_CONFIG,
                         "配置行缺 id（id 是审计点名与层序合成的锚点，必填）: " + row);
+            }
+            if (!seenIds.add(row.id())) {
+                // id 重复 = 审计锚点失效（点名指向两行），按结构错误拒绝
+                throw new BootException(BootException.Stage.PARSE_CONFIG,
+                        "配置行 id 重复: " + row.id());
             }
             if (row.name() == null || row.name().isBlank()) {
                 throw new BootException(BootException.Stage.PARSE_CONFIG,

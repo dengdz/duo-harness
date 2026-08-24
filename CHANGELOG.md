@@ -24,3 +24,4 @@
 - 工单 06 落地：`duo-harness-tools` 模块——工具域骨架与三段执行管线：`ToolsPlugin` 挂树发布 "tools" 服务，`register(registrant, def)` 注册即注册方作用域副作用（插件停止自动注销），execute 走 `tools/pre-execute`（准入否决）→ `tools/execute`（around 本体）→ `tools/post-execute`（结果改写/转错误）瀑布管线；工具异常收敛为 error 结果不上抛；76 用例三连跑全绿
 - 工单 07 落地（M1 收官）：`duo-harness-example` 模块——示例插件集（服务提供者/消费者对、工具插件、管线拦截者、disabled 行）+ demo 配置 + DemoMain；验收命令 `mvn -pl duo-harness-example -am package exec:java` 一条命令输出 34 条状态/事件叙述，覆盖配置驱动 boot、行序无关、视图寻址、三段管线否决与治理、拔服务级联停止、整树回滚；`Boot.from` 补 prepare 钩子（对齐 DSH）；docs 立起 01-入门章节；77 用例三连跑全绿
 - duo-code-review 技能补目录分层审查维度：新类落位对照 duo-project-structure（按功能域分包、禁 `controller`/`service`/`util`/`impl` 大筐、根包不放类、新包同 diff 带 `package-info.java`），diff 涉及的包越过约 10 个类的拆包阈值时要求按功能边界拆子包；堆放类问题按 suggestion 报
+- 终审复检（行为变更）：boot 配置解析新增配置行 id 重复检查（重复 id 即审计锚点失效，按解析错误点名拒绝）；ToolExecution 构造器 null 契约自足；已知限制唯一清单 `docs/limitations.md` 建立（七条 M1 限制归口）；duo-code-review 技能固化 ocr 分批/换模型/续跑执行策略

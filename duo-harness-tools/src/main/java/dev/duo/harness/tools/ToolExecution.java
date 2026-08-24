@@ -23,7 +23,8 @@ public final class ToolExecution {
     private boolean resultIsError;
 
     public ToolExecution(String toolName, JsonNode args) {
-        this.toolName = toolName;
+        // 公共类的 null 契约自足：不依赖唯一构造点（ToolsServiceImpl）的先行校验
+        this.toolName = java.util.Objects.requireNonNull(toolName, "toolName");
         this.args = args == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : args;
     }
 

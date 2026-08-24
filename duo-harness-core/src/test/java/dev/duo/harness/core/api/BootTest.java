@@ -300,4 +300,23 @@ class BootTest {
         assertEquals(BootException.Stage.PARSE_CONFIG, e.stage());
         assertTrue(e.getMessage().contains("空行"), e.getMessage());
     }
+
+    @Test
+    void duplicateRowIdFailsAtParseStage() throws Exception {
+        Path file = writeYaml("""
+                plugins:
+                  - id: greeter
+                    name: dev.duo.harness.core.api.BootTest$GreeterPlugin
+                  - id: greeter
+                    name: dev.duo.harness.core.api.BootTest$EchoPlugin
+                    config:
+                      prefix: "重复"
+                      times: 1
+                """);
+
+        BootException e = assertThrows(BootException.class, () -> Boot.from(file));
+
+        assertEquals(BootException.Stage.PARSE_CONFIG, e.stage());
+        assertTrue(e.getMessage().contains("重复"), e.getMessage());
+    }
 }
