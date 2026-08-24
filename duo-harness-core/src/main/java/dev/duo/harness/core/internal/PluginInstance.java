@@ -288,9 +288,13 @@ final class PluginInstance {
 
     /** 启动失败收尾：FAILED 终态 + 回滚半启动 scope + 广播。 */
     private void markFailed(Exception error) {
-        failure = error;
-        // 条件迁移：apply 期间若被并发 dispose 抢先迁移，尊重其终态，不覆盖
+        // 条件迁移：apply 期间若被并发 dispose 抢先迁移，尊重其终态；
+        // 此时也不记 failure——主动销毁打断的 apply 异常不是"启动失败"，
+        // 避免 awaitStartup 向等待者呈现误导性错误
         boolean marked = settleIfCurrent(PluginState.LOADING, PluginState.FAILED);
+        if (marked) {
+            failure = error;
+        }
         ContextImpl current = scope;
         scope = null;
         if (current != null) {
