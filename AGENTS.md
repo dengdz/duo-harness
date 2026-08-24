@@ -13,6 +13,7 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 | 清理一下注释 | duo-trim-cot-leakage |
 | 建个模块 / 这个类放哪 | duo-project-structure |
 | 写 spec / 建工单 / 记 ADR / 更新术语表 | duo-tracker |
+| 看一看 DSH 某功能 / 看看某项目怎么做的 | duo-research |
 | 这个文档放哪 / 整理文档 | duo-doc-standards + duo-prose-standard |
 | 发布版本 / 开分支 / 合并推送 | duo-release-workflow |
 
