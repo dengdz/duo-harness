@@ -20,3 +20,4 @@
 - 工单 02 落地：事件总线五种分派模式（emit 隔离 / parallel 虚拟线程并发聚合 / serial·bail 顺序投票 / waterfall 洋葱管线——否决、参数改写、返回值包装）；监听器表全树共享、注册即作用域副作用随插件停止自动摘除；引入 SLF4J（api + simple test），清理与隔离错误改为可观察的 warn 日志；30 用例三连跑全绿
 - 工单 03 落地：服务注册表与视图接口寻址——provide/Service 基类（构造即发布）、`ctx.as(视图)` 动态代理（方法名即服务名、惰性解析、类型校验）、`Plugin.inject()` 依赖声明（未声明读取点名拒绝）、依赖缺失挂起 + awaitStartup 真实阻塞语义、服务注销与提供方插件停止的级联传导（依赖方自动停止）；注册表 (服务名, 作用域) 二阶键 isolate 预留；44 用例三连跑全绿
 - 工单 04 落地：依赖驱动生命周期——六态状态机（PENDING/LOADING/ACTIVE/FAILED/UNLOADING/DISPOSED）与 epoch 依赖指纹：依赖消失回 PENDING、服务回归自动重启、换实现自动重启；状态迁移经 `plugin/status` 事件广播、`PluginHandle.state()` 可查询。行为变更：启动失败不再阻断 plugin() 调用，错误统一经 handle（awaitStartup 重抛 / state=FAILED），对齐 DSH fiber 语义；54 用例三连跑全绿
+- 工单 05 落地：配置驱动 boot——`Boot.from(yml)` 单文件引导（行结构 id/name/config/disabled，行序无加载语义），收尾审计点名（FAILED 带原始错误、PENDING 列缺失服务、类不可加载点名），任何失败整树回滚后抛带阶段标签的 `BootException`；`Context.hasService` 存在性查询；66 用例三连跑全绿——M1 核心链路（配置 → 插件树 → 服务/事件/生命周期）闭环

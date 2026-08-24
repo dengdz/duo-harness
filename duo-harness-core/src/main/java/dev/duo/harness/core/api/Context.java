@@ -12,6 +12,14 @@ public interface Context {
     }
 
     /**
+     * 查询具名服务是否已提供（仅存在性，不返回实例——不构成对 inject
+     * 读取纪律的绕行）。诊断与 boot 审计点名用。
+     *
+     * @throws NullPointerException name 为 null
+     */
+    boolean hasService(String name);
+
+    /**
      * 在本作用域下加载插件：内核把 rawConfig 绑定到插件声明的 config 类型后运行其 apply，
      * 失败（绑定或 apply 抛错）时同步抛出且不留任何残留副作用。
      *

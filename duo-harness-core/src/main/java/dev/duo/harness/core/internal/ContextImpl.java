@@ -185,6 +185,12 @@ public final class ContextImpl implements Context {
     // === 服务 ===
 
     @Override
+    public boolean hasService(String name) {
+        Objects.requireNonNull(name, "name");
+        return services.resolve(name) != null;
+    }
+
+    @Override
     public Disposable provide(String name, Object instance) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(instance, "instance");
