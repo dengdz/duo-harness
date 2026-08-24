@@ -91,6 +91,25 @@ class MinimalPluginLoopTest {
     }
 
     @Test
+    void declaredConfigRejectsNullRawConfig() {
+        Context root = Context.root();
+        Plugin<GreetingConfig> plugin = new RecordingPlugin(new ArrayList<>());
+
+        PluginConfigException e = assertThrows(PluginConfigException.class,
+                () -> root.plugin(plugin, null));
+        assertTrue(e.getMessage().contains("未提供配置"),
+                "声明了 config 类型却不给配置应点名报错: " + e.getMessage());
+    }
+
+    @Test
+    void nullArgumentsFailFast() {
+        Context root = Context.root();
+
+        assertThrows(NullPointerException.class, () -> root.effect(null));
+        assertThrows(NullPointerException.class, () -> root.plugin(null, null));
+    }
+
+    @Test
     void disposeAggregatesRollbackErrorsWithSuppressed() {
         Context root = Context.root();
         root.effect(() -> {

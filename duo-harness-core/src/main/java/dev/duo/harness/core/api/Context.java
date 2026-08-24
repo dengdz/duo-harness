@@ -17,9 +17,10 @@ public interface Context {
      *
      * <p>本方法同步阻塞直至 apply 返回（ADR-0002）。</p>
      *
-     * @param rawConfig 原始配置（Map / JsonNode）；插件无 config 类型时须为 {@code null}
+     * @param rawConfig 原始配置（Map / JsonNode）；插件声明了 config 类型时必须提供（否则绑定失败），无 config 类型时须为 {@code null}
      * @return 插件实例句柄；实例的销毁已注册为本作用域的副作用，随本作用域级联回滚
-     * @throws PluginConfigException rawConfig 无法绑定到 config 类型（点名插件与字段路径）
+     * @throws NullPointerException plugin 为 null
+     * @throws PluginConfigException rawConfig 无法绑定到 config 类型（点名插件与字段路径），或声明了 config 类型却未提供配置
      * @throws PluginException 本作用域已销毁，或插件启动失败（cause 保留原始异常）
      */
     <C> PluginHandle plugin(Plugin<C> plugin, Object rawConfig);
@@ -28,6 +29,7 @@ public interface Context {
      * 注册可逆副作用：本作用域销毁时按注册逆序执行。
      *
      * @return 幂等的移除器——手动调用等同提前回收，重复调用无副作用
+     * @throws NullPointerException disposer 为 null
      * @throws PluginException 本作用域已销毁，拒绝注册（副作用不会静默丢失）
      */
     Disposable effect(Disposable disposer);

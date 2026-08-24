@@ -12,6 +12,7 @@ import dev.duo.harness.core.api.PluginHandle;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -37,6 +38,7 @@ public final class DefaultContext implements Context {
 
     @Override
     public <C> PluginHandle plugin(Plugin<C> plugin, Object rawConfig) {
+        Objects.requireNonNull(plugin, "plugin");
         if (disposed.get()) {
             throw new PluginException("作用域已销毁，拒绝加载插件 " + plugin.getClass().getName());
         }
@@ -64,6 +66,8 @@ public final class DefaultContext implements Context {
 
     @Override
     public Disposable effect(Disposable disposer) {
+        // null 副作用若放行，NPE 会被推迟到回滚期并埋进聚合异常，根因难定位
+        Objects.requireNonNull(disposer, "disposer");
         RegisteredDisposable registered = new RegisteredDisposable(disposer);
         lock.lock();
         try {
@@ -122,12 +126,17 @@ public final class DefaultContext implements Context {
 
     private static <C> C bindConfig(Plugin<C> plugin, Object rawConfig, String pluginName) {
         Class<C> configType = plugin.configType();
-        if (configType == null || rawConfig == null) {
-            if (rawConfig != null) {
-                throw new PluginConfigException(
-                        "插件 " + pluginName + " 不接受配置（configType 为 null），却收到了 rawConfig", null);
+        if (rawConfig == null) {
+            if (configType == null) {
+                return null;
             }
-            return null;
+            // 声明了 config 类型就必须提供配置——静默传 null 会让插件在 apply 深处 NPE，报错远离根因
+            throw new PluginConfigException(
+                    "插件 " + pluginName + " 声明了 config 类型 " + configType.getName() + "，却未提供配置", null);
+        }
+        if (configType == null) {
+            throw new PluginConfigException(
+                    "插件 " + pluginName + " 不接受配置（configType 为 null），却收到了 rawConfig", null);
         }
         try {
             return MAPPER.convertValue(rawConfig, configType);
