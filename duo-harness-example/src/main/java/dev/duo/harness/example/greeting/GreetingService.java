@@ -1,4 +1,4 @@
-package dev.duo.harness.example;
+package dev.duo.harness.example.greeting;
 
 /** 示例服务契约：问候。 */
 public interface GreetingService {

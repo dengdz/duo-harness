@@ -1,4 +1,4 @@
-package dev.duo.harness.example;
+package dev.duo.harness.example.tools;
 
 import dev.duo.harness.tools.ToolsService;
 

@@ -5,19 +5,19 @@ plugins:
 
   # 拦截插件：治理监听器（不侵入工具代码）
   - id: tool-guard
-    name: dev.duo.harness.example.ToolGuardPlugin
+    name: dev.duo.harness.example.tools.ToolGuardPlugin
 
   # 工具插件：依赖 tools 服务注册 echo 工具
   - id: echo-tool
-    name: dev.duo.harness.example.EchoToolPlugin
+    name: dev.duo.harness.example.tools.EchoToolPlugin
 
   # 消费者行放在提供者行之前：行序无加载语义（依赖驱动保证），
   # boot 状态叙述里可见它先 PENDING、提供者装载后转 ACTIVE
   - id: greeting-client
-    name: dev.duo.harness.example.GreetingClientPlugin
+    name: dev.duo.harness.example.greeting.GreetingClientPlugin
 
   - id: greeting
-    name: dev.duo.harness.example.GreetingPlugin
+    name: dev.duo.harness.example.greeting.GreetingPlugin
     config:
       prefix: "你好"
 

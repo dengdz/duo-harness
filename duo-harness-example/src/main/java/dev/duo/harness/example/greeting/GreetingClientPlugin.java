@@ -1,8 +1,9 @@
-package dev.duo.harness.example;
+package dev.duo.harness.example.greeting;
 
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.example.DemoMain;
 
 import java.util.Set;
 

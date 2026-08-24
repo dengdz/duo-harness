@@ -1,4 +1,4 @@
-package dev.duo.harness.example;
+package dev.duo.harness.example.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
