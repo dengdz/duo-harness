@@ -1,5 +1,7 @@
 package dev.duo.harness.core.api;
 
+import java.util.Set;
+
 /**
  * 插件：声明依赖与 apply 入口的扩展单元。插件是描述，加载后才有生命
  * （运行期实体见 {@link PluginHandle}）。
@@ -9,6 +11,14 @@ package dev.duo.harness.core.api;
  * @param <C> config record 类型；无配置插件用 {@link Void} 且 rawConfig 传 {@code null}
  */
 public interface Plugin<C> {
+
+    /**
+     * 声明依赖的服务名集合：全部就绪才启动，任一消失即停止（错误前移，
+     * 免写启动顺序）。默认无依赖。
+     */
+    default Set<String> inject() {
+        return Set.of();
+    }
 
     /**
      * 声明 config 类型，内核据此把原始配置（Map / JsonNode）绑定到强类型 record。

@@ -15,9 +15,12 @@ import dev.duo.harness.core.api.WaterfallNext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -46,15 +49,31 @@ public final class ContextImpl implements Context {
     private final AtomicBoolean disposed = new AtomicBoolean();
     /** 事件总线：根创建、全树共享；子作用域经继承构造器获得同一实例。 */
     private final EventsImpl events;
+    /** 服务注册表：根创建、全树共享（isolate 预留的二阶键在 ServiceKey）。 */
+    private final ServiceRegistry services;
+    /** 插件实例登记簿：根创建、全树共享，承担服务变化的传导。 */
+    private final PluginRegistry pluginInstances;
+    /** 本作用域的 inject 声明（插件实例的读取许可）；根作用域为 null = 不限制。 */
+    private final Set<String> injectedServices;
 
-    /** 根作用域构造：创建共享事件总线。public 供 api 包 Context.root() 跨包创建。 */
+    /**
+     * 根作用域构造：创建共享事件总线、服务注册表与插件登记簿。
+     * public 供 api 包 Context.root() 跨包创建。
+     */
     public ContextImpl() {
         this.events = new EventsImpl();
+        this.services = new ServiceRegistry();
+        this.pluginInstances = new PluginRegistry();
+        this.injectedServices = null;
     }
 
-    /** 子作用域构造：继承根的事件总线（监听器表全树共享）。 */
-    ContextImpl(EventsImpl events) {
+    /** 子作用域构造：继承根的共享设施，携带本插件的 inject 读取许可。 */
+    ContextImpl(EventsImpl events, ServiceRegistry services,
+                PluginRegistry pluginInstances, Set<String> injectedServices) {
         this.events = events;
+        this.services = services;
+        this.pluginInstances = pluginInstances;
+        this.injectedServices = injectedServices;
     }
 
     @Override
@@ -65,24 +84,25 @@ public final class ContextImpl implements Context {
         }
         String pluginName = plugin.getClass().getName();
         C config = bindConfig(plugin, rawConfig, pluginName);
-
-        ContextImpl child = new ContextImpl(this.events);
+        Set<String> inject = Objects.requireNonNull(plugin.inject(),
+                "inject() 返回 null（无依赖请返回空集）");
+        ContextImpl child = new ContextImpl(this.events, this.services, this.pluginInstances, inject);
+        PluginInstance instance =
+                new PluginInstance(this.pluginInstances, child, plugin, config, pluginName, inject);
+        this.pluginInstances.register(instance);
         try {
-            Disposable overall = plugin.apply(child, config);
-            if (overall != null) {
-                child.effect(overall);
-            }
-            // 挂载进父作用域也可能失败（父被并发销毁时 effect 拒绝）——
-            // 已启动的 child 必须回滚，否则成为无人回收的泄漏实例
-            effect(child::dispose);
+            // 实例销毁作为本作用域副作用：父销毁级联停子（幂等）
+            effect(instance::dispose);
         } catch (PluginException e) {
-            child.disposeQuietly();
+            instance.dispose();
             throw e;
-        } catch (Exception e) {
-            child.disposeQuietly();
-            throw new PluginException("插件 " + pluginName + " 启动失败", e);
         }
-        return new PluginHandleImpl(child);
+        boolean activated = instance.startOrDefer(this.services);
+        if (!activated) {
+            // 同步启动失败：保持调用方直接拿到错误（cause 保留原始异常）
+            throw new PluginException("插件 " + pluginName + " 启动失败", instance.failure());
+        }
+        return new PluginHandleImpl(instance);
     }
 
     @Override
@@ -140,7 +160,7 @@ public final class ContextImpl implements Context {
      * 启动失败路径的清理：回滚错误只记 warn——
      * 原始启动异常才是调用方要看到的主错误。
      */
-    private void disposeQuietly() {
+    void disposeQuietly() {
         try {
             dispose();
         } catch (PluginException e) {
@@ -163,6 +183,78 @@ public final class ContextImpl implements Context {
             }
             throw e;
         }
+    }
+
+    // === 服务 ===
+
+    @Override
+    public Disposable provide(String name, Object instance) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(instance, "instance");
+        this.services.provide(name, instance);
+        Disposable remover = () -> {
+            // 值感知移除：并发下的新 provide 不被旧注销器误删
+            if (this.services.remove(name, instance)) {
+                this.pluginInstances.onServiceUnavailable(name);
+            }
+        };
+        try {
+            Disposable effectBound = effect(remover);
+            // 先绑定 effect（防作用域并发销毁产生僵尸服务），再唤醒依赖方
+            this.pluginInstances.onServiceAvailable(this.services, name);
+            return effectBound;
+        } catch (PluginException e) {
+            try {
+                remover.dispose();
+            } catch (Exception cleanup) {
+                log.warn("服务 {} 的补偿注销失败", name, cleanup);
+            }
+            throw e;
+        }
+    }
+
+    @Override
+    public <T> T as(Class<T> viewInterface) {
+        Objects.requireNonNull(viewInterface, "viewInterface");
+        if (!viewInterface.isInterface()) {
+            throw new PluginException("as() 只接受接口类型，收到 " + viewInterface.getName());
+        }
+        return viewInterface.cast(Proxy.newProxyInstance(
+                viewInterface.getClassLoader(),
+                new Class<?>[] {viewInterface},
+                this::invokeViewMethod));
+    }
+
+    /** 视图方法分发：Object 方法特判，其余按"方法名即服务名"寻址。 */
+    private Object invokeViewMethod(Object proxy, Method method, Object[] args) {
+        return switch (method.getName()) {
+            case "toString" -> "视图代理[" + injectedServicesDescription() + "]";
+            case "hashCode" -> System.identityHashCode(proxy);
+            case "equals" -> proxy == args[0];
+            default -> resolveService(method.getName(), method.getReturnType());
+        };
+    }
+
+    /** 服务寻址三检查：inject 许可 → 注册表命中 → 类型兼容，全部点名报错。 */
+    private Object resolveService(String name, Class<?> expectedType) {
+        if (injectedServices != null && !injectedServices.contains(name)) {
+            throw new PluginException("服务 \"" + name + "\" 未在 inject 中声明，拒绝读取"
+                    + "（错误前移：请补充 inject 声明）");
+        }
+        Object instance = services.resolve(name);
+        if (instance == null) {
+            throw new PluginException("服务 \"" + name + "\" 未提供");
+        }
+        if (!expectedType.isInstance(instance)) {
+            throw new PluginException("服务 \"" + name + "\" 的实例类型 "
+                    + instance.getClass().getName() + " 与视图声明的返回类型 "
+                    + expectedType.getName() + " 不兼容");
+        }
+        return instance;
+    }
+
+    private String injectedServicesDescription() {
+        return injectedServices == null ? "根作用域" : String.join(",", injectedServices);
     }
 
     // === 事件 ===

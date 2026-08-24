@@ -7,9 +7,10 @@ package dev.duo.harness.core.api;
 public interface PluginHandle {
 
     /**
-     * 等待启动完成。当前内核为同步加载，本调用立即返回；
-     * 若插件已失败则重抛原始错误（保留栈）。
-     * 为依赖驱动启停（后续工单）保留异步语义位。
+     * 等待启动完成：依赖未就绪（PENDING）时阻塞至激活或失败
+     * （虚拟线程友好，ADR-0002）；插件已失败则重抛原始错误（保留栈）。
+     *
+     * @throws PluginException 插件启动失败（cause 保留原始异常），或等待被中断
      */
     void awaitStartup();
 

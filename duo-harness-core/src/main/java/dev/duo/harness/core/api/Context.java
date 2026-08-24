@@ -43,6 +43,39 @@ public interface Context {
      */
     void dispose();
 
+    // === 服务 ===
+
+    /**
+     * 发布具名服务：登记进全局注册表（同一服务名在默认作用域内互斥，
+     * 重复发布点名报错）。发布后依赖它的挂起插件被唤醒；注销时依赖它的
+     * 活跃插件被停止。
+     *
+     * <p>注册表键为（服务名， 作用域）二阶结构；当前仅存在全局默认作用域，
+     * 多作用域隔离能力预留。</p>
+     *
+     * @param name 服务名（全局扁平命名空间；harness 保留裸名，第三方加前缀）
+     * @param instance 服务实例；类型契约由视图接口约定
+     * @return 幂等注销器；发布同时是本作用域的副作用，随作用域销毁自动注销
+     * @throws NullPointerException name 或 instance 为 null
+     * @throws PluginException 本作用域已销毁，或同名服务已存在（点名先注册方）
+     */
+    Disposable provide(String name, Object instance);
+
+    /**
+     * 取得视图接口的动态代理：方法名即服务名，调用时惰性解析到注册表
+     * 当前实例（服务替换后无需重新获取视图）。
+     *
+     * <p>类型窗口约定：视图方法名必须与注册的服务名一致，返回类型必须与
+     * 服务实例类型兼容——错配在调用时点名报错。插件作用域内读取服务
+     * 须先在 {@link Plugin#inject()} 声明对应服务名（根作用域无此要求）。</p>
+     *
+     * @param viewInterface 视图接口（必须是接口类型）
+     * @return 视图代理；不触发解析，首次方法调用才寻址
+     * @throws NullPointerException viewInterface 为 null
+     * @throws PluginException viewInterface 不是接口
+     */
+    <T> T as(Class<T> viewInterface);
+
     // === 事件 ===
 
     /**
