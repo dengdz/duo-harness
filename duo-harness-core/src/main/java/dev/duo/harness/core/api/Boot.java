@@ -106,9 +106,9 @@ public final class Boot {
 
     private static Context activate(Path configFile, List<PluginRow> rows) {
         Context root = Context.root();
-        List<Loaded> loaded = new ArrayList<>();
-        List<String> problems = new ArrayList<>();
-        List<Throwable> causes = new ArrayList<>();
+        List<Loaded> loaded = new ArrayList<>(rows.size());
+        List<String> problems = new ArrayList<>(rows.size());
+        List<Throwable> causes = new ArrayList<>(rows.size());
 
         for (PluginRow row : rows) {
             if (row.disabled()) {
