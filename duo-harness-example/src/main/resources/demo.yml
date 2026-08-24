@@ -1,0 +1,27 @@
+plugins:
+  # 工具域：一行启用整个域，后续工具插件依赖它激活
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  # 拦截插件：治理监听器（不侵入工具代码）
+  - id: tool-guard
+    name: dev.duo.harness.example.ToolGuardPlugin
+
+  # 工具插件：依赖 tools 服务注册 echo 工具
+  - id: echo-tool
+    name: dev.duo.harness.example.EchoToolPlugin
+
+  # 消费者行放在提供者行之前：行序无加载语义（依赖驱动保证），
+  # boot 状态叙述里可见它先 PENDING、提供者装载后转 ACTIVE
+  - id: greeting-client
+    name: dev.duo.harness.example.GreetingClientPlugin
+
+  - id: greeting
+    name: dev.duo.harness.example.GreetingPlugin
+    config:
+      prefix: "你好"
+
+  # disabled 演示：行在场而实例不装载（改 false 后重启即启用）
+  - id: demo-disabled
+    name: dev.duo.harness.example.DemoDisabledPlugin
+    disabled: true

@@ -14,6 +14,7 @@
   <modules>
     <module>duo-harness-core</module>
     <module>duo-harness-tools</module>
+    <module>duo-harness-example</module>
   </modules>
 
   <properties>
@@ -22,6 +23,9 @@
     <jackson.version>2.21.2</jackson.version>
     <junit.version>6.0.3</junit.version>
     <slf4j.version>2.0.17</slf4j.version>
+    <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>
+    <!-- reactor 模式：exec:java 仅在 example 模块启用（其余模块跳过） -->
+    <exec.skip>true</exec.skip>
   </properties>
 
   <dependencyManagement>
@@ -61,6 +65,17 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${exec-maven-plugin.version}</version>
+          <configuration>
+            <!-- 占位：3.1.0 的 required 参数校验先于 skip，无值即失败；
+                 非 example 模块经 exec.skip=true 跳过实际执行 -->
+            <mainClass>dev.duo.harness.example.DemoMain</mainClass>
+            <skip>${exec.skip}</skip>
+          </configuration>
         </plugin>
       </plugins>
     </pluginManagement>

@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * 配置驱动 boot：读取单文件 YAML（plugins.yml 形态），逐行把插件类
@@ -62,9 +64,22 @@ public final class Boot {
      *         失败时整树已回滚
      */
     public static Context from(Path configFile) {
+        return from(configFile, ctx -> {
+        });
+    }
+
+    /**
+     * 从配置文件引导插件树，根 Context 创建后、任何行装载前回调
+     * {@code onRootCreated}（对齐 DSH 的 prepare 语义）——用于提前挂
+     * 全局监听器（如 plugin/status 状态叙述）。
+     *
+     * @throws BootException 同 {@link #from(Path)}
+     */
+    public static Context from(Path configFile, Consumer<Context> onRootCreated) {
+        Objects.requireNonNull(onRootCreated, "onRootCreated");
         String yamlText = readConfig(configFile);
         List<PluginRow> rows = parseRows(configFile, yamlText);
-        return activate(configFile, rows);
+        return activate(configFile, rows, onRootCreated);
     }
 
     private static String readConfig(Path configFile) {
@@ -104,8 +119,10 @@ public final class Boot {
         return rows;
     }
 
-    private static Context activate(Path configFile, List<PluginRow> rows) {
+    private static Context activate(Path configFile, List<PluginRow> rows,
+                                    Consumer<Context> onRootCreated) {
         Context root = Context.root();
+        onRootCreated.accept(root);
         List<Loaded> loaded = new ArrayList<>(rows.size());
         List<String> problems = new ArrayList<>(rows.size());
         List<Throwable> causes = new ArrayList<>(rows.size());

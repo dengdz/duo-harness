@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.duo</groupId>
+    <artifactId>duo-harness</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>duo-harness-example</artifactId>
+  <description>示例插件与 Demo 入口：一条命令演示 M1 全部机制（服务注入/工具管线/禁用行/状态迁移）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-tools</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <!-- runtime：Demo 运行期要有 SLF4J binding（内核的 warn/info 叙述才可见） -->
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+
+  <properties>
+    <!-- 本模块启用 exec:java（Demo 验收命令的载体） -->
+    <exec.skip>false</exec.skip>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>dev.duo.harness.example.DemoMain</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
