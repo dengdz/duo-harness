@@ -1,6 +1,6 @@
 # duo-harness
 
-Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / 页面 / agent 循环）以插件形式组装。当前为 M1——插件容器内核、工具域骨架与示例 Demo 已落地（0.1.0）。
+Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / 页面 / agent 循环）以插件形式组装。当前为 M1——插件容器内核、工具域骨架与示例 Demo 已落地（0.1.0-SNAPSHOT，未发布）。
 
 ## 一条命令看它做什么
 

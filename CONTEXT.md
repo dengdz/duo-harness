@@ -1,6 +1,6 @@
 # duo-harness
 
-Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（LLM、工具、MCP、页面）以插件形式组装。架构参考 DSH（deepseek-harness），研究资产在 `docs/research/DSH/`。
+Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / 页面 / agent 循环）以插件形式组装。架构参考 DSH（deepseek-harness），研究资产在 `docs/research/DSH/`。
 
 ## Language
 
