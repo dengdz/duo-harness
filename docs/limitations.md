@@ -11,5 +11,5 @@
 | 3 | recheck 的真并发路径未经多线程测试 | 六态迁移经 ReentrantLock 串行化 + LOADING dirty 标志兜底，单线程语义已测；跨线程同时 provide/remove/dispose 的深度竞态为已知未测区 |
 | 4 | isolate 多作用域隔离不可用 | 注册表二阶键已预留，Realm/作用域注入/迁移未实现（M1 决策） |
 | 5 | 工具域强化件缺位 | output schema 契约校验、审批（ask 流程）、guard、并发安全分类、scope 遮蔽——M2 工具域强化交付 |
-| 6 | MCP / Web 双面 / agent 循环未开始 | M2（工具域+MCP）/ M3（页面插件）/ M4（agent+LLM），见 ADR-0004 路线图 |
+| 6 | Web 双面 / agent 循环未开始；MCP 远端工具同步未开始 | M2 进行中（MCP 连接生命周期已落地，工具同步/审批/output 契约待交付）；M3（页面插件）/ M4（agent+LLM）见 ADR-0004 路线图 |
 | 7 | 独立 jar 热加载不可用 | 同 classpath + 配置声明模型（ADR-0001），child Classloader 动态加载保留为扩展点 |
