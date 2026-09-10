@@ -60,3 +60,30 @@ _Avoid_: 拦截器链、中间件
 **config record**:
 插件声明的强类型配置载体（Java record），由内核从配置树绑定，绑定失败即加载失败。是插件对外的配置契约。
 
+### MCP 域
+
+**MCP 服务器（MCP Server）**:
+按 Model Context Protocol 对外暴露工具的外部进程（如 filesystem server）。duo-harness 经连接使用其工具，自身不实现协议之外的能力。
+_Avoid_: MCP 服务（与服务概念混淆）
+
+**MCP 客户端连接（MCP Connection）**:
+duo-harness-mcp 与单个 MCP 服务器之间的会话：首连、重连、工具同步都发生在连接上。一个连接对应一个服务器进程。
+_Avoid_: 通道、MCP 会话
+
+**工具同步（Tool Sync）**:
+把 MCP 服务器暴露的远端工具转换为本地工具并注册进工具域的两阶段过程：先取全量列表校验，再原子换新。同步失败保留旧一代工具继续服务。
+_Avoid_: 工具导入、工具拉取
+
+**审批策略（Approval Policy）**:
+`ask` 决策的裁决者：工具执行被挂起询问时，由它判定放行或拒绝。M2 提供预设实现（auto-approve / always-deny）；交互式审批是未来的一种策略实现，机制与形态分离。
+_Avoid_: 权限、许可、授权
+
+**输出契约（Output Contract）**:
+工具声明的结果 schema 与执行后的校验行为。本地工具与远端工具（若声明 outputSchema）同标准；未声明者宽松透传。
+_Avoid_: 返回值校验
+
+**guard（单调否决）**:
+工具执行前的动态否决检查：返回理由即拒绝，没有"允许"结果，监听器顺序无法把拒绝翻回允许。与三段管线的可否决监听器是两种能力。
+_Avoid_: 拦截器、守卫
+
+
