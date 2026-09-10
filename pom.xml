@@ -72,6 +72,10 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
+          <configuration>
+            <!-- 用例内含子进程（MCP 夹具）：卡死要以失败+线程转储呈现，而不是无限挂起 -->
+            <forkedProcessTimeoutInSeconds>240</forkedProcessTimeoutInSeconds>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>

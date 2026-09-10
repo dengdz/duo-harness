@@ -5,10 +5,12 @@ import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -29,6 +31,8 @@ final class ConnectionSupervisor {
     /** 已归一化的连接配置（serverName/command/重连参数等）。 */
     private final McpConnectionOptions options;
     private final ReconnectPolicy policy;
+    /** 连接事件监听（工具同步挂钩）。 */
+    private final Listener listener;
     /** 状态锁。不用 synchronized：与内核锁惯例一致，虚拟线程不 pin（ADR-0002）。 */
     private final ReentrantLock lock = new ReentrantLock();
     /** 首连完成信号（成功或失败都放行等待者）。 */
@@ -50,8 +54,26 @@ final class ConnectionSupervisor {
     /** 重连循环线程（dispose 时中断退避睡眠）。 */
     private volatile Thread loopThread;
 
+    /** 连接事件监听：CONNECTED 后触发工具同步；预算耗尽/禁用重连后触发工具注销。 */
+    interface Listener {
+        default void onConnected(McpSyncClient client) { }
+
+        /**
+         * 远端 tools/list_changed 通知：载荷是 SDK 已按通知拉取好的全量工具清单
+         * （SDK 的通知处理器内部已完成 listTools 请求，此处直接消费）。
+         */
+        default void onToolsChanged(List<McpSchema.Tool> tools) { }
+
+        default void onGaveUp() { }
+    }
+
     ConnectionSupervisor(McpConnectionOptions options) {
+        this(options, new Listener() { });
+    }
+
+    ConnectionSupervisor(McpConnectionOptions options, Listener listener) {
         this.options = options;
+        this.listener = listener;
         this.policy = new ReconnectPolicy(
                 options.stableWindowMs(), options.reconnectInitialMs(),
                 options.reconnectMaxMs(), options.reconnectMaxAttempts());
@@ -106,8 +128,12 @@ final class ConnectionSupervisor {
                     firstAttempt.countDown();
                     return;
                 }
-                firstAttempt.countDown();
                 log.info("MCP 服务器 [{}] 已连接", server);
+
+                // 工具同步属于"连接就绪"的一部分：完成后才放行 awaitStartup
+                // （同步抛错即连接尝试失败：走下方 catch，由重连预算裁决）
+                listener.onConnected(client);
+                firstAttempt.countDown();
 
                 // 稳定期：阻塞等待 server 进程退出
                 StdioClientTransport active = transport;
@@ -135,12 +161,18 @@ final class ConnectionSupervisor {
                 }
                 closeClientQuietly();
                 if (giveUpOnDrop) {
+                    listener.onGaveUp();
                     return;
                 }
                 log.warn("MCP 服务器 [{}] 断连（存活 {}ms），{}ms 后进行第 {} 次重连",
                         server, uptime, policy.backoffDelayMs(failures), failures);
             } catch (Exception e) {
                 closeClientQuietly();
+                if (closed) {
+                    // 停止请求自身打断了 awaitForExit：不是连接故障，别覆盖 STOPPED 也别记失败
+                    firstAttempt.countDown();
+                    return;
+                }
                 boolean firstAttemptFailed;
                 boolean giveUp;
                 lock.lock();
@@ -164,6 +196,7 @@ final class ConnectionSupervisor {
                     firstAttempt.countDown();
                 }
                 if (giveUp) {
+                    listener.onGaveUp();
                     log.warn("MCP 服务器 [{}] 连接失败（第 {} 次），停止重连", server, failures, e);
                     return;
                 }
@@ -183,6 +216,8 @@ final class ConnectionSupervisor {
         StdioClientTransport newTransport = new StdioClientTransport(params);
         McpSyncClient newClient = McpClient.sync(newTransport)
                 .requestTimeout(Duration.ofMillis(options.requestTimeoutMs()))
+                // 远端工具清单变更 → 自动重同步（SDK 已完成 listTools，回调收到的是全量清单）
+                .toolsChangeConsumer(listener::onToolsChanged)
                 .build();
         try {
             newClient.initialize();
@@ -236,7 +271,7 @@ final class ConnectionSupervisor {
         return firstFailure;
     }
 
-    /** 停止一切：置 STOPPED、关闭当前连接、中断循环线程。幂等。 */
+    /** 停止一切：置 STOPPED、中断循环线程、关闭当前连接。幂等。 */
     void stop() {
         closed = true;
         lock.lock();
@@ -245,10 +280,11 @@ final class ConnectionSupervisor {
         } finally {
             lock.unlock();
         }
-        closeClientQuietly();
+        // 先中断：循环线程可能正阻塞在 awaitForExit，关连接（可能等对端）不该挡住它退出
         Thread t = loopThread;
         if (t != null) {
             t.interrupt();
         }
+        closeClientQuietly();
     }
 }
