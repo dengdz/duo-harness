@@ -22,3 +22,8 @@ logs/
 node_modules/
 
 # .scratch/（spec 与工单）随 git 入库，不忽略——见 docs/agents/issue-tracker.md
+
+# 文档站（VitePress）
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

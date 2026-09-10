@@ -1,0 +1,48 @@
+# 文档站构建与部署：push main（docs 或站点配置变更）时自动执行。
+# 产物部署到 GitHub Pages：https://dengdz.github.io/duo-harness/
+name: docs-site
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', 'README.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package.json
+      - name: 安装依赖
+        working-directory: docs
+        run: npm install
+      - name: 构建 VitePress
+        working-directory: docs
+        run: npm run docs:build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

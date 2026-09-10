@@ -11,6 +11,15 @@ description: 管理 duo-harness 文档的位置和结构——文档在 docs/ �
 
 沿用五章节骨架：01 入门 / 02 指南 / 03 高级 / 04 架构 / 05 参考。`docs/index.md` 为导航唯一入口；`README.md` 只做"摘要 → 详情"的门面，不承载细节——审计时先确认它是否真的存在：未建 README 时，门面职责落在谁身上（CONTEXT.md 兼任或显式决定暂缺）要是一个记录过的决策，规范不默认它已存在。已知限制类内容有唯一清单（如 limitations.md），任何"暂不可用/未接线"的表述以它为准。docs/ 立起后如调整结构，同步更新本节与 index.md。
 
+## 文档网站（VitePress + GitHub Pages，ADR-0005）
+
+`docs/` 同时是文档站的源目录：站点由 VitePress 构建、push main 时 GitHub Actions 自动部署到 `https://dengdz.github.io/duo-harness/`（配置在 `docs/.vitepress/config.mts` 与 `.github/workflows/docs.yml`）。
+
+- **上站范围**：五章节正式内容 + limitations + adr；内部开发文档（`docs/agents/`、`docs/research/`）经 `srcExclude` 排除不上站——指向它们的 markdown 链接在站点上是死链，构建配置以 `ignoreDeadLinks` 显式容忍（有意取舍）
+- **新增篇章后**：同步更新 `config.mts` 的 nav/sidebar，否则站点导航看不到它
+- **本地预览**：`cd docs && npm run docs:dev`（需 Node）；改动发布以 push main 为准，CI 自动构建部署
+- **构建验证**：结构或导航变更后跑 `npm run docs:build` 确认无死链阻断再提交
+
 ## 先结构，后文字
 
 对范围内每篇文档按此顺序检查（历史 ADR 不适用结构改造；新建 ADR 的最小骨架：Status / 决策与理由 / 拒绝的选项 / Consequences——骨架齐全才算立卷）：

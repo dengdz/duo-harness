@@ -106,7 +106,7 @@ git push origin {版本号}
 ### 第八步：发布确认
 
 - 推送后验证远端引用与本地一致
-- 如有自动部署/发布产物流程（网站、CI、tag 发布），等待其完成后确认；未更新时检查其日志
+- 文档站（GitHub Pages）：push main 后 GitHub Actions 自动构建部署（`.github/workflows/docs.yml`），在仓库 Actions 页确认 `docs-site` 工作流成功、站点内容已更新；失败时查该工作流日志
 
 ## 红线（必须遵守）
 
