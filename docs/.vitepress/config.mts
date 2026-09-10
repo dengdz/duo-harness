@@ -7,6 +7,8 @@ export default defineConfig({
   lang: 'zh-CN',
   title: 'duo-harness',
   description: 'Java 插件化 AI agent harness：内核为自研轻量插件容器，能力以插件组装',
+  // GitHub Pages 项目站部署在 /duo-harness/ 子路径下——资源与链接都要带此前缀
+  base: '/duo-harness/',
   ignoreDeadLinks: true,
   srcExclude: ['**/agents/**', '**/research/**'],
   themeConfig: {
