@@ -23,7 +23,8 @@ class ServicesTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：ServicesTest —— 服务注入：provide/Service 基类发布、as 视图寻址（方法名即服务名+类型校验）、inject 声明许可、依赖缺失挂起、注销级联停依赖方（14 用例） ===");
+        System.out.println("\n=== 套件：ServicesTest —— 服务注入：provide/Service 基类发布、as 视图寻址"
+                + "（方法名即服务名+类型校验）、inject 声明许可、依赖缺失挂起、注销级联停依赖方（14 用例） ===");
     }
 
 

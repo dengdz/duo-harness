@@ -22,7 +22,8 @@ class LifecycleTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：LifecycleTest —— 六态与 epoch：状态迁移事件广播、依赖消失回 PENDING、服务回归/换实现自动重启、失败隔离（FAILED 兄弟无感）、DISPOSED 终态不复活（10 用例） ===");
+        System.out.println("\n=== 套件：LifecycleTest —— 六态与 epoch：状态迁移事件广播、依赖消失回 PENDING、"
+                + "服务回归/换实现自动重启、失败隔离（FAILED 兄弟无感）、DISPOSED 终态不复活（10 用例） ===");
     }
 
 

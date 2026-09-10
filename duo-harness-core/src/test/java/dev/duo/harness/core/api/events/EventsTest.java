@@ -28,7 +28,8 @@ class EventsTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：EventsTest —— 事件五模式：emit 异常隔离、waterfall 否决/参数改写/返回包装、serial·bail 顺序投票、parallel 并发聚合、监听器随作用域摘除（18 用例） ===");
+        System.out.println("\n=== 套件：EventsTest —— 事件五模式：emit 异常隔离、waterfall 否决/参数改写/返回包装、"
+                + "serial·bail 顺序投票、parallel 并发聚合、监听器随作用域摘除（18 用例） ===");
     }
 
 

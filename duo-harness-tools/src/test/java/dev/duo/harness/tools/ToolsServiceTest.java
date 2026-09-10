@@ -30,7 +30,8 @@ class ToolsServiceTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：ToolsServiceTest —— 工具域三段管线：pre 准入否决（否决后本体不执行）、execute around 包装、post 结果改写与转错误、工具异常收敛 error 结果、插件停止自动注销工具（10 用例） ===");
+        System.out.println("\n=== 套件：ToolsServiceTest —— 工具域三段管线：pre 准入否决（否决后本体不执行）、"
+                + "execute around 包装、post 结果改写与转错误、工具异常收敛 error 结果、插件停止自动注销工具（10 用例） ===");
     }
 
 

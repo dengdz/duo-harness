@@ -27,7 +27,8 @@ class BootTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：BootTest —— 配置驱动 boot：行加载（行序无关）、审计点名（缺失服务/坏配置定位/重复 id/未知类）、disabled 行跳过、失败整树回滚（14 用例） ===");
+        System.out.println("\n=== 套件：BootTest —— 配置驱动 boot：行加载（行序无关）、"
+                + "审计点名（缺失服务/坏配置定位/重复 id/未知类）、disabled 行跳过、失败整树回滚（14 用例） ===");
     }
 
 

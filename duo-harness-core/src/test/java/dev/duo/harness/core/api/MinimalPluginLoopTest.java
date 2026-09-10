@@ -19,7 +19,8 @@ class MinimalPluginLoopTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：MinimalPluginLoopTest —— 插件闭环：apply 运行、config 严格绑定（缺字段/类型错点名）、effect 逆序回滚、销毁后拒绝注册（12 用例） ===");
+        System.out.println("\n=== 套件：MinimalPluginLoopTest —— 插件闭环：apply 运行、"
+                + "config 严格绑定（缺字段/类型错点名）、effect 逆序回滚、销毁后拒绝注册（12 用例） ===");
     }
 
 
