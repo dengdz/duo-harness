@@ -88,13 +88,23 @@ final class ConnectionSupervisor {
             try {
                 connectOnce();
                 long startedAt = System.currentTimeMillis();
+                boolean stopRequested;
                 lock.lock();
                 try {
-                    failures = 0;
-                    connectedAt = startedAt;
-                    state = State.CONNECTED;
+                    // stop() 竞态：连接虽成，但插件已要求停止——不置 CONNECTED，关闭新连接
+                    stopRequested = closed;
+                    if (!stopRequested) {
+                        failures = 0;
+                        connectedAt = startedAt;
+                        state = State.CONNECTED;
+                    }
                 } finally {
                     lock.unlock();
+                }
+                if (stopRequested) {
+                    closeClientQuietly();
+                    firstAttempt.countDown();
+                    return;
                 }
                 firstAttempt.countDown();
                 log.info("MCP 服务器 [{}] 已连接", server);
@@ -108,44 +118,54 @@ final class ConnectionSupervisor {
                     return;
                 }
                 long uptime = System.currentTimeMillis() - connectedAt;
+                boolean giveUpOnDrop;
                 lock.lock();
                 try {
                     failures = policy.failuresAfterDrop(uptime, failures);
-                    if (policy.budgetExhausted(failures)) {
+                    giveUpOnDrop = policy.budgetExhausted(failures) || !options.reconnectEnabled();
+                    if (giveUpOnDrop) {
                         state = State.GAVE_UP;
-                        log.warn("MCP 服务器 [{}] 重连预算耗尽（{} 次），停止重连", server, failures);
-                        return;
+                        log.warn("MCP 服务器 [{}] 断连后{}，停止重连", server,
+                                options.reconnectEnabled() ? "重连预算耗尽（" + failures + " 次）" : "重连已禁用");
+                    } else {
+                        state = State.BACKOFF;
                     }
-                    state = State.BACKOFF;
                 } finally {
                     lock.unlock();
+                }
+                closeClientQuietly();
+                if (giveUpOnDrop) {
+                    return;
                 }
                 log.warn("MCP 服务器 [{}] 断连（存活 {}ms），{}ms 后进行第 {} 次重连",
                         server, uptime, policy.backoffDelayMs(failures), failures);
             } catch (Exception e) {
                 closeClientQuietly();
+                boolean firstAttemptFailed;
+                boolean giveUp;
                 lock.lock();
                 try {
                     failures = policy.failuresAfterDrop(0, failures);
-                    if (policy.budgetExhausted(failures)) {
+                    firstAttemptFailed = firstAttempt.getCount() > 0;
+                    // 首连失败且 failOnStartupError：插件即将 FAILED——继续重试只会拉起僵尸进程
+                    giveUp = policy.budgetExhausted(failures)
+                            || (firstAttemptFailed && options.failOnStartupError())
+                            || !options.reconnectEnabled();
+                    if (giveUp) {
                         state = State.GAVE_UP;
-                        log.warn("MCP 服务器 [{}] 连接预算耗尽（{} 次），停止重连", server, failures);
-                        return;
+                    } else {
+                        state = State.BACKOFF;
                     }
-                    state = State.BACKOFF;
                 } finally {
                     lock.unlock();
                 }
-                boolean firstAttemptFailed = firstAttempt.getCount() > 0;
                 if (firstAttemptFailed) {
                     firstFailure = e;
                     firstAttempt.countDown();
-                    // failOnStartupError 意味着插件即将 FAILED——后台继续重试会拉起僵尸进程
-                    if (options.failOnStartupError()) {
-                        state = State.GAVE_UP;
-                        log.warn("MCP 服务器 [{}] 首连失败且 failOnStartupError=true，停止重连", server);
-                        return;
-                    }
+                }
+                if (giveUp) {
+                    log.warn("MCP 服务器 [{}] 连接失败（第 {} 次），停止重连", server, failures, e);
+                    return;
                 }
                 log.warn("MCP 服务器 [{}] 连接失败（第 {} 次），{}ms 后重试",
                         server, failures, policy.backoffDelayMs(failures), e);
@@ -164,7 +184,16 @@ final class ConnectionSupervisor {
         McpSyncClient newClient = McpClient.sync(newTransport)
                 .requestTimeout(Duration.ofMillis(options.requestTimeoutMs()))
                 .build();
-        newClient.initialize();
+        try {
+            newClient.initialize();
+        } catch (Exception e) {
+            try {
+                newClient.close();   // 同步关闭级联关闭传输与 server 进程——防每次失败尝试泄漏一个进程
+            } catch (RuntimeException ignored) {
+                // 进程已死的场景：关闭失败无碍
+            }
+            throw e;
+        }
         transport = newTransport;
         client = newClient;
     }
