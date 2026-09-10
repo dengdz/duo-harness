@@ -1,0 +1,16 @@
+plugins:
+  # 工具域：一行启用整个域
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  # 审批策略：auto-approve + 白名单只放 read_file；delete_file 在白名单外被拒
+  - id: approval
+    name: dev.duo.harness.tools.ApprovalPlugin
+    config:
+      policy: auto-approve
+      allowedTools:
+        - read_file
+
+  # 演示工具：read_file / delete_file 声明需审批，echo 不声明
+  - id: approval-tools
+    name: dev.duo.harness.example.approval.ApprovalToolsPlugin

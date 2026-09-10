@@ -37,19 +37,7 @@
   </dependencies>
 
   <properties>
-    <!-- 本模块启用 exec:java（Demo 验收命令的载体） -->
+    <!-- 本模块启用 exec:java（Demo 验收命令的载体）；演示入口经 -Dexec.mainClass 切换 -->
     <exec.skip>false</exec.skip>
   </properties>
-
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <configuration>
-          <mainClass>dev.duo.harness.example.DemoMain</mainClass>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
 </project>
