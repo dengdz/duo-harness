@@ -18,6 +18,16 @@ public interface ToolDefinition {
     JsonNode parameters();
 
     /**
+     * 工具自身声明"每次调用需审批"（ask 三态）。
+     *
+     * <p>默认 false。返回 true 即本次执行进入审批流程：由审批策略服务的
+     * 解析者（{@code tools/pre-execute} 监听器）裁决，未配置策略则拒绝。</p>
+     */
+    default boolean requiresApproval() {
+        return false;
+    }
+
+    /**
      * 工具本体：在三段管线的 execute 段（around 终端）执行。
      *
      * @throws Exception 转为 error 结果（isError=true），不向调用方上抛——

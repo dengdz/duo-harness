@@ -11,7 +11,9 @@ import dev.duo.harness.core.api.Disposable;
  * <p>三段管线事件名（waterfall 监听器挂点，载荷均为 {@link ToolExecution}）：</p>
  * <ul>
  *   <li>{@value #PRE_EXECUTE}：准入段。监听器可 {@link ToolExecution#deny(String)}
- *       否决并不调 next（否决含默认放行）。</li>
+ *       否决并不调 next（否决含默认放行）；亦可经
+ *       {@link ToolExecution#requestApproval()} 声明本调用需审批（ask 三态），
+ *       交由审批策略服务裁决——无策略解析者时按"未配置即拒"处理。</li>
  *   <li>{@value #EXECUTE}：本体段。around 终端即工具 execute；
  *       超时/重试类包装监听器挂此段。</li>
  *   <li>{@value #POST_EXECUTE}：结果治理段。监听器可改写结果或转错误形态。</li>

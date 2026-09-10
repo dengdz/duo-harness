@@ -17,6 +17,10 @@ public final class ToolExecution {
 
     /** pre-execute 否决理由；非 null 即已否决。 */
     private String denyReason;
+    /** pre-execute 审批请求标志；true 表示需策略服务裁决（ask 三态）。 */
+    private boolean approvalRequested;
+    /** 审批裁决结果；null 表示请求尚未被任何解析者裁决。 */
+    private ApprovalDecision approvalDecision;
     /** 执行结果；post-execute 段可改写。 */
     private Object result;
     /** 结果是否为错误形态。 */
@@ -51,6 +55,35 @@ public final class ToolExecution {
     /** 否决理由（未否决为 null）。 */
     public String denyReason() {
         return denyReason;
+    }
+
+    /**
+     * pre-execute 监听器声明本次调用需审批（ask 三态）。声明者不裁决，
+     * 只标记"此调用需要审批"，裁决权交给审批策略服务的解析者（
+     * {@link #resolveApproval(ApprovalDecision)}）。与 {@link #deny(String)}
+     * 互斥：直接 deny 占先，审批段不执行。
+     */
+    public void requestApproval() {
+        this.approvalRequested = true;
+    }
+
+    /** 是否有声明者请求了审批（工具自身声明或 pre-execute 监听器声明）。 */
+    public boolean approvalRequested() {
+        return approvalRequested;
+    }
+
+    /**
+     * 审批策略服务解析者写入裁决结果（同时置位请求标志——裁决蕴含已请求）。
+     * 请求未被解析时由管线按"未配置即拒"处理。
+     */
+    public void resolveApproval(ApprovalDecision decision) {
+        this.approvalRequested = true;
+        this.approvalDecision = decision;
+    }
+
+    /** 审批裁决结果；未被解析为 null。 */
+    public ApprovalDecision approvalDecision() {
+        return approvalDecision;
     }
 
     /** execute 段写入执行结果（正常形态）。 */
