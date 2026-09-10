@@ -1,0 +1,4 @@
+plugins:
+  # 工具域：一行启用整个域
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
