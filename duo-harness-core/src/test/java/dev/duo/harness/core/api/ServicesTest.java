@@ -1,5 +1,6 @@
 package dev.duo.harness.core.api;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -19,6 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 依赖缺失挂起、注销停依赖方、级联传导。只断言公共 API 的可观测行为。
  */
 class ServicesTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：ServicesTest —— 服务注入：provide/Service 基类发布、as 视图寻址（方法名即服务名+类型校验）、inject 声明许可、依赖缺失挂起、注销级联停依赖方（14 用例） ===");
+    }
+
 
     /** 测试用服务契约与实现。 */
     interface Tools {

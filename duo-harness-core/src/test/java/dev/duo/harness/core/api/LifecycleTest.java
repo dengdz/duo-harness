@@ -1,6 +1,7 @@
 package dev.duo.harness.core.api;
 
 import dev.duo.harness.core.api.events.PluginStatus;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -18,6 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 停止/回归重启/换实现重启、失败隔离、状态事件广播。
  */
 class LifecycleTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：LifecycleTest —— 六态与 epoch：状态迁移事件广播、依赖消失回 PENDING、服务回归/换实现自动重启、失败隔离（FAILED 兄弟无感）、DISPOSED 终态不复活（10 用例） ===");
+    }
+
 
     interface Tools {
         String name();

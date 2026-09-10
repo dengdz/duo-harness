@@ -5,6 +5,7 @@ import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginHandle;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.PluginException;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -24,6 +25,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 生命周期的绑定、监听器异常隔离。只断言公共 API 的可观测行为。
  */
 class EventsTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：EventsTest —— 事件五模式：emit 异常隔离、waterfall 否决/参数改写/返回包装、serial·bail 顺序投票、parallel 并发聚合、监听器随作用域摘除（18 用例） ===");
+    }
+
 
     /** 记录调用轨迹的监听器工厂：args 原样返回（弃权）或返回指定投票值。 */
     private static EventListener recorder(List<String> log, String tag, Object vote) {
@@ -280,5 +287,24 @@ class EventsTest {
 
         assertNull(root.serial("vote", null));
         assertFalse(Boolean.TRUE.equals(root.serial("vote", null)));
+    }
+
+    @Test
+    void waterfallDispatchDoesNotInvokePlainListeners() {
+        Context root = Context.root();
+        List<String> log = new ArrayList<>();
+        // 同名事件挂两种监听器
+        root.on("mixed", args -> { log.add("普通监听器被执行"); return null; });
+        root.on("mixed", (WaterfallListener<String, String>) (args, next) -> {
+            log.add("瀑布监听器被执行");
+            return next.invoke(args);
+        });
+
+        // waterfall 派发：只走瀑布表
+        root.waterfall("mixed", "payload", args -> "终端结果");
+
+        // 断言：瀑布监听器执行了、普通监听器没执行（两张表互不可见）
+        assertEquals(List.of("瀑布监听器被执行"), log,
+                "waterfall 只查瀑布表，普通监听器不应被调用");
     }
 }

@@ -1,5 +1,6 @@
 package dev.duo.harness.example;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -13,6 +14,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Demo 冒烟测试：完整跑一遍 DemoMain.run，断言输出叙述覆盖全部演示机制。
  */
 class DemoMainTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：DemoMainTest —— Demo 冒烟：一条命令跑通，输出叙述覆盖 boot/服务注入/三段管线/级联停止/整树回滚全部机制（1 用例） ===");
+    }
+
 
     @Test
     void demoNarratesAllMechanisms() throws Exception {

@@ -3,6 +3,7 @@ package dev.duo.harness.core.api.boot;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -23,6 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 测试插件用静态嵌套类（FQCN 可被 Class.forName 寻址）。
  */
 class BootTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：BootTest —— 配置驱动 boot：行加载（行序无关）、审计点名（缺失服务/坏配置定位/重复 id/未知类）、disabled 行跳过、失败整树回滚（14 用例） ===");
+    }
+
 
     @TempDir
     Path tempDir;

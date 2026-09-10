@@ -10,6 +10,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.events.WaterfallListener;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.Set;
@@ -26,6 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 走服务视图注册/执行，验证三段 waterfall 语义与生命周期绑定。
  */
 class ToolsServiceTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：ToolsServiceTest —— 工具域三段管线：pre 准入否决（否决后本体不执行）、execute around 包装、post 结果改写与转错误、工具异常收敛 error 结果、插件停止自动注销工具（10 用例） ===");
+    }
+
 
     /** 服务视图接口（方法名即服务名）。 */
     interface ToolsView {

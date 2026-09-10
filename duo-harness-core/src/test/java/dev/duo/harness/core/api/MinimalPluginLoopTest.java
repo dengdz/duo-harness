@@ -1,5 +1,6 @@
 package dev.duo.harness.core.api;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -15,6 +16,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 只断言公共 API 的可观测行为，不触实现细节。
  */
 class MinimalPluginLoopTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：MinimalPluginLoopTest —— 插件闭环：apply 运行、config 严格绑定（缺字段/类型错点名）、effect 逆序回滚、销毁后拒绝注册（12 用例） ===");
+    }
+
 
     /** 示例 config record：验证 Map → 强类型绑定。 */
     record GreetingConfig(String greeting, int times) {}
