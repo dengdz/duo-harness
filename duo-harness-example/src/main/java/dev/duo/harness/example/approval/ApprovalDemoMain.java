@@ -72,14 +72,22 @@ public final class ApprovalDemoMain {
         out.println("=== 三幕结束（整树均已回滚）===");
         out.println("说明：上方 [审批决策] 行是安全审计日志（结果 + 策略来源 + 工具名）。");
         out.println("     来源 always-deny / auto-approve 是策略署名；来源 none 表示无策略解析者，管线兜底拒。");
+        out.flush();
     }
 
-    /** 逐个调用三个工具并叙述结果（审批行为的观测量就是这三行）。 */
+    /**
+     * 逐个调用三个工具并叙述结果（审批行为的观测量就是这三行）。
+     *
+     * <p>幕末显式刷盘：审计日志走标准错误（立即刷），叙述走标准输出——
+     * 标准输出在非终端环境（IDE 控制台）不缓冲到刷新点，不刷则同一幕的
+     * 日志与叙述会被拆到输出两端，逐行核对读不出来。</p>
+     */
     private static void callAll(PrintStream out, Context root) {
         ToolsService tools = root.as(ToolsView.class).tools();
         report(out, ApprovalToolsPlugin.READ, tools);
         report(out, ApprovalToolsPlugin.DELETE, tools);
         report(out, ApprovalToolsPlugin.ECHO, tools);
+        out.flush();
     }
 
     private static void report(PrintStream out, String toolName, ToolsService tools) {
