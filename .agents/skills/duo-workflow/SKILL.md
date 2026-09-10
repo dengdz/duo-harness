@@ -38,14 +38,25 @@ description: duo-harness 开发流程总规范——任何开发类请求的入�
 - UI 改动：改前截图留档，改后用 browser-use 截图对比，视觉确认才算完成
 - 非 UI：跑覆盖该处的最窄测试
 
+## 验收（用户手动运行验证）
+
+agent 测试全绿 ≠ 验收。验收件的准备与用户手动运行验证的完整流程见 [duo-acceptance](../duo-acceptance/SKILL.md)——工单级最小演示 + 里程碑汇总 Demo，用户亲手跑过确认才算 done。
+
+## 理解关卡（阶段闸门）
+
+验收通过 ≠ 可以开下一阶段：用户必须先过 [duo-comprehension](../duo-comprehension/SKILL.md)（按机制主题切课、先讲后考、90 分），feature 目录的 `comprehension.md` 凭证齐备后才拆下一阶段工单——AI 写的代码，用户不理解，项目就成了用户自己的屎山。
+
 ## 提交前核对清单
 
 任何提交（含独立的提交请求）动 git 前：
 
-1. **版本上下文**：读 CHANGELOG.md 顶部版本段；用户可见变更在未发布段补条目
-2. **分支归属**：当前应在版本分支上；在 main 上（或仓库尚无提交）时，先按 [版本号规范](references/版本号.md) 建/切版本分支，不往 main 堆开发提交
-3. 以上通过后走 git-commit-gen（暂存分组确认，未经确认不 commit）
+1. **验收件就绪**：功能类提交须已按"验收（用户手动运行验证）"备好 example 与详细日志；用户已运行确认（或明确说先提交后补验）
+2. **版本上下文**：读 CHANGELOG.md 顶部版本段；用户可见变更在未发布段补条目
+3. **分支归属**：当前应在版本分支上；在 main 上（或仓库尚无提交）时，先按 [版本号规范](references/版本号.md) 建/切版本分支，不往 main 堆开发提交
+4. 以上通过后走 git-commit-gen（暂存分组确认，未经确认不 commit）
 
 ## 工程设施
 
 本地 issue tracker 与领域文档（术语表 / ADR）的使用规范见 [duo-tracker](../duo-tracker/SKILL.md)。
+
+**路由同步**：根 AGENTS.md 的路由表与各技能 description 是同一路由的两个视图——增删触发分支必须同一 diff 改两处。

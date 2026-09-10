@@ -29,7 +29,7 @@ git diff --name-only --cached   # 已暂存
 |---------|---------|
 | 某模块 `src/main/**` 的行为变更 | 拥有该行为的测试类：`mvn test -pl <module> -Dtest=XxxTest`；共享契约（跨模块的数据类型、接口）变化时加跑相邻测试 |
 | 示例/演示模块 | `mvn compile -q`（示例无测试，编译即证据） |
-| `docs/**`、`README.md` | 内部链接校验：抽查每个相对链接指向的文件存在 |
+| `docs/**`、`README.md` | 内部链接校验（解析基准与规则见 [duo-doc-standards](../duo-doc-standards/SKILL.md) 的验证节） |
 | `pom.xml`、依赖、构建配置 | `mvn clean test` 全量（构建变更影响一切） |
 | 对外 API 签名变更 | 全量 `mvn clean test` + `grep -rn "旧方法名" --include="*.md" docs/ README.md`（文档同步证据） |
 | 持久化格式/编解码变更 | 全量跑受影响模块的测试（序列化格式影响兼容） |

@@ -11,10 +11,12 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 | 推一下 / 推送前检查 | duo-pre-push-checks |
 | 审查一下改动 | duo-code-review |
 | 清理一下注释 | duo-trim-cot-leakage |
-| 建个模块 / 这个类放哪 | duo-project-structure |
+| 建个模块 / 这个类放哪 / 审查目录结构 | duo-project-structure |
 | 写 spec / 建工单 / 记 ADR / 更新术语表 | duo-tracker |
 | 看一看 DSH 某功能 / 看看某项目怎么做的 | duo-research |
-| 这个文档放哪 / 整理文档 | duo-doc-standards + duo-prose-standard |
+| 这个文档放哪 / 整理文档 / 审计文档 | duo-doc-standards + duo-prose-standard |
+| 验收 / 手动验证 / 跑给我看 | duo-acceptance |
+| 想了解一下 / 熟悉阶段内容 / 讲讲这次改动 | duo-comprehension |
 | 发布版本 / 开分支 / 合并推送 | duo-release-workflow |
 
 ## 显式命令（模型不能自动触发，由你调用）

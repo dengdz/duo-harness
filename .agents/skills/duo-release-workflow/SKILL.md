@@ -4,7 +4,7 @@ description: |
   duo-harness 的版本发布流程：创建版本分支、开发、审查、验收、合并回 main、
   推送的完整生命周期。用户说"发布版本"、"开个分支"、"创建分支"、
   "合并推送"、"准备发布"时触发。需求入口分流与提交核对由 duo-workflow 负责，
-  版本号规则见其 references/版本号.md。
+  版本号规则见 duo-workflow 的 references/版本号.md。
 ---
 
 # duo-harness 版本发布流程
@@ -45,7 +45,7 @@ git checkout -b {版本号}    # 如 0.7.0
 4. **文档同步**（同一 diff 内完成，按 [duo-doc-standards](../duo-doc-standards/SKILL.md) 归位）：
    - 新功能 → docs/ 对应章节指南
    - 接口变更 → 参考篇更新
-   - CHANGELOG.md：分支创建时建版本段，用户可见变更随 diff 补入未发布段
+   - CHANGELOG.md：分支创建时建版本段（条目记账按 [duo-workflow](../duo-workflow/SKILL.md) 的提交前核对清单执行）
    - README.md 特性列表（如有新特性）
 
 ### 第四步：代码审查
@@ -54,7 +54,7 @@ git checkout -b {版本号}    # 如 0.7.0
 |---|---|---|
 | OCR 审查 | 每次 diff | `ocr review --audience agent` |
 | 双轴审查 | 大需求 / 多工单改动 | code-review（Standards + Spec 两轴，比较基点取分支起点） |
-| 通用 Java 规约 | Java 代码 | 人工对照规约逐条检查 |
+| 通用 Java 规约 | Java 代码 | 并入 OCR 行级意见（执行与分批策略见 [duo-code-review](../duo-code-review/SKILL.md)） |
 | 专项审查 | 并发/安全/性能 | 按需针对性推演 |
 
 审查发现的问题**全部修复并验证后**才进入下一步。审查标准见 [duo-code-review](../duo-code-review/SKILL.md)。
@@ -110,9 +110,7 @@ git push origin {版本号}
 
 ## 红线（必须遵守）
 
-1. **API key 永不入库**（.env 进 .gitignore，代码中通过环境变量/配置加载读取，不硬编码）
-2. **未经用户确认不得合并到 main**
-3. **未经用户确认不得推送到远程**
-4. **文档与代码必须同一 diff 内同步**
-5. **引入新依赖须先征得用户同意**（`TODO(立项后):` 在此登记项目级依赖红线）
-6. **推送前必须做密钥安全扫描**
+红线的唯一权威是根 AGENTS.md（密钥不入库、合并/推送须用户确认、文档同 diff 同步、新依赖先征得同意、CHANGELOG 版本锚点）——本流程不抄录副本，与红线相抵触即停；密钥扫描的具体动作在第六步。发布流程特有的守卫：
+
+1. **推送后验证远端引用与本地 HEAD 一致**
+2. **改写历史必须走精确租约强推**（`--force-with-lease`，见 [duo-pre-push-checks](../duo-pre-push-checks/SKILL.md)；裸 `--force` 永远不允许）

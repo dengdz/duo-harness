@@ -26,6 +26,7 @@
   ```
 
 - 状态记录在文件顶部附近的 `Status:` 行：`ready-for-agent`（待实现）/ `in-progress` / `done`
+- **done 的定义**：用户手动运行验收件确认通过（流程见 [duo-acceptance](../../.agents/skills/duo-acceptance/SKILL.md)）——缺用户验证时 Status 停在 `in-progress`，Comments 注明"待手动验证"
 - 评论与过程记录追加到文件末尾 `## Comments` 小节之下
 
 ## 技能说"发布到 issue tracker"时

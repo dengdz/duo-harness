@@ -1,6 +1,6 @@
 ---
 name: duo-research
-description: 参考项目功能分析与持久化——研究外部开源项目（如 DSH = deepseek-harness）某个功能是怎么实现的，产出架构设计、代码说明、细节备忘三份文档落到 docs/research/，后续直接读文件、不重扫源码。本地克隆每次分析前先 git pull 拉最新并记录 commit 锚点。用户说"看一看 DSH，XXX 功能"、"看看这个项目的 XXX 是怎么实现的"、"研究一下 XXX"时触发。
+description: 参考项目功能分析与持久化——研究外部开源项目（如 DSH = deepseek-harness）某个功能是怎么实现的，结论落盘 docs/research/ 供后续会话直接读文件复用。用户说"看一看 DSH，XXX 功能"、"看看这个项目的 XXX 是怎么实现的"、"研究一下 XXX"时触发。
 ---
 
 # duo-harness 参考项目研究
