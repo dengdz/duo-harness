@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -138,6 +139,34 @@ class McpToolSyncTest {
         assertTrue(boom.isError(), "远端 isError 应为错误形态");
         assertTrue(String.valueOf(boom.value()).contains("远端拒绝执行"), String.valueOf(boom.value()));
 
+        mcp.dispose();
+    }
+
+    @Test
+    void remoteOutputSchemaIsWiredAndCompliantResultPasses() throws Exception {
+        PluginHandle mcp = mount("typed-test", "normal", false, 3);
+        mcp.awaitStartup();
+
+        // 远端声明 outputSchema 的工具：structuredContent 经三段管线 + 契约校验后放行
+        ToolResult result = tools().execute("mcp__typed-test__typed", null);
+
+        assertFalse(result.isError(), "合规的 structuredContent 应放行: " + result.value());
+        assertEquals(Map.of("result", "typed ok"), result.value(), "返回值应为 structuredContent");
+        mcp.dispose();
+    }
+
+    @Test
+    void remoteContractViolationBecomesNamedError() throws Exception {
+        PluginHandle mcp = mount("typed-test", "normal", false, 3);
+        mcp.awaitStartup();
+
+        // 远端声明了契约但 structuredContent 违约：SDK server 侧先校验并返回 isError
+        // （防线一）；若 server 放行，本地契约校验兜底（防线二）。两道防线都不许静默成功。
+        ToolResult result = tools().execute("mcp__typed-test__typed_bad", null);
+
+        assertTrue(result.isError(), "违约 structuredContent 应被点名拒绝");
+        String msg = String.valueOf(result.value());
+        assertTrue(msg.contains("outputSchema"), "应点名契约违约: " + msg);
         mcp.dispose();
     }
 

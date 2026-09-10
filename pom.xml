@@ -24,7 +24,9 @@
     <jackson.version>2.21.2</jackson.version>
     <junit.version>6.0.3</junit.version>
     <slf4j.version>2.0.17</slf4j.version>
-    <mcp-sdk.version>0.10.0</mcp-sdk.version>
+    <mcp-sdk.version>0.18.1</mcp-sdk.version>
+    <!-- 跟随 mcp-json-jackson2:0.18.1 的 compile 依赖要求（2.0.0）；1.5.0 缺 SDK 所需类 -->
+    <networknt.version>2.0.0</networknt.version>
     <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>
     <!-- reactor 模式：exec:java 仅在 example 模块启用（其余模块跳过） -->
     <exec.skip>true</exec.skip>
@@ -57,6 +59,12 @@
         <groupId>io.modelcontextprotocol.sdk</groupId>
         <artifactId>mcp</artifactId>
         <version>${mcp-sdk.version}</version>
+      </dependency>
+      <!-- 工具输出契约校验（工单 04；票据注明 nexus 已核实、新依赖已获同意） -->
+      <dependency>
+        <groupId>com.networknt</groupId>
+        <artifactId>json-schema-validator</artifactId>
+        <version>${networknt.version}</version>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>

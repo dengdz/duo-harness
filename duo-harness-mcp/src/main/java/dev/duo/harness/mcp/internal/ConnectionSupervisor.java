@@ -1,10 +1,13 @@
 package dev.duo.harness.mcp.internal;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +30,9 @@ final class ConnectionSupervisor {
     enum State { CONNECTING, CONNECTED, BACKOFF, GAVE_UP, STOPPED }
 
     private static final Logger log = LoggerFactory.getLogger(ConnectionSupervisor.class);
+
+    /** stdio 帧的 JSON 绑定（SDK 0.18 起传输层要求显式 mapper；Jackson 2 栈）。 */
+    private static final McpJsonMapper JSON_MAPPER = new JacksonMcpJsonMapper(new ObjectMapper());
 
     /** 已归一化的连接配置（serverName/command/重连参数等）。 */
     private final McpConnectionOptions options;
@@ -213,7 +219,7 @@ final class ConnectionSupervisor {
                 .args(options.args())
                 .env(options.env())
                 .build();
-        StdioClientTransport newTransport = new StdioClientTransport(params);
+        StdioClientTransport newTransport = new StdioClientTransport(params, JSON_MAPPER);
         McpSyncClient newClient = McpClient.sync(newTransport)
                 .requestTimeout(Duration.ofMillis(options.requestTimeoutMs()))
                 // 远端工具清单变更 → 自动重同步（SDK 已完成 listTools，回调收到的是全量清单）

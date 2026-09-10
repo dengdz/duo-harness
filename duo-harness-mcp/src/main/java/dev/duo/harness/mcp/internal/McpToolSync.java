@@ -192,12 +192,21 @@ final class McpToolSync {
         return defs;
     }
 
-    /** 远端 Tool → 本地 ToolDefinition（output 契约校验属 04，此处宽松透传）。 */
+    /**
+     * 远端 Tool → 本地 ToolDefinition。
+     *
+     * <p>双轨制：远端声明了 outputSchema 则带入本地输出契约（与本地工具同标准，
+     * 违约由工具域点名）；未声明则宽松透传。调用映射优先 structuredContent
+     * （outputSchema 校验的对象），无则回退 text content。</p>
+     */
     private ToolDefinition convert(McpSchema.Tool tool) {
         String publicName = publicToolName(serverName, tool.name());
         String description = (tool.description() == null ? "" : tool.description())
                 + "（MCP: " + serverName + "）";
         JsonNode parameters = mapper.valueToTree(tool.inputSchema());
+        JsonNode output = tool.outputSchema() == null
+                ? null
+                : mapper.valueToTree(tool.outputSchema());
         return new ToolDefinition() {
             @Override
             public String name() {
@@ -215,16 +224,25 @@ final class McpToolSync {
             }
 
             @Override
+            public JsonNode output() {
+                return output;
+            }
+
+            @Override
             public Object execute(ToolExecution execution) {
                 Map<String, Object> args = execution.args().isNull()
                         ? Map.of()
                         : mapper.convertValue(execution.args(), Map.class);
                 McpSchema.CallToolResult result =
                         activeClient.callTool(new McpSchema.CallToolRequest(tool.name(), args));
+                // isError 先于 structuredContent：错误形态可能携带结构化载荷，不能当成功返回
                 String text = extractText(result);
                 if (Boolean.TRUE.equals(result.isError())) {
                     // 抛错：三段管线把它收敛为 error 结果（工具错误是业务结果不是系统故障）
                     throw new PluginException("MCP 工具返回错误: " + text);
+                }
+                if (result.structuredContent() != null) {
+                    return result.structuredContent();
                 }
                 return text;
             }

@@ -18,6 +18,17 @@ public interface ToolDefinition {
     JsonNode parameters();
 
     /**
+     * 输出契约（结果 JSON Schema；null 即未声明——宽松透传，不校验）。
+     *
+     * <p>声明即校验：执行结果经本契约校验，违约转 error 结果并点名违约原因
+     * （与工具异常收敛同一出口）。MCP 远端声明 outputSchema 的工具经同步
+     * 带入本声明，与本地工具同标准（双轨制）。</p>
+     */
+    default JsonNode output() {
+        return null;
+    }
+
+    /**
      * 工具自身声明"每次调用需审批"（ask 三态）。
      *
      * <p>默认 false。返回 true 即本次执行进入审批流程：由审批策略服务的

@@ -45,6 +45,20 @@ public interface ToolsService {
     Disposable register(Context registrant, ToolDefinition definition);
 
     /**
+     * 注册 guard 单调否决检查：理由即拒绝、null 即放行，无"允许"结果，
+     * 拒绝无法被翻回。时机在审批之后、工具本体之前。
+     *
+     * <p>注册即注册方作用域的 effect——注册方插件停止时 guard 自动摘除；
+     * 生效范围是全部工具调用（含 MCP 远端工具），"仅作用域内调用生效"
+     * 为已知限制（内核无调用方作用域概念）。</p>
+     *
+     * @param registrant 注册方 Context（通常为插件 apply 的 ctx）
+     * @param check      检查逻辑（可注册多个，顺序执行、首个拒绝短路）
+     * @return 幂等注销器（作用域销毁时已自动执行）
+     */
+    Disposable guard(Context registrant, GuardCheck check);
+
+    /**
      * 经三段管线执行工具。
      *
      * @throws ToolNotFoundException 工具未注册（点名）

@@ -2,6 +2,8 @@ package dev.duo.harness.mcp.support;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
+import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -11,13 +13,15 @@ import io.modelcontextprotocol.spec.McpSchema;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 /**
  * 测试夹具：极简 stdio MCP 服务器（SDK server 侧构建，协议真实）。
  *
  * <p>启动模式由 args[0] 控制：</p>
  * <ul>
- *   <li>{@code normal} —— 注册 ping（回声）与 boom（返回 isError 结果）后常驻</li>
+ *   <li>{@code normal} —— 注册 ping（回声）、boom（isError）、typed（带 outputSchema
+ *       的结构化结果）后常驻</li>
  *   <li>{@code grow} —— 先注册 ping，800ms 后动态补挂 late_tool
  *       （server 侧自动发出 tools/list_changed，演示变更重同步）</li>
  *   <li>{@code dup} —— 注册 {@code a.b} 与 {@code a$b}（命名清洗后同为 {@code a_b}）</li>
@@ -31,6 +35,7 @@ import java.nio.file.Path;
 public final class MinimalStdioServer {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final McpJsonMapper JSON = new JacksonMcpJsonMapper(MAPPER);
 
     public static void main(String[] args) throws Exception {
         String mode = args.length > 0 ? args[0] : "normal";
@@ -40,7 +45,7 @@ public final class MinimalStdioServer {
         if ("once".equals(mode) && !markAndClaim(args)) {
             System.exit(7);
         }
-        var provider = new StdioServerTransportProvider(MAPPER);
+        var provider = new StdioServerTransportProvider(JSON);
         // 工具能力必须构建时声明——否则 addTool 抛 McpError（夹具启动即崩）
         McpSyncServer server = McpServer.sync(provider)
                 .serverInfo("minimal-test-server", "1.0.0")
@@ -54,6 +59,8 @@ public final class MinimalStdioServer {
         } else {
             server.addTool(echoTool());
             server.addTool(boomTool());
+            server.addTool(typedTool());
+            server.addTool(typedBadTool());
             if ("grow".equals(mode)) {
                 Thread.sleep(800);
                 server.addTool(fixedTool("late_tool", "动态补挂的工具"));
@@ -83,8 +90,12 @@ public final class MinimalStdioServer {
     /** 固定工具：回声（返回 "pong:" + input 参数）。 */
     private static McpServerFeatures.SyncToolSpecification echoTool() {
         return new McpServerFeatures.SyncToolSpecification(
-                new McpSchema.Tool("ping", "回声工具", jsonSchema("""
-                        {"type":"object","properties":{"input":{"type":"string"}},"required":["input"]}""")),
+                McpSchema.Tool.builder()
+                        .name("ping")
+                        .description("回声工具")
+                        .inputSchema(JSON, """
+                                {"type":"object","properties":{"input":{"type":"string"}},"required":["input"]}""")
+                        .build(),
                 (exchange, args) -> McpSchema.CallToolResult.builder()
                         .addTextContent("pong:" + args.getOrDefault("input", ""))
                         .build());
@@ -93,28 +104,69 @@ public final class MinimalStdioServer {
     /** 错误工具：返回 isError 结果（验证错误形态的调用映射）。 */
     private static McpServerFeatures.SyncToolSpecification boomTool() {
         return new McpServerFeatures.SyncToolSpecification(
-                new McpSchema.Tool("boom", "总是返回错误结果", jsonSchema(
-                        "{\"type\":\"object\",\"properties\":{}}")),
+                McpSchema.Tool.builder()
+                        .name("boom")
+                        .description("总是返回错误结果")
+                        .inputSchema(JSON, "{\"type\":\"object\",\"properties\":{}}")
+                        .build(),
                 (exchange, args) -> McpSchema.CallToolResult.builder()
                         .addTextContent("远端拒绝执行")
                         .isError(true)
                         .build());
     }
 
-    /** 无参数固定返回的工具。 */
-    private static McpServerFeatures.SyncToolSpecification fixedTool(String name, String description) {
+    /**
+     * 带输出契约的工具：声明 outputSchema（object.required=result.type=string），
+     * 返回 structuredContent {@code {"result":"typed ok"}}（合规样本）。
+     */
+    private static McpServerFeatures.SyncToolSpecification typedTool() {
         return new McpServerFeatures.SyncToolSpecification(
-                new McpSchema.Tool(name, description, jsonSchema("{\"type\":\"object\",\"properties\":{}}")),
+                McpSchema.Tool.builder()
+                        .name("typed")
+                        .description("带输出契约的工具")
+                        .inputSchema(JSON, "{\"type\":\"object\",\"properties\":{}}")
+                        .outputSchema(Map.of(
+                                "type", "object",
+                                "properties", Map.of("result", Map.of("type", "string")),
+                                "required", java.util.List.of("result")))
+                        .build(),
                 (exchange, args) -> McpSchema.CallToolResult.builder()
-                        .addTextContent(name + " ok")
+                        .addTextContent("typed ok")
+                        .structuredContent(Map.of("result", "typed ok"))
                         .build());
     }
 
-    private static McpSchema.JsonSchema jsonSchema(String json) {
-        try {
-            return MAPPER.readValue(json, McpSchema.JsonSchema.class);
-        } catch (Exception e) {
-            throw new PluginException("夹具 schema 解析失败", e);
-        }
+    /**
+     * 带输出契约但结果违约的工具：声明与 typed 相同的 outputSchema，
+     * structuredContent 却返回数字（验证契约校验点名违约）。
+     */
+    private static McpServerFeatures.SyncToolSpecification typedBadTool() {
+        return new McpServerFeatures.SyncToolSpecification(
+                McpSchema.Tool.builder()
+                        .name("typed_bad")
+                        .description("输出违约的工具")
+                        .inputSchema(JSON, "{\"type\":\"object\",\"properties\":{}}")
+                        .outputSchema(Map.of(
+                                "type", "object",
+                                "properties", Map.of("result", Map.of("type", "string")),
+                                "required", java.util.List.of("result")))
+                        .build(),
+                (exchange, args) -> McpSchema.CallToolResult.builder()
+                        .addTextContent("typed bad")
+                        .structuredContent(Map.of("result", 42))
+                        .build());
+    }
+
+    /** 无参数固定返回的工具。 */
+    private static McpServerFeatures.SyncToolSpecification fixedTool(String name, String description) {
+        return new McpServerFeatures.SyncToolSpecification(
+                McpSchema.Tool.builder()
+                        .name(name)
+                        .description(description)
+                        .inputSchema(JSON, "{\"type\":\"object\",\"properties\":{}}")
+                        .build(),
+                (exchange, args) -> McpSchema.CallToolResult.builder()
+                        .addTextContent(name + " ok")
+                        .build());
     }
 }
