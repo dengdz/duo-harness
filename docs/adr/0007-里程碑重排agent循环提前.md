@@ -2,7 +2,7 @@
 
 Status: 批准
 
-修正 [ADR-0004](0004-三支柱先行路线图.md) 的里程碑排序：M3 由"页面插件 / Web 双面"改为"**agent 循环 + LLM 适配 + 会话域**"，Web 双面（含页面插件）后移为 M4，M5+ 为能力扩展期（compaction 完整版、fs/bash 工具族、sandbox、subagent 等按需逐期交付）。
+修正 [ADR-0004](0004-三支柱先行路线图.md) 的里程碑排序：agent 循环提前、Web 双面后置，并细化为小步渐进序列（M3 单次对话 → M4 上下文 → M5 工具循环 → M6 打磨+HITL → M7 skills+plan-mode → M8 Web → M9+ 扩展）。
 
 ## 背景
 
@@ -15,9 +15,25 @@ DSH 依赖结构印证：其 Web 面（UI 与持久化）都是 `session/event` 
 
 ## 决策
 
-- **M3 = agent 循环 + LLM 适配 + 会话域 + system-prompt**（能对话的最小闭环，CLI 形态验收）
-- **M4 = Web 双面 + 页面插件**（消费会话事件流：对话界面、状态面板、审批的人机交互）
-- **M5+ = 能力扩展期**（compaction 完整版、fs/bash 工具族、sandbox、subagent……按需逐期）
+agent 循环提前（方向不变），并**细化为小步渐进序列**——agent 涉及提示词、工具、上下文、记忆、workspace 等大量子域，单个里程碑塞下"四件套"粒度过大、做废风险集中。每期小而实、结束即稳定态，方向偏差的损失被限制在当前一期：
+
+| 里程碑 | 主题 | 依赖 |
+|---|---|---|
+| M3 | 模型单次对话：LLM 适配器（OpenAI 兼容 + 流式）+ CLI | 无 |
+| M4 | 上下文：会话事件溯源 + JSONL 持久化（`~/.duo/sessions`）+ 会话恢复 | M3 |
+| M5 | 工具循环（真 agent）：tool-call → 六段管线 → 回填 → 循环 | M4 + 工具域 |
+| M6 | agent 打磨 + HITL（CLI 版）：system-prompt 组装注册表 + 审批/提问终端交互策略 | M5 |
+| M7 | agent skills + plan-mode：技能系统 + 计划模式（先计划、人批准、再执行） | M6 |
+| M8 | Web 双面 + 页面插件：HTTP 服务 + 会话事件流 + 对话/状态界面 + 页面插件 + HITL Web 版 | M4 + M6 |
+| M9+ | 高级扩展（按需逐期）：workspace/fs 工具族、compaction、sandbox、subagent、并发工具调度、hooks 等 | 各自独立 |
+
+排期逻辑：
+
+- **HITL 是通道随宿主演进，不是单一里程碑**：策略接口（seam）M5 立住，M6 加 CLI 交互形态，M8 加 Web 交互形态——策略可插拔，形态演进不动机制。
+- **plan-mode 在 HITL 之后**：其语义是"计划要人批准再执行"，无 HITL 通道则无处批准。
+- **agent skills 在 system-prompt 注册表之后**：技能 = 提示段 + 工具 + 流程的打包加载，提示注册表是挂载点。
+- **workspace 在扩展期**：它是 fs 工具族的路径边界，M3–M6 的文件操作走 MCP filesystem server（自带路径约束）。
+- **M7 之后是路线图意向**：顺序与粒度到时按实际再修订（如 compaction 因上下文压力提前），不提前锁死。
 
 ## 拒绝的选项
 
