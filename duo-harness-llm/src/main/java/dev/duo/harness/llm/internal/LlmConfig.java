@@ -18,11 +18,16 @@ import java.util.Map;
  * 最终任一关键项缺失则点名报错（含重配指引）。密钥只经此机制从用户
  * home / 环境读取，永不入仓库（红线 2）。</p>
  *
- * @param baseUrl provider 地址（如 https://api.deepseek.com）
- * @param apiKey  凭证
- * @param model   模型名（如 deepseek-chat）
+ * @param baseUrl      provider 地址（如 https://api.deepseek.com）
+ * @param apiKey       凭证
+ * @param model        模型名（如 deepseek-chat）
+ * @param systemPrompt 行为指令（可选，缺省取内置默认——组装注册表属 M6）
  */
-public record LlmConfig(String baseUrl, String apiKey, String model) {
+public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
+
+    /** systemPrompt 未配置时的缺省指令。 */
+    public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
+
 
     /** env 覆盖项：baseUrl。 */
     public static final String ENV_BASE_URL = "DUO_LLM_BASE_URL";
@@ -54,6 +59,7 @@ public record LlmConfig(String baseUrl, String apiKey, String model) {
         String baseUrl = override(text(llm, "baseUrl"), env.get(ENV_BASE_URL));
         String apiKey = override(text(llm, "apiKey"), env.get(ENV_API_KEY));
         String model = override(text(llm, "model"), env.get(ENV_MODEL));
+        String systemPrompt = text(llm, "systemPrompt");
 
         if (baseUrl == null || apiKey == null || model == null) {
             throw new PluginException("LLM 配置不完整: baseUrl=" + present(baseUrl)
@@ -62,7 +68,8 @@ public record LlmConfig(String baseUrl, String apiKey, String model) {
                     + "或以 " + ENV_BASE_URL + " / " + ENV_API_KEY + " / " + ENV_MODEL
                     + " 环境变量提供");
         }
-        return new LlmConfig(baseUrl, apiKey, model);
+        return new LlmConfig(baseUrl, apiKey, model,
+                systemPrompt != null && !systemPrompt.isBlank() ? systemPrompt : DEFAULT_SYSTEM_PROMPT);
     }
 
     private static String override(String fromFile, String fromEnv) {

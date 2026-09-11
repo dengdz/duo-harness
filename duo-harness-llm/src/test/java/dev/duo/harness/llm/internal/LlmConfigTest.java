@@ -24,13 +24,21 @@ class LlmConfigTest {
 
     @Test
     void fileProvidesBaseline() throws Exception {
-        Path config = tempConfig("https://api.deepseek.com", "sk-from-file", "deepseek-chat");
+        Path config = tempDir.resolve("config.yml");
+        Files.writeString(config, """
+                llm:
+                  baseUrl: https://api.deepseek.com
+                  apiKey: sk-from-file
+                  model: deepseek-chat
+                  systemPrompt: 你是一个测试助手
+                """);
 
         LlmConfig config1 = LlmConfig.load(config, Map.of());
 
         assertEquals("https://api.deepseek.com", config1.baseUrl());
         assertEquals("sk-from-file", config1.apiKey());
         assertEquals("deepseek-chat", config1.model());
+        assertEquals("你是一个测试助手", config1.systemPrompt(), "yml 配置的 systemPrompt 应生效");
     }
 
     @Test
