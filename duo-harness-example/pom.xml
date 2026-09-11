@@ -30,6 +30,12 @@
       <artifactId>duo-harness-mcp</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M3 段落演示 LLM 对话（ChatReplMain） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-llm</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
