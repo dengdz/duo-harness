@@ -37,9 +37,11 @@ ready-for-agent
 **演示路径 A：未配置 key 的引导（无需任何 key，一条命令验证）**
 
 ```bash
-DUO_HOME=$(mktemp -d) mvn -pl duo-harness-llm -am package exec:java \
+DUO_HOME=$(mktemp -d) mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.chat.ChatReplMain
 ```
+
+（注意：demo 类在 **example** 模块——`-pl` 指错模块时 exec 会静默跳过，BUILD SUCCESS 但什么都不跑。）
 
 | # | 应出现 |
 |---|---|
