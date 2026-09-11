@@ -16,7 +16,7 @@ description: 管理 duo-harness 文档的位置和结构——文档在 docs/ �
 `docs/` 同时是文档站的源目录：站点由 VitePress 构建、push main 时 GitHub Actions 自动部署到 `https://dengdz.github.io/duo-harness/`（配置在 `docs/.vitepress/config.mts` 与 `.github/workflows/docs.yml`）。
 
 - **上站范围**：五章节正式内容 + limitations + adr；内部开发文档（`docs/agents/`、`docs/research/`）经 `srcExclude` 排除不上站——指向它们的 markdown 链接在站点上是死链，构建配置以 `ignoreDeadLinks` 显式容忍（有意取舍）
-- **新增篇章后**：同步更新 `config.mts` 的 nav/sidebar，否则站点导航看不到它
+- **新增篇章或 ADR 后（硬性）**：同步更新 `config.mts` 的 nav/sidebar 对应分组——**ADR 也算**（sidebar 的"决策记录"分组是手工维护的条目列表，新 ADR 落盘但 config.mts 未加条目 = 站上导航不可见，0.2.0 曾因此漏了 ADR-0006）
 - **本地预览**：`cd docs && npm run docs:dev`（需 Node）；改动发布以 push main 为准，CI 自动构建部署
 - **构建验证**：结构或导航变更后跑 `npm run docs:build` 确认无死链阻断再提交
 
@@ -47,7 +47,8 @@ description: 管理 duo-harness 文档的位置和结构——文档在 docs/ �
 3. **猎捕重复**：对特征短语 `grep -rn "短语" docs/ README.md`。同一行为说明只留一个家，其余替换为链接。`TODO(docs 成形后):` 补记易重复点清单。
 4. **数字与代码对账**：测试数、示例数、版本号、API 签名——从源码重新数，不信文档转述。
 5. **结构对账**：最近的提交动了包结构、模块或公共 API 时，检查架构段落、教程里的包路径、配置示例中的类名字符串（如 yml 里的插件 FQCN——编译器不查字符串引用，漏改只在运行时爆）是否同 diff 更新。
-6. **状态三档标注**：功能描述必须落在正确档位——门面可用 / 底层可用需手动组装 / 已定义未接线（对照已知限制清单）。把未接线功能写成可用是 blocker 级错误。同一文档内多处状态标注（头部状态行、表格行内的"规划/建设中"标记）必须互相一致——自相矛盾的状态字段是新鲜度欠账最直接的信号。
+6. **导航对账**（文档站专检）：`config.mts` 的 nav/sidebar 条目与 `docs/` 实际 md 文件双向对账——docs/ 下有文件而 sidebar 无条目 = 漏同步（导航不可见）；sidebar 有条目而文件不存在 = 死链。重点核对 adr/ 目录：ADR 文件数应等于 sidebar"决策记录"分组的条目数。push main（触发部署）前必查。
+7. **状态三档标注**：功能描述必须落在正确档位——门面可用 / 底层可用需手动组装 / 已定义未接线（对照已知限制清单）。把未接线功能写成可用是 blocker 级错误。同一文档内多处状态标注（头部状态行、表格行内的"规划/建设中"标记）必须互相一致——自相矛盾的状态字段是新鲜度欠账最直接的信号。
 
 ## 验证
 

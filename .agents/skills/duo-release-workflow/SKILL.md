@@ -79,6 +79,8 @@ git checkout -b {版本号}    # 如 0.7.0
 
 # 3. 文档完整性
 # CHANGELOG 已更新；文档结构符合 duo-doc-standards
+# 动了 docs/ 时：config.mts 的 nav/sidebar 与 docs/ 文件双向对账
+# （新 ADR/篇章必须有 sidebar 条目——导航不可见是最易漏的发布缺陷）
 ```
 
 更完整的证据选择规则见 [duo-pre-push-checks](../duo-pre-push-checks/SKILL.md)。
