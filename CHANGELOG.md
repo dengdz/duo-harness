@@ -2,11 +2,20 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
-## 未发布
+## 0.2.0（2026-09-11）
 
 ### Added
 
+- 新模块 `duo-harness-mcp`：经官方 MCP Java SDK 连接 MCP 服务器（stdio）——断连自动重连（指数退避 + 稳定窗口 + 预算耗尽）、远端工具自动同步进工具域（`mcp__<server>__<tool>` 命名，`list_changed` 自动重同步）；插件停止即断连并注销工具
+- 审批策略服务：pre-execute 决策三态（allow / deny / ask）——治理插件或工具声明需审批，策略服务裁决；预设 `always-deny`（缺省，未配置即拒）与 `auto-approve`（白名单）；审批决策审计日志
+- 输出契约：`ToolDefinition.output()` 声明结果 JSON Schema，违约转 error 结果点名原因；MCP 远端 `outputSchema` 同标准（双轨制，未声明宽松透传）
+- guard 单调否决：`ToolsService.guard(registrant, check)`——审批之后、本体之前的动态拒绝，理由即拒、null 放行、拒绝无法翻回；随注册作用域销毁自动摘除
+- demo 扩展 M2 段：一条命令演示 MCP 连接、远端工具调用真实文件、审批拒绝与 guard 拦截、拔连接后工具消失
 - 文档站上线：`https://dengdz.github.io/duo-harness/`（VitePress 构建，push main 自动部署）；docs/ 即站点源目录，内部开发文档不上站（ADR-0005）
+
+### Changed
+
+- MCP Java SDK 0.10.0 → 0.18.1（传递依赖 mcp-core + mcp-json-jackson2，networknt json-schema-validator 2.0.0 随之引入）
 
 ## 0.1.0（2026-08-25）
 
