@@ -7,6 +7,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.mcp.McpClientPlugin;
 import dev.duo.harness.mcp.support.MinimalStdioServer;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -23,6 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 首连、断连重连、预算耗尽、failOnStartupError 两态、serverName 占坑。
  */
 class ConnectionLifecycleTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：ConnectionLifecycleTest —— 连接生命周期：真实 stdio 协议下的"
+                + " 首连、断连重连恢复、预算耗尽、failOnStartupError 两态、停止即断（4 用例） ===");
+    }
 
     private ConnectionSupervisor supervisor;
 

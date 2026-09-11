@@ -1,5 +1,6 @@
 package dev.duo.harness.mcp.internal;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 
@@ -9,6 +10,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 重连策略纯函数用例：退避序列、稳定窗口清零、预算判定。 */
 class ReconnectPolicyTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：ReconnectPolicyTest —— 重连策略纯函数：指数退避序列、"
+                + "稳定窗口清零、预算耗尽判定（4 用例） ===");
+    }
 
     @Test
     void backoffDoublesAndCaps() {

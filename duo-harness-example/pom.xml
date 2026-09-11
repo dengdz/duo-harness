@@ -24,6 +24,12 @@
       <artifactId>duo-harness-tools</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- demo 是聚合点：M2 段落演示 MCP 连接（MiniFileSystemServer + McpClientPlugin） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-mcp</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

@@ -12,6 +12,7 @@ import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolsPlugin;
 import dev.duo.harness.tools.ToolsService;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,6 +36,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * "在册"由可执行性定义。</p>
  */
 class McpToolSyncTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：McpToolSyncTest —— 远端工具同步：工具出现并经三段管线执行、"
+                + "结构化输出契约接线、插件停止注销、清洗冲突点名、list_changed 重同步、"
+                + "断连保留与重连恢复、预算耗尽注销（8 用例） ===");
+    }
 
     /** tools 服务的视图接口（方法名即服务名）。 */
     interface ToolsView {

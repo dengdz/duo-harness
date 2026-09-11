@@ -9,6 +9,7 @@ import dev.duo.harness.core.api.PluginState;
 import dev.duo.harness.mcp.support.MinimalStdioServer;
 import dev.duo.harness.tools.ToolsPlugin;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 缺它插件停在 PENDING 不启动。</p>
  */
 class McpClientPluginTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：McpClientPluginTest —— 内核级集成：serverName 占坑（重复点名）、"
+                + "failOnStartupError 两态、插件停止即断连、复装恢复（3 用例） ===");
+    }
 
     private Context root;
 

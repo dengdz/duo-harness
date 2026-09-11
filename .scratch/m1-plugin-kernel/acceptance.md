@@ -4,9 +4,16 @@
 
 ## 运行命令
 
+测试路径（79 用例）：
+
 ```bash
-mvn clean test                                        # 测试路径：79 用例
-mvn -pl duo-harness-example -am package exec:java    # 演示路径：Demo 全链路
+mvn clean test
+```
+
+演示路径（Demo 全链路）：
+
+```bash
+mvn -pl duo-harness-example -am package exec:java
 ```
 
 IDEA 等价路径（输出与上述一致，在 Run 工具窗核对）：

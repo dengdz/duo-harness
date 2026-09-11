@@ -1,0 +1,23 @@
+plugins:
+  # 工具域：一行启用整个域
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  # 审批策略：always-deny——被声明"需审批"的调用一律拒绝（写保护演示）
+  - id: approval
+    name: dev.duo.harness.tools.ApprovalPlugin
+    config:
+      policy: always-deny
+
+  # 写保护治理插件：对 write_file 声明 ask + guard 拦截涉密文件读取
+  - id: write-protector
+    name: dev.duo.harness.example.mcpfs.WriteProtectorPlugin
+
+  # MCP 连接行由 DemoMain 在运行时以等价配置编程挂载（需注入临时目录与
+  # classpath，且拔除演示要求持有 handle）——等价形态：
+  # - id: files
+  #   name: dev.duo.harness.mcp.McpClientPlugin
+  #   config:
+  #     serverName: files
+  #     command: <java>
+  #     args: [-cp, <classpath>, dev.duo.harness.example.mcpfs.MiniFileSystemServer, <rootDir>]
