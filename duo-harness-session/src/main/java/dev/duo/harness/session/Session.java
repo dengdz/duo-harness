@@ -9,6 +9,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -79,17 +80,27 @@ public final class Session {
         return session;
     }
 
-    /** 目录内文件名最大的会话（即最新）；目录为空或不存在返回 null。 */
+    /** 目录内最近活动的会话（按文件修改时间，即最后被创建/写入的）；无会话返回 null。 */
     public static Session latest(Path sessionsDir) {
         Path latest = null;
+        FileTime latestTime = null;
         if (Files.isDirectory(sessionsDir)) {
-            try (var files = Files.list(sessionsDir)) {
-                latest = files.filter(p -> p.getFileName().toString().endsWith(".jsonl"))
-                        .sorted()
-                        .reduce((first, second) -> second)
-                        .orElse(null);
+            List<Path> files;
+            try (var list = Files.list(sessionsDir)) {
+                files = list.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList();
             } catch (IOException e) {
                 throw new PluginException("会话目录遍历失败: " + sessionsDir, e);
+            }
+            for (Path path : files) {
+                try {
+                    FileTime time = Files.getLastModifiedTime(path);
+                    if (latest == null || time.compareTo(latestTime) > 0) {
+                        latest = path;
+                        latestTime = time;
+                    }
+                } catch (IOException e) {
+                    throw new PluginException("会话文件时间读取失败: " + path, e);
+                }
             }
         }
         return latest == null ? null : load(latest);

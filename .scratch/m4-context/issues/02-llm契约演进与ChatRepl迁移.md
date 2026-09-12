@@ -28,3 +28,41 @@ ready-for-agent
 - [ ] 自动继续最新会话（横幅显示 id 与消息数）+ /new 开新会话
 - [ ] 冒烟测试：第二轮请求含第一轮内容（多轮记忆）、/new 后清空
 - [ ] 验收对照表（本工单 Comments）：路径 B 真实对话预期输出
+
+## Comments
+
+### 验收对照表（M4 端到端）
+
+**前置**：`~/.duo/config.yml` 配置 llm 段（baseUrl/apiKey/model，systemPrompt 可选）。
+
+**演示路径**：
+
+```bash
+mvn -pl duo-harness-example -am package exec:java \
+  -Dexec.mainClass=dev.duo.harness.example.chat.ChatReplMain
+```
+
+第一进程（建立记忆）：
+
+| 输入 | 预期输出 |
+|---|---|
+| （启动） | `=== duo-harness Chat Demo（M4：多轮对话 + 会话记忆）===` + `新会话 <id>。…` |
+| `我叫小红` | `AI> 收到：我叫小红` |
+| `我养了一只猫` | `AI> 收到：我养了一只猫` |
+| `/exit` | `=== 对话结束 ===` |
+
+第二进程（自动继续，验证多轮记忆与指代理解）：
+
+| 输入 | 预期输出 |
+|---|---|
+| （启动） | `继续会话 <同一 id>（已有 4 条消息）。…` |
+| `我的猫叫什么名字` | `AI> 收到：<猫的名字>`——**引用"我的猫"能被理解 = 多轮记忆生效** |
+| `/new` | `已开新会话 <新 id>` |
+| `我的猫叫什么名字` | `AI> 收到：我的猫叫什么`——上下文已清空，模型无从得知 |
+| `/exit` | `=== 对话结束 ===` |
+
+**测试路径**：`mvn -pl duo-harness-llm -am test`（LlmConfigTest 5 + OpenAiCompatAdapterTest 5，mock SSE 端点）与 `mvn -pl duo-harness-session -am test`（SessionTest 8）。
+
+### 状态
+
+待用户手动验收（对照表逐行核对）。通过后置 done。

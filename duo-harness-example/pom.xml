@@ -36,6 +36,12 @@
       <artifactId>duo-harness-llm</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M4 段落演示会话记忆（多轮上下文 + 自动继续） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

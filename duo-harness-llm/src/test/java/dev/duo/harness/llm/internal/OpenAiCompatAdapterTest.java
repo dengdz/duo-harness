@@ -3,6 +3,7 @@ package dev.duo.harness.llm.internal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,7 @@ class OpenAiCompatAdapterTest {
                 MockOpenAiServer.roleChunk(),
                 MockOpenAiServer.deltaChunk("，世界")));
 
-        List<String> chunks = collect(adapter(), new ChatRequest("你是助手", "打招呼"));
+        List<String> chunks = collect(adapter(), new ChatRequest("你是助手", List.of(ChatMessage.user("打招呼"))));
 
         assertEquals(List.of("你好", "，世界"), chunks, "按序聚合文本增量；delta.content 为 null 的角色 chunk 跳过");
     }
@@ -52,16 +53,24 @@ class OpenAiCompatAdapterTest {
     void requestCarriesModelStreamMessagesAndBearer() throws Exception {
         server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
 
-        collect(adapter(), new ChatRequest("你是助手", "问题"));
+        List<ChatMessage> history = List.of(
+                ChatMessage.user("第一问"),
+                ChatMessage.assistant("第一答"),
+                ChatMessage.user("第二问"));
+        collect(adapter(), new ChatRequest("你是助手", history));
 
         JsonNode body = json.readTree(server.lastRequestBody());
         assertEquals("test-model", body.path("model").asText());
         assertTrue(body.path("stream").asBoolean(), "应请求流式");
-        assertEquals(2, body.path("messages").size(), "system + user 两条消息");
+        assertEquals(4, body.path("messages").size(), "system + 三条历史");
         assertEquals("system", body.path("messages").get(0).path("role").asText());
         assertEquals("你是助手", body.path("messages").get(0).path("content").asText());
         assertEquals("user", body.path("messages").get(1).path("role").asText());
-        assertEquals("问题", body.path("messages").get(1).path("content").asText());
+        assertEquals("第一问", body.path("messages").get(1).path("content").asText());
+        assertEquals("assistant", body.path("messages").get(2).path("role").asText());
+        assertEquals("第一答", body.path("messages").get(2).path("content").asText());
+        assertEquals("user", body.path("messages").get(3).path("role").asText());
+        assertEquals("第二问", body.path("messages").get(3).path("content").asText());
         assertEquals("Bearer sk-test", server.lastAuthorization());
     }
 
@@ -70,7 +79,7 @@ class OpenAiCompatAdapterTest {
         server.respondError(401, "{\"error\":{\"message\":\"bad api key\"}}");
 
         PluginException e = assertThrows(PluginException.class,
-                () -> collect(adapter(), new ChatRequest("s", "q")));
+                () -> collect(adapter(), new ChatRequest("s", List.of(ChatMessage.user("q")))));
 
         String message = e.getMessage();
         assertTrue(message.contains("401"), message);
@@ -82,7 +91,7 @@ class OpenAiCompatAdapterTest {
         server.respondError(502, "bad gateway");
 
         PluginException e = assertThrows(PluginException.class,
-                () -> collect(adapter(), new ChatRequest("s", "q")));
+                () -> collect(adapter(), new ChatRequest("s", List.of(ChatMessage.user("q")))));
 
         assertTrue(e.getMessage().contains("502"), e.getMessage());
         assertTrue(e.getMessage().contains("bad gateway"), e.getMessage());
@@ -94,7 +103,7 @@ class OpenAiCompatAdapterTest {
                 new LlmConfig("http://localhost:1", "sk", "m", LlmConfig.DEFAULT_SYSTEM_PROMPT));
 
         PluginException e = assertThrows(PluginException.class,
-                () -> dead.stream(new ChatRequest("s", "q"), chunk -> { }));
+                () -> dead.stream(new ChatRequest("s", List.of(ChatMessage.user("q"))), chunk -> { }));
 
         assertTrue(e.getMessage().contains("LLM 调用失败"), e.getMessage());
     }

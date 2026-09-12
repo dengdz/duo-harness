@@ -100,16 +100,21 @@ class SessionTest {
     }
 
     @Test
-    void latestPicksNewestById() throws IOException {
+    void latestPicksMostRecentlyModified() throws IOException {
         // 手工控制文件名：绕开 id 生成的随机性，确定性验证"字典序最大 = 最新"
         Files.createDirectories(sessionsDir());
-        Files.writeString(sessionsDir().resolve("20260101-000000-aaaa.jsonl"), "");
-        Files.writeString(sessionsDir().resolve("20260101-000000-bbbb.jsonl"), "");
+        Path older = sessionsDir().resolve("20260101-000000-aaaa.jsonl");
+        Path newer = sessionsDir().resolve("20260101-000000-bbbb.jsonl");
+        Files.writeString(older, "");
+        Files.writeString(newer, "");
+        // 修改时间粒度可能同毫秒：显式错开，保证"最近活动"判定确定
+        Files.setLastModifiedTime(newer, java.nio.file.attribute.FileTime.fromMillis(
+                Files.getLastModifiedTime(older).toMillis() + 10_000));
 
         Session latest = Session.latest(sessionsDir());
 
         assertNotNull(latest);
-        assertEquals("20260101-000000-bbbb", latest.id(), "应取文件名字典序最大的会话");
+        assertEquals("20260101-000000-bbbb", latest.id(), "应取修改时间最新的会话");
     }
 
     @Test

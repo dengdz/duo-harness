@@ -7,10 +7,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatRequest;
+import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.LlmAdapter;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -55,9 +57,9 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 .build();
         try {
             // try-with-resources：200 与错误路径都关响应流（ofInputStream 持有底层连接）
-            HttpResponse<java.io.InputStream> response = http.send(httpRequest,
+            HttpResponse<InputStream> response = http.send(httpRequest,
                     HttpResponse.BodyHandlers.ofInputStream());
-            try (java.io.InputStream body = response.body()) {
+            try (InputStream body = response.body()) {
                 if (response.statusCode() != 200) {
                     throw errorFrom(response.statusCode(), body);
                 }
@@ -84,12 +86,16 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
         root.put("stream", true);
         ArrayNode messages = root.putArray("messages");
         messages.addObject().put("role", "system").put("content", request.systemPrompt());
-        messages.addObject().put("role", "user").put("content", request.userMessage());
+        for (ChatMessage message : request.messages()) {
+            messages.addObject()
+                    .put("role", message.role().wire())
+                    .put("content", message.content());
+        }
         return root.toString();
     }
 
     /** 逐行读 SSE：`data:` 行剥前缀解析，`[DONE]` 终止，`delta.content` 增量回调。 */
-    private void streamLines(java.io.InputStream body, Consumer<ChatChunk> onChunk) throws IOException {
+    private void streamLines(InputStream body, Consumer<ChatChunk> onChunk) throws IOException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
