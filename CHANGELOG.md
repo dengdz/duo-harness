@@ -15,6 +15,7 @@
 - 思考模型支持：流式捕获 `reasoning_content`，工具调用链中按 provider 要求回传——DeepSeek thinking 模式下多轮工具调用不再 400（M5）
 - 交互 seam（M6 工单 01）：`answers` 交互服务（回答者注册制 + 注册序遍历 + fail-closed）与 `interactive` 审批策略（`InteractiveApprovalPlugin`，inject answers）——ask 三态首次可由人作答；会话新增 `approval/requested` / `approval/decided` 审计事件（可选字段向后兼容，投影跳过）
 - 交互审批 fail-closed 语义（ADR-0008）：无回答者、人未作答（EOF/中断）一律拒绝；不做"永久放行"
+- prompt 注册表（M6 工单 02，agent 域 "prompts"）：插件经 `register` 贡献提示片段（随作用域摘除、按注册序动态组装）；yml `llm.systemPrompt` 为最前用户片段，全空落内置缺省——M7 技能指令段的挂载点
 
 ### Changed
 

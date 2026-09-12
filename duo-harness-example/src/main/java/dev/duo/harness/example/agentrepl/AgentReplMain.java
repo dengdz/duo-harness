@@ -82,7 +82,8 @@ public final class AgentReplMain {
         out.flush();
 
         ChatAgent agent = new dev.duo.harness.agent.internal.ToolCallingAgent(
-                new OpenAiCompatAdapter(config), tools, session, config.systemPrompt());
+                new OpenAiCompatAdapter(config), tools, session,
+                new dev.duo.harness.agent.PromptRegistry(config.systemPrompt()));
 
         while (true) {
             out.print("你> ");

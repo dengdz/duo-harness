@@ -2,6 +2,7 @@ package dev.duo.harness.agent.internal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 会话投影→llm 消息视图（直答测试用）。 */
@@ -264,11 +266,64 @@ class ToolCallingAgentTest {
         Session session = newSession();
         LlmAdapter adapter = scriptedAdapter("ok");
 
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> new ToolCallingAgent(adapter, noTools(), session, "  ", 10),
-                "空 systemPrompt 应被拒绝");
+        org.junit.jupiter.api.Assertions.assertThrows(NullPointerException.class,
+                () -> new ToolCallingAgent(adapter, noTools(), session, (PromptRegistry) null, 10),
+                "prompt 注册表缺位应被拒绝");
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> new ToolCallingAgent(adapter, noTools(), session, "你是助手", 0),
                 "迭代上限至少为 1");
+    }
+
+    @Test
+    void promptRegistryComposesIntoRequestAndSupportsScopeRemoval() throws Exception {
+        Session session = newSession();
+        dev.duo.harness.agent.PromptRegistry prompts =
+                new dev.duo.harness.agent.PromptRegistry("你是谨慎的助手");
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter capturing = new StreamOnlyAdapter() {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                captured.add(request);
+                onChunk.accept(new ChatChunk("ok"));
+            }
+        };
+        dev.duo.harness.core.api.Context owner = dev.duo.harness.core.api.Context.root();
+        PromptRegistry localView = prompts;
+        dev.duo.harness.core.api.Disposable removal =
+                localView.register(owner, new dev.duo.harness.agent.PromptFragment("safety", "不做危险操作"));
+
+        ToolCallingAgent agent = new ToolCallingAgent(capturing, noTools(), session, prompts, 10);
+        agent.send("问", AgentListener.NONE);
+        removal.dispose();
+        agent.send("再问", AgentListener.NONE);
+        owner.dispose();
+
+        // 组装顺序：用户指令最前 + 片段按注册序；摘除后片段消失
+        assertTrue(captured.get(0).systemPrompt().startsWith("你是谨慎的助手"),
+                captured.get(0).systemPrompt());
+        assertTrue(captured.get(0).systemPrompt().contains("不做危险操作"),
+                captured.get(0).systemPrompt());
+        assertFalse(captured.get(1).systemPrompt().contains("不做危险操作"),
+                "注销后片段不再参与组装: " + captured.get(1).systemPrompt());
+    }
+
+    @Test
+    void emptyRegistryFallsBackToDefaultSystemPrompt() throws IOException {
+        Session session = newSession();
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter capturing = new StreamOnlyAdapter() {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                captured.add(request);
+                onChunk.accept(new ChatChunk("ok"));
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(capturing, noTools(), session,
+                new dev.duo.harness.agent.PromptRegistry(null), 10);
+
+        agent.send("问", AgentListener.NONE);
+
+        assertEquals(dev.duo.harness.llm.LlmConfig.DEFAULT_SYSTEM_PROMPT, captured.get(0).systemPrompt(),
+                "注册表与用户配置全空时落内置缺省");
     }
 }

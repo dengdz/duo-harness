@@ -6,6 +6,7 @@ import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ToolInvocation;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
@@ -43,30 +44,38 @@ public final class ToolCallingAgent implements ChatAgent {
     private final LlmAdapter llm;
     private final ToolsService tools;
     private final Session session;
-    private final String systemPrompt;
+    private final PromptRegistry prompts;
     private final int maxIterations;
 
-    /** 便捷构造：迭代上限取默认值。 */
+    /** 便捷构造：迭代上限取默认值，单一 system 提示（包装为用户指令片段）。 */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session, String systemPrompt) {
-        this(llm, tools, session, systemPrompt, MAX_ITERATIONS);
+        this(llm, tools, session, new PromptRegistry(systemPrompt), MAX_ITERATIONS);
+    }
+
+    /** 便捷构造：单一 system 提示 + 显式迭代上限。 */
+    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
+                            String systemPrompt, int maxIterations) {
+        this(llm, tools, session, new PromptRegistry(systemPrompt), maxIterations);
+    }
+
+    /** 便捷构造：prompt 注册表 + 默认迭代上限。 */
+    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session, PromptRegistry prompts) {
+        this(llm, tools, session, prompts, MAX_ITERATIONS);
     }
 
     /**
      * @param llm           LLM 流式适配器
      * @param tools         工具域服务（Function Calling 的执行后端）
      * @param session       会话（多轮记忆来源与事件落点）
-     * @param systemPrompt  行为指令（每轮单独传，不进会话日志）
+     * @param prompts       prompt 注册表（每轮组装 system 提示）
      * @param maxIterations 最大循环轮数（防死循环上限）
      */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
-                            String systemPrompt, int maxIterations) {
+                            PromptRegistry prompts, int maxIterations) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
-        if (systemPrompt == null || systemPrompt.isBlank()) {
-            throw new IllegalArgumentException("systemPrompt 不能为空");
-        }
-        this.systemPrompt = systemPrompt;
+        this.prompts = Objects.requireNonNull(prompts, "prompts");
         if (maxIterations < 1) {
             throw new IllegalArgumentException("maxIterations 至少为 1: " + maxIterations);
         }
@@ -118,13 +127,13 @@ public final class ToolCallingAgent implements ChatAgent {
         return new AgentReply(finalReply.toString(), invocations, true);
     }
 
-    /** 请求构造：system 指令 + 会话投影历史 + 工具清单（工具域全量，Function Calling）。 */
+    /** 请求构造：组装 system 提示 + 会话投影历史 + 工具清单（工具域全量，Function Calling）。 */
     private ChatRequest buildRequest() {
         List<ToolSpec> specs = tools.list().stream()
                 .map(def -> new ToolSpec(def.name(), def.description(),
                         def.parameters() == null ? "{}" : def.parameters().toString()))
                 .toList();
-        return new ChatRequest(systemPrompt, Messages.toChatMessages(session.deriveMessages()), specs);
+        return new ChatRequest(prompts.compose(), Messages.toChatMessages(session.deriveMessages()), specs);
     }
 
     /**
