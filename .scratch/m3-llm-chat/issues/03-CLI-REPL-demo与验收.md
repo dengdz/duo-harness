@@ -21,7 +21,7 @@ AI> （流式逐段打印回答）
 
 ## Status
 
-ready-for-agent
+done（2026-09-12 用户验收通过：路径 A 引导 4 条全中；路径 B 真实对话——DeepSeek 流式两轮问答、每轮独立无记忆被真实模型行为确认、/exit 带前导空格亦正确退出）
 
 ## Checklist
 
@@ -75,3 +75,9 @@ mvn -pl duo-harness-llm -am test
 ```
 
 套件叙述与计数：`LlmConfigTest`（5：文件基线+systemPrompt 覆盖/env 优先/缺文件 env 兜底/缺项点名/空白 env 不覆盖）、`OpenAiCompatAdapterTest`（5：多 chunk 按序与角色 chunk 跳过/请求形态与 Bearer/401 错误点名/非 JSON 错误原文/网络失败）——mock SSE 端点（内置 HttpServer），不起真实 LLM。
+
+### 验收记录（2026-09-12）
+
+- 路径 A（无 key 引导）：DUO_HOME 临时目录下运行，4 条对照全中；DUO_HOME 重定向生效（错误信息正确显示临时路径）。
+- 路径 B（真实对话）：~/.duo/config.yml 配 DeepSeek 后两轮流式问答成功（"你好"→问好、"你是谁"→自报身份）；每轮独立无记忆被真实模型行为确认；"/exit" 带前导空格亦正确退出（strip 处理）。
+- 一条命令同时覆盖测试路径（package 阶段 120+ 用例全绿）。
