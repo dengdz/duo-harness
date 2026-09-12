@@ -25,6 +25,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 会话投影→llm 消息视图（直答测试用）。 */
@@ -262,10 +263,10 @@ class ToolCallingAgentTest {
     }
 
     @Test
-    void longChainKeepsLastNonEmptyReasoningWhenModelOmitsIt() throws IOException {
-        // BUG-20260913-03 复现形态：实测 5+ 轮链中模型某轮省略 reasoning 输出，
-        // 旧实现无条件清空 pendingReasoning → 下轮请求缺字段 400。
-        // 修复语义：链内保留最近一次非空思考，后续每轮请求都携带。
+    void reasoningPersistsPerToolCallRoundThroughSession() throws IOException {
+        // BUG-20260913-03 修复：思考内容随 tool/call 事件持久化，投影重建的请求历史
+        // 每条 assistant(tool_calls) 消息携带自己轮次的 reasoning（诊断 v3：该形态
+        // 全程通过；会话投影丢弃 reasoning 的历史形态被 provider 间歇性拒绝）。
         Session session = newSession();
         dev.duo.harness.core.api.Context toolsRoot = dev.duo.harness.core.api.Context.root();
         toolsRoot.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
@@ -276,7 +277,14 @@ class ToolCallingAgentTest {
             @Override
             public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
                 captured.add(request);
-                String reasoning = captured.size() == 1 ? "链首轮思考" : null;
+                // 复现实测形态：思考内容在部分轮次缺席（第 3、5 轮为 null）
+                String reasoning = switch (captured.size()) {
+                    case 1 -> "第一轮思考";
+                    case 2 -> null;
+                    case 3 -> null;
+                    case 4 -> "第四轮思考";
+                    default -> null;
+                };
                 return new LlmTurn("", List.of(new dev.duo.harness.llm.ToolCallRequest(
                         "call_" + captured.size(), "echo", "{}")), reasoning);
             }
@@ -292,13 +300,16 @@ class ToolCallingAgentTest {
 
         assertFalse(reply.completed(), "每轮都要求调工具，应跑满 6 轮上限");
         assertEquals(6, captured.size(), "6 轮共 6 次请求");
-        for (int i = 1; i < captured.size(); i++) {
-            ChatMessage lastWithCalls = captured.get(i).messages().stream()
-                    .filter(m -> m.role() == ChatMessage.Role.ASSISTANT && m.toolCalls() != null)
-                    .reduce((first, second) -> second).orElseThrow();
-            assertEquals("链首轮思考", lastWithCalls.reasoningContent(),
-                    "第 " + (i + 1) + " 轮请求的最后一条工具调用消息应携带链内最近非空思考");
-        }
+        // 最后一轮请求：历史 5 条 assistant(tool_calls) 各带自己轮次的 reasoning
+        List<ChatMessage> assistants = captured.get(5).messages().stream()
+                .filter(m -> m.role() == ChatMessage.Role.ASSISTANT && m.toolCalls() != null)
+                .toList();
+        assertEquals(5, assistants.size(), "投影应含前 5 轮的工具调用消息");
+        assertEquals("第一轮思考", assistants.get(0).reasoningContent(), "第 1 轮思考随会话持久化");
+        assertNull(assistants.get(1).reasoningContent(), "第 2 轮模型省略思考（原样投影）");
+        assertNull(assistants.get(2).reasoningContent(), "第 3 轮模型省略思考（原样投影）");
+        assertEquals("第四轮思考", assistants.get(3).reasoningContent(), "第 4 轮思考随会话持久化");
+        assertNull(assistants.get(4).reasoningContent(), "第 5 轮模型省略思考（原样投影）");
     }
 
     @Test

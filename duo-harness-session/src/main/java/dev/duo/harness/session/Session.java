@@ -156,7 +156,7 @@ public final class Session {
                         break;
                     }
                     messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
-                            event.toolCallId(), event.toolName(), event.text()))));
+                            event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
                 }
                 case SessionEvent.TOOL_RESULT -> {
                     if (event.toolCallId() == null) {
@@ -176,7 +176,7 @@ public final class Session {
         return LocalDateTime.now().format(ID_TIMESTAMP) + "-" + suffix;
     }
 
-    /** 事件序列化为 JSONL 行（Jackson 统一读写路径；工具事件额外携带 toolCallId/toolName）。 */
+    /** 事件序列化为 JSONL 行（Jackson 统一读写路径；工具事件额外携带 toolCallId/toolName，tool/call 另带 reasoning）。 */
     private static String toJsonLine(SessionEvent event) throws IOException {
         var node = JSON.createObjectNode();
         node.put("type", event.type());
@@ -187,6 +187,9 @@ public final class Session {
         }
         if (event.toolName() != null) {
             node.put("toolName", event.toolName());
+        }
+        if (event.reasoning() != null) {
+            node.put("reasoning", event.reasoning());
         }
         return JSON.writeValueAsString(node);
     }
@@ -199,9 +202,11 @@ public final class Session {
             String text = node.path("text").asText();
             JsonNode idNode = node.get("toolCallId");
             JsonNode nameNode = node.get("toolName");
+            JsonNode reasoningNode = node.get("reasoning");
             return new SessionEvent(type, at, text,
                     idNode == null || idNode.isNull() ? null : idNode.asText(),
-                    nameNode == null || nameNode.isNull() ? null : nameNode.asText());
+                    nameNode == null || nameNode.isNull() ? null : nameNode.asText(),
+                    reasoningNode == null || reasoningNode.isNull() ? null : reasoningNode.asText());
         } catch (IOException e) {
             throw new PluginException("会话事件解析失败: " + line, e);
         }

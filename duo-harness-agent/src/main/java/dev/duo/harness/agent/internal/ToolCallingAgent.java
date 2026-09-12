@@ -90,19 +90,12 @@ public final class ToolCallingAgent implements ChatAgent {
         List<ToolInvocation> invocations = new ArrayList<>();
         StringBuilder finalReply = new StringBuilder();
         boolean completed = false;
-        // 工具链内最近一次非空的思考内容：思考模式 provider 要求回传。某轮模型可能
-        // 省略 reasoning 输出（5+ 轮长链实测出现过），此时保留链内最近一次非空值——
-        // 清空会让下一轮请求缺字段被 provider 以 400 拒绝（BUG-20260913-03）
-        String pendingReasoning = null;
 
         for (int iteration = 1; iteration <= maxIterations && !completed; iteration++) {
-            LlmTurn turn = llm.streamTurn(withReasoning(buildRequest(), pendingReasoning), text -> {
+            LlmTurn turn = llm.streamTurn(buildRequest(), text -> {
                 listener.onChunk(text);
                 finalReply.append(text);
             });
-            if (turn.reasoningContent() != null && !turn.reasoningContent().isBlank()) {
-                pendingReasoning = turn.reasoningContent();
-            }
 
             if (!turn.hasToolCalls()) {
                 session.append(SessionEvent.assistantMessage(turn.text()));
@@ -110,9 +103,12 @@ public final class ToolCallingAgent implements ChatAgent {
                 break;
             }
 
-            // 工具执行桥：tool_calls 逐个经三段管线与治理链执行，结果以 TOOL 消息回填
+            // 工具执行桥：tool_calls 逐个经三段管线与治理链执行，结果以 TOOL 消息回填。
+            // 思考内容随 tool/call 事件持久化——会话投影重建的请求历史天然完整
+            // （思考模式 provider 要求历史工具调用消息回传 reasoning，ADR 见 BUG-20260913-03）
             for (ToolCallRequest call : turn.toolCalls()) {
-                session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson()));
+                session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson(),
+                        turn.reasoningContent()));
                 listener.onToolCall(call.name(), call.argumentsJson());
                 ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()));
                 String resultText = String.valueOf(result.value());
@@ -138,29 +134,6 @@ public final class ToolCallingAgent implements ChatAgent {
                         def.parameters() == null ? "{}" : def.parameters().toString()))
                 .toList();
         return new ChatRequest(prompts.compose(), Messages.toChatMessages(session.deriveMessages()), specs);
-    }
-
-    /**
-     * 思考内容回填：附加到最近一条 assistant(tool_calls) 消息——
-     * 思考模式 provider（DeepSeek 等）对工具调用轮的 assistant 消息强制要求该字段，缺失即 400。
-     */
-    private ChatRequest withReasoning(ChatRequest request, String reasoning) {
-        if (reasoning == null || reasoning.isBlank()) {
-            return request;
-        }
-        List<ChatMessage> messages = request.messages();
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            ChatMessage message = messages.get(i);
-            if (message.role() == ChatMessage.Role.ASSISTANT
-                    && message.toolCalls() != null && !message.toolCalls().isEmpty()) {
-                ChatMessage withReasoning = new ChatMessage(message.role(), message.content(),
-                        message.toolCallId(), message.toolCalls(), reasoning);
-                List<ChatMessage> copy = new ArrayList<>(messages);
-                copy.set(i, withReasoning);
-                return new ChatRequest(request.systemPrompt(), copy, request.tools());
-            }
-        }
-        return request;
     }
 
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */

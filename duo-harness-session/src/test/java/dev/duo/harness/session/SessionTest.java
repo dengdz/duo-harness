@@ -148,6 +148,20 @@ class SessionTest {
     }
 
     @Test
+    void toolCallReasoningRoundTripsAndProjectsBack() throws IOException {
+        // M6 BUG-20260913-03 修复：tool/call 事件的 reasoning 随 JSONL 持久化，
+        // 投影重建的 assistant 消息携带思考内容（provider 要求回传）
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.toolCall("call_1", "read_file", "{}", "第一轮思考"));
+        session.append(SessionEvent.toolResult("call_1", "read_file", "内容"));
+
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals("第一轮思考", reloaded.events().get(0).reasoning(), "reasoning 随 JSONL 往返");
+        assertEquals("第一轮思考", reloaded.deriveMessages().get(0).reasoning(),
+                "投影出的 assistant 消息携带思考内容");
+    }
+
+    @Test
     void approvalEventsRoundTripAndSkipProjection() throws IOException {
         // M6 交互事件：审批请求与决定落会话（审计用），JSONL 往返一致、投影跳过
         Session session = Session.create(sessionsDir());

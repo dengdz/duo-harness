@@ -9,15 +9,17 @@ import java.util.Objects;
  * <p>三种形态（按 role 对应）：</p>
  * <ul>
  *   <li>{@code USER} / {@code ASSISTANT}：纯文本消息（content）；</li>
- *   <li>{@code ASSISTANT} + toolCalls：模型请求执行的工具调用（Function Calling）；</li>
+ *   <li>{@code ASSISTANT} + toolCalls：模型请求执行的工具调用（Function Calling），
+ *       可携带思考内容（reasoning——思考模式 provider 要求回传）；</li>
  *   <li>{@code TOOL}：工具结果回填（content + toolCallId 关联）。</li>
  * </ul>
  *
  * <p>由 {@link Session#deriveMessages()} 从事件日志派生：`user/message` 与
- * `assistant/message` 投影为纯文本消息；`tool/call` 投影为带 toolCalls 的
- * ASSISTANT 消息；`tool/result` 投影为 TOOL 消息。</p>
+ * `assistant/message` 投影为纯文本消息；`tool/call` 投影为带 toolCalls 与
+ * reasoning 的 ASSISTANT 消息；`tool/result` 投影为 TOOL 消息。</p>
  */
-public record Message(Role role, String content, String toolCallId, List<ToolCall> toolCalls) {
+public record Message(Role role, String content, String toolCallId, List<ToolCall> toolCalls,
+                      String reasoning) {
 
     /** 消息角色。 */
     public enum Role { USER, ASSISTANT, TOOL }
@@ -31,17 +33,27 @@ public record Message(Role role, String content, String toolCallId, List<ToolCal
 
     /** 兼容构造：纯文本消息（无工具调用信息）。 */
     public Message(Role role, String content) {
-        this(role, content, null, null);
+        this(role, content, null, null, null);
+    }
+
+    /** 兼容构造：无思考内容。 */
+    public Message(Role role, String content, String toolCallId, List<ToolCall> toolCalls) {
+        this(role, content, toolCallId, toolCalls, null);
     }
 
     /** TOOL 角色的便捷工厂：工具结果回填（id 关联模型发起的调用）。 */
     public static Message tool(String toolCallId, String content) {
-        return new Message(Role.TOOL, content, toolCallId, null);
+        return new Message(Role.TOOL, content, toolCallId, null, null);
     }
 
-    /** ASSISTANT 角色的便捷工厂：携带模型请求的工具调用。 */
+    /** ASSISTANT 角色的便捷工厂：携带模型请求的工具调用（无思考内容）。 */
     public static Message assistantWithToolCalls(List<ToolCall> toolCalls) {
         // assistant 工具调用消息的 content 为空串（模型调用工具时通常无文本输出）
-        return new Message(Role.ASSISTANT, "", null, toolCalls);
+        return new Message(Role.ASSISTANT, "", null, toolCalls, null);
+    }
+
+    /** ASSISTANT 角色 + 思考内容：思考模式 provider 要求工具调用轮的 reasoning 原样回传。 */
+    public static Message assistantWithToolCalls(List<ToolCall> toolCalls, String reasoning) {
+        return new Message(Role.ASSISTANT, "", null, toolCalls, reasoning);
     }
 }
