@@ -8,6 +8,16 @@
 
 ---
 
+## BUG-20260913-02 · agent-demo.yml repeat-reminder 行缺 config 块——boot 整树失败
+
+- **日期**：2026-09-13（M6 工单 05 用户手动验收首跑发现）
+- **症状**：AgentReplMain 启动即崩——BootException：repeat-reminder 插件声明了 JsonNode 配置类型却未提供配置，boot 整树点名失败。
+- **根因**：装配遗漏 + 测试盲区——yml 行没带 config 块（内核约定：声明配置类型即须给块，字段可省）；yml→Boot 装载路径零测试断言，缺陷直通验收。
+- **修复**：yml 行补 `config: {}`（默认阈值 3/5/8）；新增 agentDemoYmlBootsCleanly 用例锁定 yml 装载路径。提交 5354c38。
+- **防复发**：新增/修改 demo yml 必须配 boot 冒烟用例；插件可选配置约定固化为"JsonNode configType ⇒ 行带 config: {}，免配置用 Plugin<Void>"。档案见 .scratch/bugs/BUG-20260913-02.md。
+
+---
+
 ## BUG-20260913-01 · 文档与代码多面不一致（审计发现：README/导航/模块划分/术语/词汇表/包结构）
 
 - **日期**：2026-09-13（M5 收官推送后用户发起全库文档审计发现）
