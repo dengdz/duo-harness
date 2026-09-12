@@ -6,7 +6,7 @@ import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.DuoHome;
-import dev.duo.harness.llm.internal.LlmConfig;
+import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.ToolsService;
@@ -18,8 +18,8 @@ import java.io.PrintStream;
 import java.nio.file.Path;
 
 /**
- * M5 agent 演示入口：REPL 循环——LLM 自主调用工具（Function Calling 经六段
- * 治理管线），审批拒绝可见。
+ * M5 agent 演示入口：REPL 循环——LLM 自主调用工具（Function Calling 经
+ * 工具域三段管线与治理链），审批拒绝可见。
  *
  * <p>前置：{@code ~/.duo/config.yml} 配置 llm 段。Boot 装载工具域 + 审批
  * always-deny + 写保护（复用 demo-m2.yml 的治理配置）；MCP files 连接按

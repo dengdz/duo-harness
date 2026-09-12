@@ -9,6 +9,7 @@ import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
+import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.LlmTurn;
 import dev.duo.harness.llm.ToolCallRequest;
 import dev.duo.harness.llm.ToolSpec;

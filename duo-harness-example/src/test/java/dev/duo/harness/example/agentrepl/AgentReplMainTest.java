@@ -43,7 +43,7 @@ class AgentReplMainTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：AgentReplMainTest —— agent 演示冒烟：Function Calling 闭环"
-                + "（调工具 → 六段管线 → 回填 → 直答）+ 迭代上限（1 用例） ===");
+                + "（调工具 → 治理链 → 回填 → 直答）+ 迭代上限（1 用例） ===");
     }
 
     @Test

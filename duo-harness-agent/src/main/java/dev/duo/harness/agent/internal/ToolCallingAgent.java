@@ -25,10 +25,11 @@ import java.util.Objects;
 
 /**
  * agent 循环实现：会话记录 + LLM 流式调用 + Function Calling 工具执行桥——
- * 模型发起 tool_calls 时逐个经六段管线执行，结果以 TOOL 消息回填并继续循环，
+ * 模型发起 tool_calls 时逐个经工具域三段管线与治理链执行，结果以 TOOL 消息回填并继续循环，
  * 直至模型给出最终回答或迭代上限触发。
  *
- * <p>治理链在此激活：工具执行走 {@code ToolsService.execute}（六段管线），
+ * <p>治理链在此激活：工具执行走 {@code ToolsService.execute}（三段瀑布管线，
+ * 审批 / guard / 输出契约挂链生效），
  * 审批拒绝 / guard 拦截 / 违约已由管线收敛为 error 结果——原样回填给 LLM，
  * 模型看到拒绝原因后自行调整行为（换方案 / 向用户解释），而非 harness 层终止。</p>
  *
@@ -96,7 +97,7 @@ public final class ToolCallingAgent implements ChatAgent {
                 break;
             }
 
-            // 工具执行桥：tool_calls 逐个经六段管线执行，结果以 TOOL 消息回填
+            // 工具执行桥：tool_calls 逐个经三段管线与治理链执行，结果以 TOOL 消息回填
             for (ToolCallRequest call : turn.toolCalls()) {
                 session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson()));
                 listener.onToolCall(call.name(), call.argumentsJson());

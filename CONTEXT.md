@@ -92,6 +92,42 @@ _Avoid_: 拦截器、守卫
 
 
 
+### LLM 域
+
+**LLM 适配器（LLM Adapter）**:
+provider 中立的流式调用契约：stream（直答，chunk 回调）与 streamTurn（agent 循环，聚合为结构化一轮）。换 provider 只换适配器实现，消费方不感知协议差异。
+_Avoid_: 客户端、SDK 封装
+
+**思考内容（reasoning content）**:
+思考模型（thinking mode）在流式响应 `delta.reasoning_content` 中携带的推理过程：适配器按序捕获，工具调用链中按 provider 要求回传最近一轮。不落会话日志（已知限制清单）。
+_Avoid_: 思维链、CoT
+
+### 会话域
+
+**会话事件溯源（Session Event Sourcing）**:
+会话以不可变事件序列为唯一事实：`append` 是唯一写入原语并同步落 JSONL，读取侧投影出对话消息。崩溃安全、可回放，旧格式文件向后兼容。
+_Avoid_: 聊天记录、历史消息表
+
+**投影（Derive Messages）**:
+从事件日志推导对话消息视图的纯函数（`deriveMessages`）：user/assistant 消息与工具调用事件按规则入列，流式 chunk 不投影。投影不回写事件。
+_Avoid_: 缓存、快照
+
+### agent 循环
+
+**工具循环（Tool Loop）**:
+agent 的核心循环：LLM 自主发起 tool_calls → 工具经三段管线与治理链执行 → 结果以 TOOL 消息回填 → 继续调用直至最终回答或迭代上限。harness 不替模型决策，只执行与治理。
+_Avoid_: 自动执行、链式调用
+
+**Function Calling**:
+模型发起工具调用的协议机制：请求携带工具清单（ToolSpec），响应返回带 id 的调用请求，结果按 id 关联回填。OpenAI 兼容协议形态。
+_Avoid_: 插件调用、API 调用
+
+**迭代上限（Max Iterations）**:
+单次 send 允许的最大 LLM 往返轮数（默认 10）：超限返回错误说明而非无限循环，防异常任务烧 token。
+_Avoid_: 递归深度
+
+
+
 ### 运行环境
 
 **Duo home（~/.duo）**:

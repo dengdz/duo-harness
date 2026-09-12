@@ -6,7 +6,7 @@ import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
-import dev.duo.harness.llm.internal.LlmConfig;
+import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
 import dev.duo.harness.session.Message;
 import dev.duo.harness.session.Session;

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
+import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.LlmTurn;
 import dev.duo.harness.llm.ToolSpec;
 import org.junit.jupiter.api.AfterEach;

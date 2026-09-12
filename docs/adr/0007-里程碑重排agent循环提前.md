@@ -21,7 +21,7 @@ agent 循环提前（方向不变），并**细化为小步渐进序列**——a
 |---|---|---|
 | M3 | 模型单次对话：LLM 适配器（OpenAI 兼容 + 流式）+ CLI | 无 |
 | M4 | 上下文：会话事件溯源 + JSONL 持久化（`~/.duo/sessions`）+ 会话恢复 | M3 |
-| M5 | 工具循环（真 agent）：tool-call → 六段管线 → 回填 → 循环 | M4 + 工具域 |
+| M5 | 工具循环（真 agent）：tool-call → 工具域治理链 → 回填 → 循环 | M4 + 工具域 |
 | M6 | agent 打磨 + HITL（CLI 版）：system-prompt 组装注册表 + 审批/提问终端交互策略 | M5 |
 | M7 | agent skills + plan-mode：技能系统 + 计划模式（先计划、人批准、再执行） | M6 |
 | M8 | Web 双面 + 页面插件：HTTP 服务 + 会话事件流 + 对话/状态界面 + 页面插件 + HITL Web 版 | M4 + M6 |

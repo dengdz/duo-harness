@@ -37,7 +37,8 @@ export default defineConfig({
           { text: '0003 Jackson统一序列化与配置绑定', link: '/adr/0003-Jackson统一序列化与配置绑定' },
           { text: '0004 三支柱先行路线图', link: '/adr/0004-三支柱先行路线图' },
           { text: '0005 文档站与Pages部署', link: '/adr/0005-文档站VitePress与Pages部署' },
-          { text: '0006 MCP接入采用官方JavaSDK', link: '/adr/0006-MCP接入采用官方JavaSDK' }
+          { text: '0006 MCP接入采用官方JavaSDK', link: '/adr/0006-MCP接入采用官方JavaSDK' },
+          { text: '0007 里程碑重排agent循环提前', link: '/adr/0007-里程碑重排agent循环提前' }
         ]
       },
       {

@@ -1,4 +1,4 @@
-package dev.duo.harness.llm.internal;
+package dev.duo.harness.llm;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
