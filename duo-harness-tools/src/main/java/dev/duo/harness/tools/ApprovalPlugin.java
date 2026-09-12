@@ -6,6 +6,7 @@ import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.events.WaterfallListener;
 import dev.duo.harness.tools.internal.AlwaysDenyPolicy;
+import dev.duo.harness.tools.internal.ApprovalGate;
 import dev.duo.harness.tools.internal.AutoApprovePolicy;
 
 import java.util.HashSet;
@@ -22,6 +23,9 @@ import java.util.Set;
  *   allowedTools:            # auto-approve 专用（省略即空集）
  *     - echo
  * }</pre>
+ *
+ * <p>交互式审批（人逐次作答）不在此插件：挂 {@link InteractiveApprovalPlugin}
+ * （二选一，同一服务名占坑互斥），其 inject 声明 answers 并委托交互 seam。</p>
  *
  * <p>解析监听器只裁决**被声明的 ask**（{@link ToolDefinition#requiresApproval()} 或
  * pre-execute 监听器的 {@link ToolExecution#requestApproval()}）——这是 spec 的
@@ -44,7 +48,7 @@ public final class ApprovalPlugin implements Plugin<JsonNode> {
 
     @Override
     public Disposable apply(Context ctx, JsonNode config) {
-        ApprovalPolicyService policy = createPolicy(config);
+        ApprovalPolicyService policy = createPolicy(ctx, config);
         Disposable published = ctx.provide(ApprovalPolicyService.SERVICE_NAME, policy);
         Disposable gate = ctx.on(ToolsService.PRE_EXECUTE, gateFor(policy));
         return () -> {
@@ -55,25 +59,18 @@ public final class ApprovalPlugin implements Plugin<JsonNode> {
 
     /** 策略解析监听器：内层先跑，内层否决或不涉审批则不介入，否则委托策略裁决。 */
     private static WaterfallListener<ToolExecution, Boolean> gateFor(ApprovalPolicyService policy) {
-        return (exec, next) -> {
-            Boolean inner = next.invoke(exec);
-            if (!Boolean.TRUE.equals(inner) || exec.denied() || !exec.approvalRequested()) {
-                // 未被声明需审批的调用不进入审批——策略只裁决 ask，不主动治理
-                return inner;
-            }
-            exec.resolveApproval(policy.decide(exec.toolName(), exec.args()));
-            return inner;
-        };
+        return ApprovalGate.gateFor(policy);
     }
 
-    private static ApprovalPolicyService createPolicy(JsonNode config) {
+    private static ApprovalPolicyService createPolicy(Context ctx, JsonNode config) {
         String policy = config.hasNonNull("policy") ? config.get("policy").asText() : DEFAULT_POLICY;
         return switch (policy) {
             case AlwaysDenyPolicy.SOURCE -> new AlwaysDenyPolicy();
             case AutoApprovePolicy.SOURCE -> new AutoApprovePolicy(parseAllowedTools(config));
             default -> throw new IllegalArgumentException(
                     "未知审批策略: " + policy + "（支持: "
-                            + AlwaysDenyPolicy.SOURCE + " / " + AutoApprovePolicy.SOURCE + "）");
+                            + AlwaysDenyPolicy.SOURCE + " / " + AutoApprovePolicy.SOURCE
+                            + "；交互式审批挂 " + InteractiveApprovalPlugin.class.getSimpleName() + "）");
         };
     }
 

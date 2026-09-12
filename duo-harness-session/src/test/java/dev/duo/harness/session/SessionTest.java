@@ -146,4 +146,25 @@ class SessionTest {
 
         assertThrows(PluginException.class, () -> Session.load(file));
     }
+
+    @Test
+    void approvalEventsRoundTripAndSkipProjection() throws IOException {
+        // M6 交互事件：审批请求与决定落会话（审计用），JSONL 往返一致、投影跳过
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("帮我写文件"));
+        session.append(SessionEvent.approvalRequested("write_file", "{\"path\":\"output.txt\"}"));
+        session.append(SessionEvent.approvalDecided("write_file", "allow（回答者: console）"));
+
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(3, reloaded.events().size(), "审批事件随 JSONL 完整往返");
+        assertEquals(SessionEvent.APPROVAL_REQUESTED, reloaded.events().get(1).type());
+        assertEquals("write_file", reloaded.events().get(1).toolName());
+        assertEquals("{\"path\":\"output.txt\"}", reloaded.events().get(1).text());
+        assertEquals(SessionEvent.APPROVAL_DECIDED, reloaded.events().get(2).type());
+        assertEquals("allow（回答者: console）", reloaded.events().get(2).text());
+
+        List<Message> messages = reloaded.deriveMessages();
+        assertEquals(1, messages.size(), "审批事件是审计事件，不进对话投影");
+        assertEquals(Message.Role.USER, messages.get(0).role());
+    }
 }

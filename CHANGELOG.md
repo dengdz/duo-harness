@@ -13,6 +13,8 @@
 - agent 模块（`duo-harness-agent` 新模块）：`ToolCallingAgent` 工具循环——Function Calling 闭环（模型自主发起工具调用 → 经三段管线与治理链执行 → 结果回填 → 最终回答），迭代上限防失控；审批拒绝 / guard 拦截结果原样回填，模型自行调整行为（M5）
 - agent 演示 `AgentReplMain`：LLM 驱动 MCP 文件工具的完整闭环——读文件真实生效；写文件被审批拒绝后模型理解原因并向用户解释，过程叙述全程可见（M5）
 - 思考模型支持：流式捕获 `reasoning_content`，工具调用链中按 provider 要求回传——DeepSeek thinking 模式下多轮工具调用不再 400（M5）
+- 交互 seam（M6 工单 01）：`answers` 交互服务（回答者注册制 + 注册序遍历 + fail-closed）与 `interactive` 审批策略（`InteractiveApprovalPlugin`，inject answers）——ask 三态首次可由人作答；会话新增 `approval/requested` / `approval/decided` 审计事件（可选字段向后兼容，投影跳过）
+- 交互审批 fail-closed 语义（ADR-0008）：无回答者、人未作答（EOF/中断）一律拒绝；不做"永久放行"
 
 ### Changed
 

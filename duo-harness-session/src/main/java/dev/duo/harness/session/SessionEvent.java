@@ -33,6 +33,12 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 工具调用结果（text = 结果文本；失败为错误说明）。 */
     public static final String TOOL_RESULT = "tool/result";
 
+    /** 审批请求（M6 交互事件；text = 参数摘要，toolName = 工具名。投影时跳过——审计事件不进对话消息）。 */
+    public static final String APPROVAL_REQUESTED = "approval/requested";
+
+    /** 审批决定（M6 交互事件；text = 决定与来源，toolName = 工具名。投影时跳过）。 */
+    public static final String APPROVAL_DECIDED = "approval/decided";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");
@@ -70,5 +76,15 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：工具调用结果（id 关联模型发起的调用）。 */
     public static SessionEvent toolResult(String toolCallId, String toolName, String resultText) {
         return new SessionEvent(TOOL_RESULT, System.currentTimeMillis(), resultText, toolCallId, toolName);
+    }
+
+    /** 便捷工厂：审批请求（工具调用被声明需审批、交由回答者作答前）。 */
+    public static SessionEvent approvalRequested(String toolName, String detail) {
+        return new SessionEvent(APPROVAL_REQUESTED, System.currentTimeMillis(), detail, null, toolName);
+    }
+
+    /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"）。 */
+    public static SessionEvent approvalDecided(String toolName, String decisionText) {
+        return new SessionEvent(APPROVAL_DECIDED, System.currentTimeMillis(), decisionText, null, toolName);
     }
 }

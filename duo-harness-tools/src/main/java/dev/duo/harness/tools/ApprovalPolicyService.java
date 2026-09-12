@@ -8,8 +8,9 @@ import com.fasterxml.jackson.databind.JsonNode;
  * <p>pre-execute 的决策三态（allow / deny / ask）中，{@code ask} 委托本服务裁决。
  * 声明与裁决分离：{@link ToolDefinition#requiresApproval()} 或 pre-execute 监听器的
  * {@link ToolExecution#requestApproval()} 负责声明，本服务负责裁决；未被声明的调用
- * 不进入审批。两个预设实现：{@code always-deny}（缺省）与 {@code auto-approve}
- * （白名单），由 {@link ApprovalPlugin} 按配置选择并发布。</p>
+ * 不进入审批。三个预设实现：{@code always-deny}（缺省）、{@code auto-approve}
+ * （白名单）与 {@code interactive}（委托交互 seam 由在场回答者作答，ADR-0008），
+ * 由 {@link ApprovalPlugin} 按配置选择并发布。</p>
  *
  * <p>经视图接口 {@link ApprovalPolicyView} 寻址（方法名即服务名）。</p>
  */
