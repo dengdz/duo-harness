@@ -214,6 +214,52 @@ class ToolCallingAgentTest {
     }
 
     @Test
+    void reasoningFromToolRoundIsPassedBackOnNextRequest() throws IOException {
+        Session session = newSession();
+        dev.duo.harness.core.api.Context toolsRoot = dev.duo.harness.core.api.Context.root();
+        toolsRoot.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+        dev.duo.harness.tools.ToolsService impl = toolsRoot.as(ToolsView.class).tools();
+        impl.register(toolsRoot, echoDef());
+        List<ChatRequest> captured = new ArrayList<>();
+        // 第 1 轮返回工具调用 + 思考内容，第 2 轮给出最终回答
+        LlmAdapter thinkingAdapter = new LlmAdapter() {
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                captured.add(request);
+                if (captured.size() == 1) {
+                    textSink.accept("");
+                    return new LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "echo", "{}")),
+                            "需要回声一下");
+                }
+                textSink.accept("done");
+                return new LlmTurn("done", List.of());
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("循环路径走 streamTurn");
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(thinkingAdapter, impl, session, "你是助手", 10);
+
+        AgentReply reply = agent.send("问", AgentListener.NONE);
+
+        assertEquals("done", reply.finalText());
+        assertTrue(reply.completed());
+        // 第 1 轮请求：仅含 user 消息（尚无 assistant 工具调用，无思考内容可回传）
+        assertEquals(1, captured.get(0).messages().size());
+        assertEquals(ChatMessage.Role.USER, captured.get(0).messages().get(0).role());
+        // 第 2 轮请求：上一轮的思考内容必须出现在 assistant(tool_calls) 消息上
+        ChatMessage withCalls = captured.get(1).messages().stream()
+                .filter(m -> m.role() == ChatMessage.Role.ASSISTANT && m.toolCalls() != null)
+                .findFirst().orElseThrow();
+        assertEquals("需要回声一下", withCalls.reasoningContent(),
+                "思考模式 provider 要求工具调用轮的思考内容原样传回");
+        assertEquals("echo", withCalls.toolCalls().get(0).name());
+    }
+
+    @Test
     void invalidConstructorArgsRejected() throws IOException {
         Session session = newSession();
         LlmAdapter adapter = scriptedAdapter("ok");

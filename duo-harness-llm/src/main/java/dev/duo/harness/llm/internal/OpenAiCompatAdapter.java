@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Consumer;
-import java.util.function.Consumer;
 
 /**
  * OpenAI chat/completions 兼容适配器：DeepSeek/通义/Kimi/vLLM/Ollama 等同协议
@@ -129,7 +128,11 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 node.put("tool_call_id", message.toolCallId());
                 node.put("content", message.content());
             } else if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
-                // assistant 工具调用消息：content 可空 + tool_calls 数组
+                // assistant 工具调用消息：content 可空 + tool_calls 数组；
+                // 思考模式的 reasoning_content 必须原样传回，缺失即被 provider 以 400 拒绝
+                if (message.reasoningContent() != null) {
+                    node.put("reasoning_content", message.reasoningContent());
+                }
                 node.put("content", message.content());
                 ArrayNode calls = node.putArray("tool_calls");
                 for (ToolCallRequest call : message.toolCalls()) {
@@ -181,9 +184,10 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
         }
     }
 
-    /** 聚合一轮流式响应：文本增量累积 + tool_calls 分片按 index 聚合（含 finish_reason 检出）。 */
+    /** 聚合一轮流式响应：文本增量累积 + tool_calls 分片按 index 聚合 + 思考内容捕获（含 finish_reason 检出）。 */
     private LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink) throws IOException {
         StringBuilder text = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
         List<ToolCallRequest> toolCalls = new ArrayList<>();
         // 分片聚合容器：index → 分片内容（tool_calls 按到达序递增 index）
         Map<Integer, String> ids = new TreeMap<>();
@@ -205,6 +209,10 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 if (!content.isMissingNode() && !content.isNull()) {
                     textSink.accept(content.asText());
                     text.append(content.asText());
+                }
+                JsonNode reasoningDelta = delta.path("reasoning_content");
+                if (!reasoningDelta.isMissingNode() && !reasoningDelta.isNull()) {
+                    reasoning.append(reasoningDelta.asText());
                 }
                 JsonNode calls = delta.path("tool_calls");
                 if (calls.isArray()) {
@@ -233,7 +241,8 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                     names.getOrDefault(index, new StringBuilder()).toString(),
                     arguments.getOrDefault(index, new StringBuilder()).toString()));
         }
-        return new LlmTurn(text.toString(), toolCalls);
+        return new LlmTurn(text.toString(), toolCalls,
+                reasoning.length() == 0 ? null : reasoning.toString());
     }
 
     /** 非 200 响应转点名异常：状态码 + provider 错误消息（error.message）或原文。body 读取失败降级为占位文本。 */

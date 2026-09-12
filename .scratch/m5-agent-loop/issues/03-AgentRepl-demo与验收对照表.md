@@ -15,15 +15,15 @@ REPL 交互（`你> `/`AI> `、过程叙述：调工具/工具结果/审批拒�
 
 ## Status
 
-ready-for-agent
+done（2026-09-12 用户手动验收通过：场景一读文件闭环、场景二审批拒绝后 LLM 自行解释；思考模型 reasoning_content 修复后无 400）
 
 ## Checklist
 
-- [ ] AgentReplMain：Boot 配置装配（tools + approval always-deny + MCP files）+ ChatAgent 注入 + REPL 循环（过程叙述：调工具/工具结果）
-- [ ] 标志性场景：读文件自主调用成功 / 写文件被审批拒绝且 LLM 自行解释
-- [ ] 冒烟测试：mock LLM（tool_calls 脚本）+ 真 ToolsService（测试工具）
-- [ ] 验收对照表（本工单 Comments）：含预期日志原文段
-- [ ] 用户手动验收（done 的定义）
+- [x] AgentReplMain：Boot 配置装配（tools + approval always-deny + MCP files）+ ChatAgent 注入 + REPL 循环（过程叙述：调工具/工具结果）
+- [x] 标志性场景：读文件自主调用成功 / 写文件被审批拒绝且 LLM 自行解释
+- [x] 冒烟测试：mock LLM（tool_calls 脚本）+ 真 ToolsService（测试工具）
+- [x] 验收对照表（本工单 Comments）：含预期日志原文段
+- [x] 用户手动验收（done 的定义）
 
 ## Comments
 

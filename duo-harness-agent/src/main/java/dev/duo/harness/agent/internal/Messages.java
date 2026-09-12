@@ -23,7 +23,7 @@ final class Messages {
                 List<ToolCallRequest> calls = message.toolCalls().stream()
                         .map(call -> new ToolCallRequest(call.id(), call.name(), call.argumentsJson()))
                         .toList();
-                return ChatMessage.assistantWithToolCalls(message.content(), calls);
+                return ChatMessage.assistantWithToolCalls(message.content(), calls, null);
             }
             return new ChatMessage(wireRole(message.role()), message.content(), null, null);
         }).toList();

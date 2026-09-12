@@ -80,12 +80,15 @@ public final class ToolCallingAgent implements ChatAgent {
         List<ToolInvocation> invocations = new ArrayList<>();
         StringBuilder finalReply = new StringBuilder();
         boolean completed = false;
+        // 上一轮 assistant(tool_calls) 的思考内容：思考模式 provider 要求下一轮请求原样传回
+        String pendingReasoning = null;
 
         for (int iteration = 1; iteration <= maxIterations && !completed; iteration++) {
-            LlmTurn turn = llm.streamTurn(buildRequest(), text -> {
+            LlmTurn turn = llm.streamTurn(withReasoning(buildRequest(), pendingReasoning), text -> {
                 listener.onChunk(text);
                 finalReply.append(text);
             });
+            pendingReasoning = turn.reasoningContent();
 
             if (!turn.hasToolCalls()) {
                 session.append(SessionEvent.assistantMessage(turn.text()));
@@ -121,6 +124,29 @@ public final class ToolCallingAgent implements ChatAgent {
                         def.parameters() == null ? "{}" : def.parameters().toString()))
                 .toList();
         return new ChatRequest(systemPrompt, Messages.toChatMessages(session.deriveMessages()), specs);
+    }
+
+    /**
+     * 思考内容回填：附加到最近一条 assistant(tool_calls) 消息——
+     * 思考模式 provider（DeepSeek 等）对工具调用轮的 assistant 消息强制要求该字段，缺失即 400。
+     */
+    private ChatRequest withReasoning(ChatRequest request, String reasoning) {
+        if (reasoning == null || reasoning.isBlank()) {
+            return request;
+        }
+        List<ChatMessage> messages = request.messages();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessage message = messages.get(i);
+            if (message.role() == ChatMessage.Role.ASSISTANT
+                    && message.toolCalls() != null && !message.toolCalls().isEmpty()) {
+                ChatMessage withReasoning = new ChatMessage(message.role(), message.content(),
+                        message.toolCallId(), message.toolCalls(), reasoning);
+                List<ChatMessage> copy = new ArrayList<>(messages);
+                copy.set(i, withReasoning);
+                return new ChatRequest(request.systemPrompt(), copy, request.tools());
+            }
+        }
+        return request;
     }
 
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */

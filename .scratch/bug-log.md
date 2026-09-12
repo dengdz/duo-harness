@@ -8,6 +8,16 @@
 
 ---
 
+## BUG-20260912-05 · 思考模型 reasoning_content 未回传（HTTP 400）
+
+- **日期**：2026-09-12（M5 工单 03 用户手动验收发现，tool_call_id 修复后）
+- **症状**：工具调用链第 3 轮 LLM 调用（两次工具结果回填后）返回 `HTTP 400 - The reasoning_content in the thinking mode must be passed back to the API`。
+- **根因**：思考模型（deepseek-flash）流式响应在 `delta.reasoning_content` 携带思考过程，Function Calling 链中 provider 要求把 assistant 消息的 reasoning_content 原样传回；适配器只捕获 delta.content、LlmTurn/ChatMessage 均无该字段——思考内容首轮即被丢弃。
+- **修复**：LlmTurn/ChatMessage 加可空 reasoningContent（兼容构造保旧调用点）；aggregateTurn 按序聚合 reasoning 增量；ToolCallingAgent 逐轮跟踪 pendingReasoning 并附加到最近一条 assistant(tool_calls) 消息；适配器序列化该字段（仅 assistant 工具调用消息）。新增 4 用例（分帧聚合 / 非思考模型 null / 序列化位置 / agent 跨轮回传）。
+- **防复发**：协议字段在响应侧与请求侧各有约束，接入新字段必须两侧同查 provider 文档；"mock 验证机制、真实 provider 验证协议"第三次出现——真实 provider 冒烟固化进验收件清单。档案见 .scratch/bugs/BUG-20260912-05.md。
+
+---
+
 ## BUG-20260912-04 · 自动继续旧会话时投影 NPE 崩溃（旧格式工具事件无 id）
 
 - **日期**：2026-09-12（M5 工单 03 用户手动验收发现）

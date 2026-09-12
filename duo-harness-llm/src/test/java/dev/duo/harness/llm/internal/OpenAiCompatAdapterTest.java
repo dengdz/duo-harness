@@ -127,6 +127,58 @@ class OpenAiCompatAdapterTest {
     }
 
     @Test
+    void streamTurnCapturesReasoningContent() throws Exception {
+        // 思考模式（thinking mode）SSE 形态：reasoning_content 增量分多帧与 content 交错到达
+        String reasoning1 = "{\"choices\":[{\"delta\":{\"reasoning_content\":\"先看\"}}]}";
+        String reasoning2 = "{\"choices\":[{\"delta\":{\"reasoning_content\":\"文件\"}}]}";
+        server.respondSse(List.of(reasoning1, reasoning2, MockOpenAiServer.deltaChunk("好的")));
+
+        StringBuilder printed = new StringBuilder();
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("s", List.of(ChatMessage.user("q")), List.of()), printed::append);
+
+        assertEquals("先看文件", turn.reasoningContent(), "reasoning_content 增量按序聚合");
+        assertEquals("好的", turn.text());
+        assertEquals("好的", printed.toString(), "textSink 只收正文增量，不含思考内容");
+    }
+
+    @Test
+    void streamTurnOmitsReasoningWhenAbsent() throws Exception {
+        server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
+
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("s", List.of(ChatMessage.user("q")), List.of()), s -> { });
+
+        assertEquals(null, turn.reasoningContent(), "非思考模型该字段为 null");
+    }
+
+    @Test
+    void assistantReasoningContentSerializesToRequest() throws Exception {
+        server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
+
+        List<ChatMessage> history = List.of(
+                ChatMessage.user("问"),
+                ChatMessage.assistantWithToolCalls("", List.of(
+                        new dev.duo.harness.llm.ToolCallRequest("call_1", "read_file", "{}")),
+                        "需要先读文件"),
+                ChatMessage.tool("call_1", "内容"));
+        collect(adapter(), new ChatRequest("s", history, List.of()));
+
+        JsonNode body = json.readTree(server.lastRequestBody());
+        assertEquals("system", body.path("messages").get(0).path("role").asText(), "system 前置");
+        JsonNode user = body.path("messages").get(1);
+        JsonNode assistant = body.path("messages").get(2);
+        JsonNode tool = body.path("messages").get(3);
+        assertEquals("assistant", assistant.path("role").asText());
+        assertEquals("需要先读文件", assistant.path("reasoning_content").asText(),
+                "思考内容应序列化进 assistant 工具调用消息");
+        assertTrue(user.path("reasoning_content").isMissingNode(),
+                "user 消息不携带该字段");
+        assertTrue(tool.path("reasoning_content").isMissingNode(),
+                "tool 消息不携带该字段");
+    }
+
+    @Test
     void streamTurnSurfacesNon200Error() throws Exception {
         server.respondError(401, "{\"error\":{\"message\":\"bad key\"}}");
 

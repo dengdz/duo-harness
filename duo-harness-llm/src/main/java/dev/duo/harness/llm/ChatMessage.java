@@ -13,10 +13,12 @@ import java.util.Objects;
  *   <li>{@code TOOL}：工具结果回填（content + toolCallId 关联）。</li>
  * </ul>
  *
- * <p>system 指令不在此列表——由 {@link ChatRequest} 的 systemPrompt 字段单列。</p>
+ * <p>system 指令不在此列表——由 {@link ChatRequest} 的 systemPrompt 字段单列。
+ * 思考模型（thinking mode）的 {@code reasoningContent} 属 assistant 消息的可选
+ * 回传字段——工具调用链中 DeepSeek 等兼容 provider 要求原样传回。</p>
  */
 public record ChatMessage(Role role, String content, String toolCallId,
-                          List<ToolCallRequest> toolCalls) {
+                          List<ToolCallRequest> toolCalls, String reasoningContent) {
 
     /** 消息角色（与 OpenAI 兼容协议的 role 字段对齐）。 */
     public enum Role {
@@ -35,24 +37,29 @@ public record ChatMessage(Role role, String content, String toolCallId,
         toolCalls = toolCalls == null ? null : List.copyOf(toolCalls);
     }
 
+    /** 兼容构造：无思考内容。 */
+    public ChatMessage(Role role, String content, String toolCallId, List<ToolCallRequest> toolCalls) {
+        this(role, content, toolCallId, toolCalls, null);
+    }
+
     /** USER 角色的便捷工厂。 */
     public static ChatMessage user(String content) {
-        return new ChatMessage(Role.USER, content, null, null);
+        return new ChatMessage(Role.USER, content, null, null, null);
     }
 
     /** ASSISTANT 角色的便捷工厂（纯文本回复）。 */
     public static ChatMessage assistant(String content) {
-        return new ChatMessage(Role.ASSISTANT, content, null, null);
+        return new ChatMessage(Role.ASSISTANT, content, null, null, null);
     }
 
     /** TOOL 角色的便捷工厂：工具结果回填（id 关联模型发起的调用）。 */
     public static ChatMessage tool(String toolCallId, String content) {
-        return new ChatMessage(Role.TOOL, content, toolCallId, null);
+        return new ChatMessage(Role.TOOL, content, toolCallId, null, null);
     }
 
-    /** ASSISTANT 角色 + 工具调用清单（模型请求执行工具）。 */
-    public static ChatMessage assistantWithToolCalls(String content, List<ToolCallRequest> toolCalls) {
-        // assistant 消息本身没有 toolCallId——该字段属 TOOL 角色消息的回填关联
-        return new ChatMessage(Role.ASSISTANT, content, null, toolCalls);
+    /** ASSISTANT 角色 + 工具调用清单 + 思考内容（模型请求执行工具）。 */
+    public static ChatMessage assistantWithToolCalls(String content, List<ToolCallRequest> toolCalls,
+                                                     String reasoningContent) {
+        return new ChatMessage(Role.ASSISTANT, content, null, toolCalls, reasoningContent);
     }
 }
