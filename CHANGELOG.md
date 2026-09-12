@@ -9,6 +9,10 @@
 - LLM 适配器（`duo-harness-llm` 新模块）：provider 中立流式调用契约 + OpenAI 兼容适配器——`baseUrl/apiKey/model` 配置化，DeepSeek/通义/Kimi/vLLM 等兼容 provider 开箱即用
 - 聊天演示 `ChatReplMain`：REPL 交互（`你> `/`AI> `、`/exit` 退出）、流式打印、错误原样呈现；多轮对话有上下文记忆，启动自动继续最近会话（`/new` 开新话题），会话落 `~/.duo/sessions` 可回放
 - `LlmConfig` 支持 `llm.systemPrompt` 可选配置（缺省内置指令；组装注册表属 M6）
+- 会话模块（`duo-harness-session` 新模块）：会话事件溯源——`append` 唯一写入原语 + JSONL 同步落盘，`deriveMessages` 投影多轮上下文；旧格式会话文件向后兼容（M4）
+- agent 模块（`duo-harness-agent` 新模块）：`ToolCallingAgent` 工具循环——Function Calling 闭环（模型自主发起工具调用 → 六段管线执行 → 结果回填 → 最终回答），迭代上限防失控；审批拒绝 / guard 拦截结果原样回填，模型自行调整行为（M5）
+- agent 演示 `AgentReplMain`：LLM 驱动 MCP 文件工具的完整闭环——读文件真实生效；写文件被审批拒绝后模型理解原因并向用户解释，过程叙述全程可见（M5）
+- 思考模型支持：流式捕获 `reasoning_content`，工具调用链中按 provider 要求回传——DeepSeek thinking 模式下多轮工具调用不再 400（M5）
 
 ## 0.2.0（2026-09-11）
 

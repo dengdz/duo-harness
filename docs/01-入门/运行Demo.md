@@ -1,6 +1,6 @@
 # 运行 Demo
 
-> 状态：M1 + M2 全链路可用。一条命令演示插件化全部机制（M1）与 MCP 接入及治理链（M2）。
+> 状态：M1 + M2 一条命令演示全链路可用；M3 聊天 REPL 与 M5 工具循环 REPL 可交互运行（见下文）。
 
 ## 一条命令
 
@@ -36,3 +36,30 @@ mvn -pl duo-harness-example -am package exec:java
 - 示例插件源码在 `duo-harness-example` 的 `dev.duo.harness.example` 包树——`greeting`（服务对）、`tools`（工具与治理）、`approval`（审批策略）、`contract`（输出契约与 guard）、`mcpfs`（迷你 filesystem server 与写保护）五个功能子包
 
 M2 逐工单验收对照表见 `.scratch/m2-tools-mcp/acceptance.md`（含预期日志原文快照）。
+
+## 聊天 REPL（M3 + M4）
+
+前置：`~/.duo/config.yml` 配置 `llm:` 段（baseUrl/apiKey/model，DeepSeek 等 OpenAI 兼容 provider 开箱即用）。
+
+```bash
+mvn -pl duo-harness-example -am package exec:java \
+  -Dexec.mainClass=dev.duo.harness.example.chat.ChatReplMain
+```
+
+`你> ` 提问，回答流式打印；多轮对话有上下文记忆，重启自动继续最近会话，`/new` 开新话题，`/exit` 退出。会话 JSONL 落 `~/.duo/sessions`，可回放。
+
+## 工具循环 REPL（M5）
+
+```bash
+mvn -pl duo-harness-example -am package exec:java \
+  -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
+```
+
+LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）：启动挂载 MCP files 连接（迷你 filesystem server，指向临时目录），两个标志性场景：
+
+| 输入 | 预期 |
+|---|---|
+| `读一下 notes.txt` | `[调工具] mcp__files__read_file` → `[工具结果]` 真实文件内容 → 模型总结回答 |
+| `帮我写一个 output.txt，内容是测试` | `[调工具] mcp__files__write_file` → `[工具错误]` 被审批策略拒绝（always-deny）→ 模型理解原因，向用户解释并给替代方案 |
+
+场景二体现治理链在 LLM 驱动下依然生效：审批拦截结果原样回填，模型自行调整行为而非 harness 层终止。
