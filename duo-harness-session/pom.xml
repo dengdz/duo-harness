@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2000/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.duo</groupId>
+    <artifactId>duo-harness</artifactId>
+    <version>0.2.0</version>
+  </parent>
+
+  <artifactId>duo-harness-session</artifactId>
+  <description>会话域：事件溯源（append 单写 + JSONL 同步落盘）+ 投影（多轮记忆）——中立数据基座，不依赖任何功能模块</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 事件 JSONL 序列化（版本走根 pom jackson-bom） -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+  </dependencies>
+</project>
