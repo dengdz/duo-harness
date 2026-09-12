@@ -18,7 +18,7 @@ llm 契约从"单条用户消息"演进为"消息列表"（multi-turn），ChatR
 
 ## Status
 
-ready-for-agent
+done（2026-09-12 用户验收通过：跨进程自动继续同一会话、多轮记忆被真实 LLM 确认——"我叫什么？"→"你叫小红呀"）
 
 ## Checklist
 
@@ -66,3 +66,8 @@ mvn -pl duo-harness-example -am package exec:java \
 ### 状态
 
 待用户手动验收（对照表逐行核对）。通过后置 done。
+
+### 验收记录（2026-09-12）
+
+- 用户实跑路径 B 双进程：第一进程两轮建立记忆 → /exit → 第二进程横幅 `继续会话 <同一 id>（已有 4 条消息）` → "我叫什么？"→"你叫小红呀"（跨进程记忆生效）。
+- 同一命令的 package 阶段顺带全量测试：core 72 / tools 29 / mcp 19 / llm 10 / session 8 / example 4，合计 142 用例 0 失败。
