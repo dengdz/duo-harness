@@ -262,6 +262,46 @@ class ToolCallingAgentTest {
     }
 
     @Test
+    void longChainKeepsLastNonEmptyReasoningWhenModelOmitsIt() throws IOException {
+        // BUG-20260913-03 复现形态：实测 5+ 轮链中模型某轮省略 reasoning 输出，
+        // 旧实现无条件清空 pendingReasoning → 下轮请求缺字段 400。
+        // 修复语义：链内保留最近一次非空思考，后续每轮请求都携带。
+        Session session = newSession();
+        dev.duo.harness.core.api.Context toolsRoot = dev.duo.harness.core.api.Context.root();
+        toolsRoot.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+        dev.duo.harness.tools.ToolsService impl = toolsRoot.as(ToolsView.class).tools();
+        impl.register(toolsRoot, echoDef());
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter flakyThinking = new LlmAdapter() {
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                captured.add(request);
+                String reasoning = captured.size() == 1 ? "链首轮思考" : null;
+                return new LlmTurn("", List.of(new dev.duo.harness.llm.ToolCallRequest(
+                        "call_" + captured.size(), "echo", "{}")), reasoning);
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("循环路径走 streamTurn");
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(flakyThinking, impl, session, "你是助手", 6);
+
+        AgentReply reply = agent.send("长链任务", AgentListener.NONE);
+
+        assertFalse(reply.completed(), "每轮都要求调工具，应跑满 6 轮上限");
+        assertEquals(6, captured.size(), "6 轮共 6 次请求");
+        for (int i = 1; i < captured.size(); i++) {
+            ChatMessage lastWithCalls = captured.get(i).messages().stream()
+                    .filter(m -> m.role() == ChatMessage.Role.ASSISTANT && m.toolCalls() != null)
+                    .reduce((first, second) -> second).orElseThrow();
+            assertEquals("链首轮思考", lastWithCalls.reasoningContent(),
+                    "第 " + (i + 1) + " 轮请求的最后一条工具调用消息应携带链内最近非空思考");
+        }
+    }
+
+    @Test
     void invalidConstructorArgsRejected() throws IOException {
         Session session = newSession();
         LlmAdapter adapter = scriptedAdapter("ok");

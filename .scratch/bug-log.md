@@ -13,8 +13,8 @@
 - **日期**：2026-09-13（M6 工单 05 用户验收场景四发现）
 - **症状**：单次 send 内 5 轮相同工具调用，第 6 次 LLM 调用 400 "reasoning_content must be passed back"——BUG-20260912-05 同症状复发于长链。
 - **根因**：待排查（最强假设：思考模型某轮可省略 reasoning 输出，现行修复把"本轮无思考"无条件清空 pendingReasoning，导致下轮请求缺字段）。
-- **修复**：排查中（候选：链内保留最近一次非空 reasoning；需 duo-research 核实 DeepSeek 回传义务边界）。
-- **防复发**：同族第二次——修复必须带 5+ 轮长链测试。档案见 .scratch/bugs/BUG-20260913-03.md。
+- **修复**：链内 pendingReasoning 不被 null 覆盖（保留最近一次非空思考回传）；B 线核实官方语义——DeepSeek 文档明确思考模式工具调用轮必须完整回传 reasoning_content，DSH llm-deepseek 同做法。6 轮长链回归测试锁定（修复前该形态必 400）。
+- **防复发**：同族第二次——provider 扩展字段"响应出现 ⇒ 请求回传"配对契约必须考虑缺席轮次（保留最近值而非清空）。已知边界：整链从未出现 reasoning 时无值可回传。档案见 .scratch/bugs/BUG-20260913-03.md。
 
 ---
 

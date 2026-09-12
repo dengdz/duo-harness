@@ -90,7 +90,9 @@ public final class ToolCallingAgent implements ChatAgent {
         List<ToolInvocation> invocations = new ArrayList<>();
         StringBuilder finalReply = new StringBuilder();
         boolean completed = false;
-        // 上一轮 assistant(tool_calls) 的思考内容：思考模式 provider 要求下一轮请求原样传回
+        // 工具链内最近一次非空的思考内容：思考模式 provider 要求回传。某轮模型可能
+        // 省略 reasoning 输出（5+ 轮长链实测出现过），此时保留链内最近一次非空值——
+        // 清空会让下一轮请求缺字段被 provider 以 400 拒绝（BUG-20260913-03）
         String pendingReasoning = null;
 
         for (int iteration = 1; iteration <= maxIterations && !completed; iteration++) {
@@ -98,7 +100,9 @@ public final class ToolCallingAgent implements ChatAgent {
                 listener.onChunk(text);
                 finalReply.append(text);
             });
-            pendingReasoning = turn.reasoningContent();
+            if (turn.reasoningContent() != null && !turn.reasoningContent().isBlank()) {
+                pendingReasoning = turn.reasoningContent();
+            }
 
             if (!turn.hasToolCalls()) {
                 session.append(SessionEvent.assistantMessage(turn.text()));
