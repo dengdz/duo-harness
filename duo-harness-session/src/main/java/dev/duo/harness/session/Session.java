@@ -148,6 +148,8 @@ public final class Session {
                         messages.add(new Message(Message.Role.USER, event.text()));
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
+                case SessionEvent.TOOL_RESULT ->
+                        messages.add(new Message(Message.Role.TOOL, event.text()));
                 default -> { /* 流式 chunk 与未知类型不投影 */ }
             }
         }

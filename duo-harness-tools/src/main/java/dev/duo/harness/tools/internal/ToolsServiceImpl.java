@@ -76,6 +76,11 @@ public final class ToolsServiceImpl implements ToolsService {
     }
 
     @Override
+    public List<ToolDefinition> list() {
+        return List.copyOf(tools.values());
+    }
+
+    @Override
     public Disposable guard(Context registrant, GuardCheck check) {
         Objects.requireNonNull(registrant, "registrant");
         Objects.requireNonNull(check, "check");

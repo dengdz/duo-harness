@@ -24,6 +24,12 @@ public record SessionEvent(String type, long at, String text) {
     /** 助手完整消息（全部 chunk 拼接后的最终文本）。 */
     public static final String ASSISTANT_MESSAGE = "assistant/message";
 
+    /** 工具调用开始（载荷：工具名 + 参数 JSON 的组合文本）。 */
+    public static final String TOOL_CALL = "tool/call";
+
+    /** 工具调用结果（载荷：结果文本；失败为错误说明）。 */
+    public static final String TOOL_RESULT = "tool/result";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");

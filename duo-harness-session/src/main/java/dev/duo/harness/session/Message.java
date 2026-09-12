@@ -12,7 +12,7 @@ import java.util.Objects;
 public record Message(Role role, String content) {
 
     /** 消息角色（与会话事件类型一一对应）。 */
-    public enum Role { USER, ASSISTANT }
+    public enum Role { USER, ASSISTANT, TOOL }
 
     /** 构造时校验非空——错误前移到构造点。 */
     public Message {

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
+import dev.duo.harness.llm.LlmTurn;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -84,6 +85,51 @@ class OpenAiCompatAdapterTest {
         String message = e.getMessage();
         assertTrue(message.contains("401"), message);
         assertTrue(message.contains("bad api key"), "应透出 provider 错误消息: " + message);
+    }
+
+    @Test
+    void streamTurnAggregatesShardedToolCalls() throws Exception {
+        // OpenAI 流式 tool_calls 分片形态：id/name/arguments 按 index 分多帧到达
+        String shard1 = "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\","
+                + "\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\"\"}}]}}]}";
+        String shard2 = "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\":\\\"notes.txt\\\"}\"}}]}}]}";
+        server.respondSse(List.of(shard1, shard2));
+
+        StringBuilder printed = new StringBuilder();
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("s", List.of(ChatMessage.user("q")), List.of()), printed::append);
+
+        // 分片聚合：id/name/arguments 按 index 拼回完整调用
+        assertEquals(1, turn.toolCalls().size());
+        assertEquals("call_1", turn.toolCalls().get(0).id());
+        assertEquals("read_file", turn.toolCalls().get(0).name());
+        assertEquals("{\"path\":\"notes.txt\"}", turn.toolCalls().get(0).argumentsJson());
+        assertTrue(turn.text().isEmpty(), "无文本输出时 text 为空串");
+    }
+
+    @Test
+    void streamTurnDeliversTextAndEmptyToolCalls() throws Exception {
+        server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
+
+        StringBuilder printed = new StringBuilder();
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("s", List.of(ChatMessage.user("q")), List.of()), printed::append);
+
+        assertEquals("ok", turn.text());
+        assertTrue(turn.toolCalls().isEmpty(), "纯文本轮无工具调用");
+    }
+
+    @Test
+    void streamTurnSurfacesNon200Error() throws Exception {
+        server.respondError(401, "{\"error\":{\"message\":\"bad key\"}}");
+
+        PluginException e = assertThrows(PluginException.class,
+                () -> adapter().streamTurn(
+                        new ChatRequest("s", List.of(ChatMessage.user("q"))), s -> { }));
+
+        assertTrue(e.getMessage().contains("401"), e.getMessage());
+        assertTrue(e.getMessage().contains("bad key"), e.getMessage());
     }
 
     @Test

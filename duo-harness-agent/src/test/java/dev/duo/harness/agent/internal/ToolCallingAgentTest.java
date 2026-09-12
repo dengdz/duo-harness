@@ -1,14 +1,18 @@
 package dev.duo.harness.agent.internal;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
+import dev.duo.harness.llm.LlmTurn;
 import dev.duo.harness.session.Message;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
+import dev.duo.harness.tools.ToolResult;
+import dev.duo.harness.tools.ToolsService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,8 +35,48 @@ class ToolCallingAgentTest {
         return Session.create(tempDir.resolve("sessions"));
     }
 
+    /** 空工具域（直答路径不触工具，execute 不会被调）。 */
+    private ToolsService noTools() {
+        return new ToolsService() {
+            @Override
+            public dev.duo.harness.core.api.Disposable register(
+                    dev.duo.harness.core.api.Context registrant, dev.duo.harness.tools.ToolDefinition definition) {
+                throw new UnsupportedOperationException("直答路径不应注册工具");
+            }
+
+            @Override
+            public dev.duo.harness.core.api.Disposable guard(
+                    dev.duo.harness.core.api.Context registrant, dev.duo.harness.tools.GuardCheck check) {
+                throw new UnsupportedOperationException("直答路径不应注册 guard");
+            }
+
+            @Override
+            public List<dev.duo.harness.tools.ToolDefinition> list() {
+                return List.of();
+            }
+
+            @Override
+            public ToolResult execute(String toolName, JsonNode args) {
+                throw new UnsupportedOperationException("直答路径不应执行工具");
+            }
+        };
+    }
+
+    /** 只实现 stream 的适配器：streamTurn 委托回 stream（单段聚合）。 */
+    private abstract static class StreamOnlyAdapter implements LlmAdapter {
+        @Override
+        public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+            List<String> chunks = new ArrayList<>();
+            stream(request, onChunk -> {
+                chunks.add(onChunk.text());
+                textSink.accept(onChunk.text());
+            });
+            return new LlmTurn(String.join("", chunks), List.of());
+        }
+    }
+
     private LlmAdapter scriptedAdapter(String replyText) {
-        return new LlmAdapter() {
+        return new StreamOnlyAdapter() {
             @Override
             public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
                 onChunk.accept(new ChatChunk(replyText));
@@ -43,7 +87,7 @@ class ToolCallingAgentTest {
     @Test
     void directAnswerWritesSessionAndReturnsReply() throws IOException {
         Session session = newSession();
-        ToolCallingAgent agent = new ToolCallingAgent(scriptedAdapter("你好呀"), session,
+        ToolCallingAgent agent = new ToolCallingAgent(scriptedAdapter("你好呀"), noTools(), session,
                 "你是助手", 10);
 
         AgentReply reply = agent.send("你好", AgentListener.NONE);
@@ -62,14 +106,14 @@ class ToolCallingAgentTest {
     void listenerReceivesChunkSequence() throws IOException {
         Session session = newSession();
         List<String> chunks = new ArrayList<>();
-        LlmAdapter multi = new LlmAdapter() {
+        LlmAdapter multi = new StreamOnlyAdapter() {
             @Override
             public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
                 onChunk.accept(new ChatChunk("第一段"));
                 onChunk.accept(new ChatChunk("第二段"));
             }
         };
-        ToolCallingAgent agent = new ToolCallingAgent(multi, session, "你是助手", 10);
+        ToolCallingAgent agent = new ToolCallingAgent(multi, noTools(), session, "你是助手", 10);
 
         agent.send("问", new AgentListener() {
             @Override
@@ -85,14 +129,14 @@ class ToolCallingAgentTest {
     void requestCarriesProjectionHistoryAndSystem() throws IOException {
         Session session = newSession();
         List<ChatRequest> captured = new ArrayList<>();
-        LlmAdapter capturing = new LlmAdapter() {
+        LlmAdapter capturing = new StreamOnlyAdapter() {
             @Override
             public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
                 captured.add(request);
                 onChunk.accept(new ChatChunk("ok"));
             }
         };
-        ToolCallingAgent agent = new ToolCallingAgent(capturing, session, "你是助手", 10);
+        ToolCallingAgent agent = new ToolCallingAgent(capturing, noTools(), session, "你是助手", 10);
 
         agent.send("第一问", AgentListener.NONE);
         agent.send("第二问", AgentListener.NONE);
@@ -102,8 +146,7 @@ class ToolCallingAgentTest {
         ChatRequest second = captured.get(1);
         assertEquals("你是助手", second.systemPrompt());
         assertEquals(3, second.messages().size(), "两轮投影: u + a + u");
-        assertEquals(ChatMessage.Role.USER, second.messages().get(0).role(),
-                "请求消息应为 llm 契约形态");
+        assertEquals(ChatMessage.Role.USER, second.messages().get(0).role());
         assertEquals("第一问", second.messages().get(0).content());
         assertEquals(ChatMessage.Role.ASSISTANT, second.messages().get(1).role());
         assertEquals("第二问", second.messages().get(2).content());
@@ -116,10 +159,10 @@ class ToolCallingAgentTest {
         LlmAdapter adapter = scriptedAdapter("ok");
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> new ToolCallingAgent(adapter, session, "  ", 10),
+                () -> new ToolCallingAgent(adapter, noTools(), session, "  ", 10),
                 "空 systemPrompt 应被拒绝");
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> new ToolCallingAgent(adapter, session, "你是助手", 0),
+                () -> new ToolCallingAgent(adapter, noTools(), session, "你是助手", 0),
                 "迭代上限至少为 1");
     }
 }

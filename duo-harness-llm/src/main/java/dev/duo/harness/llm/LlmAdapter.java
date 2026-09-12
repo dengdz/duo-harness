@@ -21,4 +21,19 @@ public interface LlmAdapter {
      * @throws dev.duo.harness.core.api.PluginException 调用失败（网络/协议/凭证），消息保留 provider 错误详情
      */
     void stream(ChatRequest request, Consumer<ChatChunk> onChunk);
+
+    /**
+     * 流式执行一轮 LLM 调用（agent 循环形态）：文本增量经 {@code textSink}
+     * 逐段交付（REPL 打印），方法返回时交付聚合结果——完整文本与模型发起的
+     * 工具调用请求列表。
+     *
+     * <p>与 {@link #stream} 的区别：本方法面向需要消费 tool_calls 的调用方
+     * （agent 循环）；直答场景用 {@link #stream} 即可。</p>
+     *
+     * @param request  对话请求（含可选工具清单）
+     * @param textSink 文本增量消费（流式打印）
+     * @return 一轮聚合结果（完整文本 + 工具调用请求列表）
+     * @throws PluginException 调用失败（网络 / 协议 / 凭证），错误原样呈现不重试
+     */
+    LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink);
 }

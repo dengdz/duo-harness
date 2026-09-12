@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 
+import java.util.List;
+
 /**
  * "tools" 服务接口：工具注册与三段管线执行。经视图接口寻址
  * （方法名即服务名：{@code interface ToolsView { ToolsService tools(); }}）。
@@ -57,6 +59,16 @@ public interface ToolsService {
      * @return 幂等注销器（作用域销毁时已自动执行）
      */
     Disposable guard(Context registrant, GuardCheck check);
+
+    /**
+     * 当前在册工具的定义清单（不可变视图，含 MCP 远端工具）。
+     *
+     * <p>用途：agent 循环构造 LLM 请求的 tools 清单（Function Calling）。
+     * 返回顺序不作承诺；每次调用返回快照。</p>
+     *
+     * @return 在册工具定义清单（可能为空，不为 null）
+     */
+    List<ToolDefinition> list();
 
     /**
      * 经三段管线执行工具。
