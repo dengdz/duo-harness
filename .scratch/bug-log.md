@@ -8,6 +8,16 @@
 
 ---
 
+## BUG-20260913-03 · 多轮工具链（5+ 轮）再次出现 reasoning_content 400（同族第二次）
+
+- **日期**：2026-09-13（M6 工单 05 用户验收场景四发现）
+- **症状**：单次 send 内 5 轮相同工具调用，第 6 次 LLM 调用 400 "reasoning_content must be passed back"——BUG-20260912-05 同症状复发于长链。
+- **根因**：待排查（最强假设：思考模型某轮可省略 reasoning 输出，现行修复把"本轮无思考"无条件清空 pendingReasoning，导致下轮请求缺字段）。
+- **修复**：排查中（候选：链内保留最近一次非空 reasoning；需 duo-research 核实 DeepSeek 回传义务边界）。
+- **防复发**：同族第二次——修复必须带 5+ 轮长链测试。档案见 .scratch/bugs/BUG-20260913-03.md。
+
+---
+
 ## BUG-20260913-02 · agent-demo.yml repeat-reminder 行缺 config 块——boot 整树失败
 
 - **日期**：2026-09-13（M6 工单 05 用户手动验收首跑发现）
