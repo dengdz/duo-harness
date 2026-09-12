@@ -42,6 +42,12 @@
       <artifactId>duo-harness-session</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M5 段落演示 agent 工具循环（ChatAgent Function Calling） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-agent</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

@@ -49,6 +49,20 @@ class ChatReplMainTest {
             }
             onChunk.accept(new ChatChunk("收到：" + last));
         }
+
+        @Override
+        public dev.duo.harness.llm.LlmTurn streamTurn(ChatRequest request,
+                                                      java.util.function.Consumer<String> textSink) {
+            // 直答委托：与 stream 同路径（M4 冒烟不触工具循环）
+            List<ChatChunk> chunks = new ArrayList<>();
+            stream(request, onChunk -> {
+                chunks.add(onChunk);
+                textSink.accept(onChunk.text());
+            });
+            String text = chunks.stream().map(ChatChunk::text)
+                    .collect(java.util.stream.Collectors.joining());
+            return new dev.duo.harness.llm.LlmTurn(text, List.of());
+        }
     }
 
     @Test

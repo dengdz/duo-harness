@@ -1,0 +1,17 @@
+plugins:
+  # 工具域：一行启用整个域
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  # 审批策略：always-deny——写操作被声明"需审批"后一律拒绝（治理可见演示）
+  - id: approval
+    name: dev.duo.harness.tools.ApprovalPlugin
+    config:
+      policy: always-deny
+
+  # 写保护治理插件：对 write_file 声明 ask + guard 拦截涉密文件读取
+  - id: write-protector
+    name: dev.duo.harness.example.mcpfs.WriteProtectorPlugin
+
+  # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载
+  # （MiniFileSystemServer 指向临时目录）——等价形态见 demo-m2.yml 注释

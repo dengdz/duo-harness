@@ -209,7 +209,7 @@ public final class DemoMain {
      * exec:java（maven 同 JVM）下该属性是 maven 自身的，退而从 context classloader
      * 枚举 URL（ClassRealm 可枚举项目类与依赖 jar）。
      */
-    static String subprocessClasspath() {
+    public static String subprocessClasspath() {
         String property = System.getProperty("java.class.path");
         if (property != null && property.contains("duo-harness")) {
             return property;

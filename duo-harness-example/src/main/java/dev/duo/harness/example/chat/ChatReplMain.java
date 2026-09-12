@@ -101,15 +101,20 @@ public final class ChatReplMain {
      * assistant/message——本轮历史以 user 消息收尾，下轮投影保持该缺口
      * （OpenAI 兼容协议容忍连续同角色消息）。</p>
      */
+    private static ChatMessage.Role wireRole(Message.Role role) {
+        return switch (role) {
+            case USER -> ChatMessage.Role.USER;
+            case ASSISTANT -> ChatMessage.Role.ASSISTANT;
+            case TOOL -> ChatMessage.Role.TOOL;
+        };
+    }
+
     private static void converse(PrintStream out, LlmAdapter adapter, Session session,
                                  String systemPrompt, String userText) {
         session.append(SessionEvent.userMessage(userText));
 
         List<ChatMessage> history = session.deriveMessages().stream()
-                .map(message -> new ChatMessage(
-                        message.role() == Message.Role.USER
-                                ? ChatMessage.Role.USER : ChatMessage.Role.ASSISTANT,
-                        message.content()))
+                .map(message -> new ChatMessage(wireRole(message.role()), message.content(), null, null))
                 .toList();
 
         out.print("AI> ");
