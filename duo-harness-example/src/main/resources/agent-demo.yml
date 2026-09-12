@@ -17,8 +17,10 @@ plugins:
     name: dev.duo.harness.example.mcpfs.WriteProtectorPlugin
 
   # 重复调用提醒：同一工具相同参数连续重复达阈值（3/5/8）时在结果尾部附加提醒
+  # （内核约定：声明 config 类型即须提供 config 块——块内字段可省，省略即默认阈值）
   - id: repeat-reminder
     name: dev.duo.harness.example.mcpfs.RepeatReminderPlugin
+    config: {}
 
   # ask_user 提问工具的挂载由 AgentReplMain 装配（构造注入交互服务后注册）
   # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载

@@ -141,6 +141,15 @@ class AgentReplMainTest {
         root.dispose();
     }
 
+    @Test
+    void agentDemoYmlBootsCleanly() throws Exception {
+        // 防回归：run() 需要 ~/.duo/config.yml 的真实 key，测试覆盖不到 yml 装载——
+        // BUG（工单05 验收发现）：repeat-reminder 行缺 config 块，Boot 严格绑定整树点名失败
+        Path yml = Path.of(AgentReplMain.class.getResource("/agent-demo.yml").toURI());
+        Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
+        root.dispose();
+    }
+
     private static ToolDefinition echoDef() {
         return new ToolDefinition() {
             @Override
