@@ -123,6 +123,22 @@ class SessionTest {
     }
 
     @Test
+    void legacyToolEventsWithoutIdAreSkippedInProjection() throws IOException {
+        // 手写旧格式 JSONL（无 toolCallId/toolName——BUG-20260912-04 的触发形态）
+        Files.createDirectories(sessionsDir());
+        Path legacy = sessionsDir().resolve("20260101-000000-legacy.jsonl");
+        Files.writeString(legacy, "{\"type\":\"user/message\",\"at\":1,\"text\":\"旧会话\"}\n"
+                + "{\"type\":\"tool/call\",\"at\":2,\"text\":\"read_file {}\"}\n"
+                + "{\"type\":\"tool/result\",\"at\":3,\"text\":\"结果\"}\n");
+
+        Session replayed = Session.load(legacy);
+        List<Message> messages = replayed.deriveMessages();
+
+        assertEquals(1, messages.size(), "旧格式工具事件跳过，仅 user 消息投影");
+        assertEquals(Message.Role.USER, messages.get(0).role());
+    }
+
+    @Test
     void loadRejectsCorruptLine() throws IOException {
         Path file = sessionsDir().resolve("bad.jsonl");
         Files.createDirectories(sessionsDir());

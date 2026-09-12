@@ -139,7 +139,10 @@ public final class Session {
         }
     }
 
-    /** 投影：事件日志 → 对话消息列表（user/message 与 assistant/message 入列，chunk 不投影）。 */
+    /**
+     * 投影：事件日志 → 对话消息列表（含 Function Calling 形态）。
+     * 旧格式工具事件（无 toolCallId，协议关联缺失）跳过——不投影也不崩溃。
+     */
     public List<Message> deriveMessages() {
         List<Message> messages = new ArrayList<>();
         for (SessionEvent event : events) {
@@ -148,11 +151,19 @@ public final class Session {
                         messages.add(new Message(Message.Role.USER, event.text()));
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
-                case SessionEvent.TOOL_CALL ->
-                        messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
-                                event.toolCallId(), event.toolName(), event.text()))));
-                case SessionEvent.TOOL_RESULT ->
-                        messages.add(Message.tool(event.toolCallId(), event.text()));
+                case SessionEvent.TOOL_CALL -> {
+                    if (event.toolCallId() == null) {
+                        break;
+                    }
+                    messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
+                            event.toolCallId(), event.toolName(), event.text()))));
+                }
+                case SessionEvent.TOOL_RESULT -> {
+                    if (event.toolCallId() == null) {
+                        break;
+                    }
+                    messages.add(Message.tool(event.toolCallId(), event.text()));
+                }
                 default -> { /* 流式 chunk 与未知类型不投影 */ }
             }
         }

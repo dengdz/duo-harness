@@ -8,6 +8,16 @@
 
 ---
 
+## BUG-20260912-04 · 自动继续旧会话时投影 NPE 崩溃（旧格式工具事件无 id）
+
+- **日期**：2026-09-12（M5 工单 03 用户手动验收发现）
+- **症状**：自动继续修复前的旧会话（其 tool/call 行无 toolCallId 字段）→ `NullPointerException: id` at ToolCall.<init> → 整个 REPL 进程退出。
+- **根因**：SessionEvent 演进加可选字段后，解析层容错但投影层 `deriveMessages` 对 null toolCallId 直接 `new ToolCall(null,...)` 撞上紧凑构造器的非空校验——"向后兼容"只做了解析一半。
+- **修复**：投影对 null toolCallId 的工具事件跳过（不投影不崩溃）；AgentReplMain REPL 循环逐轮兜底捕获 RuntimeException。回归测试：旧格式 JSONL 手写样例（session 9 用例之一）。
+- **防复发**：record/JSONL 演进时新增可选字段必须同步核查所有消费分支（本次遗漏投影分支）；档案见 .scratch/bugs/BUG-20260912-04.md。
+
+---
+
 ## BUG-20260912-03 · TOOL 消息缺 tool_call_id（HTTP 400）
 
 - **日期**：2026-09-12（M5 工单 03 用户手动验收发现）
