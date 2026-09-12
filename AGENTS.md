@@ -10,6 +10,7 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 | 提交一下代码 | duo-workflow 的提交前核对 → git-commit-gen |
 | 推一下 / 推送前检查 | duo-pre-push-checks |
 | 审查一下改动 | duo-code-review |
+| 记录一下这个 bug / bug 台账 | duo-bug-ledger |
 | 清理一下注释 | duo-trim-cot-leakage |
 | 建个模块 / 这个类放哪 / 审查目录结构 | duo-project-structure |
 | 写 spec / 建工单 / 记 ADR / 更新术语表 | duo-tracker |

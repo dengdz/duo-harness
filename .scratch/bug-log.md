@@ -1,11 +1,14 @@
 # Bug 留存台账
 
+> 由 duo-bug-ledger 技能管理：每条含日期/症状/根因/修复/防复发，新条目插在头部。
+> 阶段收官时回顾（防复发落实 / 同族根因升级）。
+
 > duo-harness 处理过的 bug 留存（用户约定：每遇到一个 bug 都记录在案）。
 > 每条：日期 / 症状 / 根因 / 修复 / 防复发。按时间倒序排列（最新在上）。
 
 ---
 
-## BUG-2026-0912-03 · TOOL 消息缺 tool_call_id（HTTP 400）
+## BUG-20260912-03 · TOOL 消息缺 tool_call_id（HTTP 400）
 
 - **日期**：2026-09-12（M5 工单 03 用户手动验收发现）
 - **症状**：AgentRepl 中 LLM 成功调用 MCP 工具后，第二轮 LLM 调用返回 `HTTP 400 - messages[6]: missing field 'tool_call_id'`，且两次提问都在同一位置失败。
@@ -13,7 +16,7 @@
 - **修复**：SessionEvent 加可选 toolCallId/toolName 字段（JSONL 可选字段向后兼容）；session.Message 加 toolCallId/toolCalls（新增中立 ToolCall 类型，不依赖 llm）；投影规则补 tool/call → ASSISTANT(toolCalls) 与 tool/result → TOOL；适配器按协议序列化 tool_calls 数组与 tool_call_id。新增 2 个 session 用例 + llm tools 序列化断言。
 - **防复发**：mock 测试无法校验协议兼容性——真实 provider 的验收（路径 B）不可省略；Function Calling 消息形态变更必须以真实 provider 回归。
 
-## BUG-2026-0912-02 · buildRequest 漏发工具清单（agent 退化为聊天套壳）
+## BUG-20260912-02 · buildRequest 漏发工具清单（agent 退化为聊天套壳）
 
 - **日期**：2026-09-12（M5 工单 03 用户手动验收发现）
 - **症状**：AgentRepl 中 LLM 回答"我无法直接访问你的设备"而非调用工具——agent 退化为纯聊天。
@@ -21,7 +24,7 @@
 - **修复**：buildRequest 补发 tools 清单（tools.list() → ToolSpec：name/description/parametersJson）；新增用例"注册工具后请求清单必须携带"（防回归）。
 - **防复发**：mock 断言"无工具时清单为空"恰好验证了错误方向——**正向断言必须有**（有注册工具时清单非空且内容正确）。
 
-## BUG-2026-0912-01 · MockOpenAiServer 夹具缺 choices 包裹
+## BUG-20260912-01 · MockOpenAiServer 夹具缺 choices 包裹
 
 - **日期**：2026-09-12（工单 02 开发自测发现）
 - **症状**：streamTurn 测试聚合结果为空 chunk。
@@ -29,7 +32,7 @@
 - **修复**：夹具补 wrapInChoices；修复后靠"分片聚合"测试覆盖。
 - **防复发**：夹具必须按真实协议形态构造载荷，协议结构变更时夹具同步。
 
-## BUG-2026-0911-01 · 验收命令含行内注释（zsh 当参数）
+## BUG-20260911-01 · 验收命令含行内注释（zsh 当参数）
 
 - **日期**：2026-09-11（M4 验收时用户发现）
 - **症状**：`mvn ... exec:java    # 演示路径` 报 `Unknown lifecycle phase "#"`。
@@ -41,14 +44,14 @@
 
 - ChatRepl 按幕刷盘（IDEA 控制台 stdout/stderr 混序问题）——见 0f736e3。
 
-## BUG-2026-0910-05 · ChatRequest 防御性拷贝回归
+## BUG-20260910-05 · ChatRequest 防御性拷贝回归
 
 - **日期**：2026-09-10（M5 工单 01 code-review 发现）
 - **症状**：`ChatRequest` 演进为三组件时丢失 `messages = List.copyOf(messages)`（保留的注释仍是"防御性拷贝"——注释与行为不符）。
 - **修复**：恢复拷贝 + messages 具名 requireNonNull。
 - **防复发**：record 演进时逐组件核对紧凑构造器行为。
 
-## BUG-2026-0910-04 · networknt 1.5.0 缺 Dialects 类（NoClassDefFoundError）
+## BUG-20260910-04 · networknt 1.5.0 缺 Dialects 类（NoClassDefFoundError）
 
 - **日期**：2026-09-10（M4 工单 04 开发自测发现）
 - **症状**：MCP 夹具子进程 `NoClassDefFoundError: com/networknt/schema/dialect/Dialects`。
@@ -56,21 +59,21 @@
 - **修复**：networknt 随 SDK 升至 2.0.0，校验代码适配新 API（SchemaRegistry/SpecificationVersion/Error）。
 - **防复发**：引入与第三方 SDK 配套的库时，以 SDK 的 pom 声明为准，不以票据历史文字为准。
 
-## BUG-2026-0910-03 · Session.latest 文件名字典序不可靠
+## BUG-20260910-03 · Session.latest 文件名字典序不可靠
 
 - **日期**：2026-09-10（M4 工单 02 code-review 发现）
 - **症状**：同秒创建的两个会话，随机后缀字典序与生成序可能不一致（0x1000 < abc），"自动继续"可能选错会话。
 - **修复**：id 后缀 %04x 补零（M5 又改为按文件修改时间判定，彻底消除）。
 - **防复发**：——已由 mtime 方案根治。
 
-## BUG-2026-0910-02 · isError 被 setResult 覆盖
+## BUG-20260910-02 · isError 被 setResult 覆盖
 
 - **日期**：2026-09-10（M2 工单 02 开发发现）
 - **症状**：工具返回 isError=true 时若再 setResult(null)，错误形态被覆盖为非错误。
 - **修复**：适配器抛 PluginException 交给管线收敛，不再直接 markError 后返回。
 - **防复发**：——已在 ToolCallingAgent 抛错路径固化。
 
-## BUG-2026-0910-01 · 首连成功后缺 countDown（测试全挂起）
+## BUG-20260910-01 · 首连成功后缺 countDown（测试全挂起）
 
 - **日期**：2026-09-10（M2 工单 02 开局发现）
 - **症状**：`runFirstAttempt()` 永久阻塞——连接成功但调用方不被放行。
