@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03, 04（集成单，全部在场）
 
-**Status:** implemented（2026-09-13，待用户手动验收——M6 收官闸门）
+**Status:** done（2026-09-13 用户手动验收通过——M6 收官）
 
 ## Checklist
 
@@ -16,7 +16,7 @@
 - [x] 测试：ConsoleAnswererTest 7 例 + AuditingAnswererTest 3 例（呈现与留痕组件级覆盖；脚本 LLM 三场景端到端留待用户手动验收——mock LLM 无法真实驱动终端 y/n 交互流）
 - [x] 验收对照表（本工单 Comments）：运行命令 + 预期输出逐段对照
 - [x] 文档同步：运行Demo.md 补 M6 交互场景；CHANGELOG 未发布段收口
-- [ ] 用户手动验收（done 的定义）
+- [x] 用户手动验收（done 的定义）
 
 ## 实现记录（2026-09-13）
 
@@ -52,4 +52,4 @@ mvn -pl duo-harness-example -am package exec:java \
 
 ### 状态
 
-待用户手动验收。通过后置 done（M6 收官）。
+done。验收实录（2026-09-13）：场景一 y 放行（文件真实写入）/ 场景二 n 拒绝（模型解释）/ 场景三 ask_user 问答闭环 / 场景五 /new 全部通过；场景四表现超预期——模型从历史 [提醒] 中学习，不再盲从重复读取，改用 ask_user 向用户确认意图（HITL 机制 + 会话记忆 + 提醒治理的联合验证）。过程中发现并修复两个缺陷：BUG-20260913-02（yml 缺 config 块）与 BUG-20260913-03（reasoning 持久化根治，含诊断程序三连与官方语义核实）。
