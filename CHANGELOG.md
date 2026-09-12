@@ -17,6 +17,7 @@
 ### Changed
 
 - `LlmConfig` 从 `dev.duo.harness.llm.internal` 移至 `dev.duo.harness.llm` 根包（平铺契约约定对齐：跨模块消费的配置 record 属公共契约）
+- DSH 核心功能全景研究落盘（`docs/research/DSH/核心功能全景.md`，锚点 c291e796 = release 0.1.5）：agent 循环能力、内置工具目录、交互与 HITL 机制（审批 seam / ask-user / 权限预设 / plan 模式）、会话与上下文治理、扩展生态（skills / subagent / hooks / bundle / preset）、LLM 适配——含与 duo-harness 现状的事实映射表，供后续里程碑对齐参考
 
 ## 0.2.0（2026-09-11）
 

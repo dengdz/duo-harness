@@ -126,6 +126,30 @@ _Avoid_: 插件调用、API 调用
 单次 send 允许的最大 LLM 往返轮数（默认 10）：超限返回错误说明而非无限循环，防异常任务烧 token。
 _Avoid_: 递归深度
 
+**prompt 注册表（Prompt Registry）**:
+agent 域的 "prompts" 服务：插件经 `register(registrant, fragment)` 贡献提示片段，随注册作用域自动摘除；每轮请求按注册序动态组装为最终 system 提示。yml 的 `llm.systemPrompt` 是排在最前的用户指令片段，全部为空才落内置缺省。M7 技能指令段的挂载点。
+_Avoid_: 模板引擎、prompt 管理
+
+**prompt 片段（Prompt Fragment）**:
+注册进 prompt 注册表的最小提示单元：(source 名, content)。source 标记贡献者身份，便于审计与点名。
+_Avoid_: 模板、段（与分节语义混淆）
+
+**交互 seam（Interaction Seam）**:
+审批与提问共用的机制层：策略或模型只声明"需要人来答"，实际作答交给已注册的回答者。机制（声明、遍历、fail-closed）与呈现（终端 / Web）分离——随宿主演进只换回答者，不动机制。
+_Avoid_: UI 回调、弹窗
+
+**回答者（Answerer）**:
+注册进交互服务的呈现端实现：接收交互请求（审批 / 提问），呈现给人并返回回答。AgentRepl 注册 console answerer（M6），Web 面注册 web answerer（M8）。随注册作用域自动摘除。
+_Avoid_: 监听器（listener 只观察不作答）、回调
+
+**fail-closed（无答即拒）**:
+交互请求没有任何回答者在场、或人未作答（EOF / 中断 / 超时）时，一律按拒绝处理——交互缺失永不等于默许。
+_Avoid_: 缺省放行、超时通过
+
+**提问工具（ask_user）**:
+模型发起的交互工具：参数含 question 必填文本、可选 options 选项数组与 multiSelect；执行本体即"经交互 seam 等人作答"，回答作为工具结果回填，模型据此继续。问与答复用 tool/call、tool/result 事件留痕。
+_Avoid_: 问卷、表单
+
 
 
 ### 运行环境
