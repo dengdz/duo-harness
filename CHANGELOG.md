@@ -19,6 +19,7 @@
 - `ask_user` 提问工具（M6 工单 03，tools 域）：模型发起的交互——参数最小 schema（question + 可选 options/multiSelect），执行本体经交互 seam 等人作答，回答即工具结果；走六段管线；无人应答 fail-closed 收敛为错误结果
 - `RetryingAdapter` LLM 重试装饰器（M6 工单 04，llm 域）：对网络故障与 429/502/503/504 指数退避重试（默认 3 次）；协议与凭证错误（400/401）直通不重试；流式安全——已交付增量后不再重试。消除 M5 已知限制"无自动重试"
 - 重复调用提醒插件 `RepeatReminderPlugin`（M6 工单 04，example 治理插件示范）：同一工具相同参数连续重复达阈值（默认 3/5/8）时在结果尾部附加逐级加码提醒（advisory，非 guard）；阈值可配置
+- AgentRepl 升级为 HITL 演示（M6 工单 05）：写操作终端 y/n 逐次审批（console answerer + 审计桥，决定落会话）、模型 ask_user 提问（选项序号/自由文本）、`/new` 开新话题；`llm.retry` 段可配重试参数；prompt 注册表演示片段
 
 ### Changed
 

@@ -21,12 +21,26 @@ import java.util.Map;
  * @param baseUrl      provider 地址（如 https://api.deepseek.com）
  * @param apiKey       凭证
  * @param model        模型名（如 deepseek-chat）
- * @param systemPrompt 行为指令（可选，缺省取内置默认——组装注册表属 M6）
+ * @param systemPrompt 行为指令（可选；M6 起作为 prompt 注册表的最前用户片段）
+ * @param retryMaxAttempts      重试总尝试次数（含首次，默认 {@link #DEFAULT_RETRY_MAX_ATTEMPTS}）
+ * @param retryInitialBackoffMs 首次重试退避毫秒（×2 递增，默认 {@link #DEFAULT_RETRY_INITIAL_BACKOFF_MS}）
  */
-public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
+public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
+                        int retryMaxAttempts, long retryInitialBackoffMs) {
 
     /** systemPrompt 未配置时的缺省指令。 */
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
+
+    /** 重试总尝试次数缺省值。 */
+    public static final int DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+
+    /** 首次重试退避毫秒缺省值。 */
+    public static final long DEFAULT_RETRY_INITIAL_BACKOFF_MS = 1000;
+
+    /** 兼容构造：重试参数取缺省（3 次 / 1000ms）。 */
+    public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
+        this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS, DEFAULT_RETRY_INITIAL_BACKOFF_MS);
+    }
 
 
     /** env 覆盖项：baseUrl。 */
@@ -69,7 +83,20 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
                     + " 环境变量提供");
         }
         return new LlmConfig(baseUrl, apiKey, model,
-                systemPrompt != null && !systemPrompt.isBlank() ? systemPrompt : DEFAULT_SYSTEM_PROMPT);
+                systemPrompt != null && !systemPrompt.isBlank() ? systemPrompt : DEFAULT_SYSTEM_PROMPT,
+                parseRetryMaxAttempts(llm), parseRetryInitialBackoffMs(llm));
+    }
+
+    /** 解析可选 retry.maxAttempts（非正数回落默认）。 */
+    private static int parseRetryMaxAttempts(JsonNode llm) {
+        int value = llm == null ? 0 : llm.path("retry").path("maxAttempts").asInt(0);
+        return value >= 1 ? value : DEFAULT_RETRY_MAX_ATTEMPTS;
+    }
+
+    /** 解析可选 retry.initialBackoffMs（负数回落默认）。 */
+    private static long parseRetryInitialBackoffMs(JsonNode llm) {
+        long value = llm == null ? -1 : llm.path("retry").path("initialBackoffMs").asLong(-1);
+        return value >= 0 ? value : DEFAULT_RETRY_INITIAL_BACKOFF_MS;
     }
 
     private static String override(String fromFile, String fromEnv) {

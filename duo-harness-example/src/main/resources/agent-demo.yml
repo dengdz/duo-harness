@@ -3,15 +3,23 @@ plugins:
   - id: tools
     name: dev.duo.harness.tools.ToolsPlugin
 
-  # 审批策略：always-deny——写操作被声明"需审批"后一律拒绝（治理可见演示）
+  # 交互服务：回答者注册表（console answerer 由 AgentReplMain 在装配层注册）
+  - id: answers
+    name: dev.duo.harness.tools.InteractionPlugin
+
+  # 交互审批：写操作被声明"需审批"后由终端 y/n 逐次作答（fail-closed，无永久放行）
+  # ——与 ApprovalPlugin（always-deny / auto-approve）二选一挂载
   - id: approval
-    name: dev.duo.harness.tools.ApprovalPlugin
-    config:
-      policy: always-deny
+    name: dev.duo.harness.tools.InteractiveApprovalPlugin
 
   # 写保护治理插件：对 write_file 声明 ask + guard 拦截涉密文件读取
   - id: write-protector
     name: dev.duo.harness.example.mcpfs.WriteProtectorPlugin
 
+  # 重复调用提醒：同一工具相同参数连续重复达阈值（3/5/8）时在结果尾部附加提醒
+  - id: repeat-reminder
+    name: dev.duo.harness.example.mcpfs.RepeatReminderPlugin
+
+  # ask_user 提问工具的挂载由 AgentReplMain 装配（构造注入交互服务后注册）
   # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载
   # （MiniFileSystemServer 指向临时目录）——等价形态见 demo-m2.yml 注释

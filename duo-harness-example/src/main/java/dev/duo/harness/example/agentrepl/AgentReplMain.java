@@ -4,11 +4,16 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.PromptFragment;
+import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
+import dev.duo.harness.llm.RetryingAdapter;
 import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
 import dev.duo.harness.session.Session;
+import dev.duo.harness.tools.AnswersView;
+import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
 import dev.duo.harness.example.tools.ToolsView;
 
@@ -18,12 +23,13 @@ import java.io.PrintStream;
 import java.nio.file.Path;
 
 /**
- * M5 agent 演示入口：REPL 循环——LLM 自主调用工具（Function Calling 经
- * 工具域三段管线与治理链），审批拒绝可见。
+ * M6 agent 演示入口：REPL 循环——LLM 自主调用工具（Function Calling 经
+ * 工具域三段管线与治理链）；HITL 交互（写操作终端 y/n 审批、ask_user 提问）、
+ * 重试与重复调用提醒。ADR-0008 的 CLI 呈现位。
  *
- * <p>前置：{@code ~/.duo/config.yml} 配置 llm 段。Boot 装载工具域 + 审批
- * always-deny + 写保护（复用 demo-m2.yml 的治理配置）；MCP files 连接按
- * demo-m2.yml 注释的等价形态以编程挂载（MiniFileSystemServer 指向临时目录）。</p>
+ * <p>前置：{@code ~/.duo/config.yml} 配置 llm 段（retry 子段可选）。Boot 装载
+ * 工具域 + 交互服务 + 交互审批 + 写保护 + ask_user + prompt 演示片段；MCP files
+ * 连接以编程挂载（MiniFileSystemServer 指向临时目录）。</p>
  *
  * <p>运行：{@code mvn -pl duo-harness-example -am package exec:java
  * -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain}</p>
@@ -74,16 +80,27 @@ public final class AgentReplMain {
         root.plugin(new dev.duo.harness.mcp.McpClientPlugin(), mcpConfig).awaitStartup();
 
         ToolsService tools = root.as(AgentToolsView.class).tools();
-        Session session = Session.latest(DuoHome.resolve().resolveDir("agent-sessions"));
+        InteractionService answers = root.as(AgentAnswersView.class).answers();
+        tools.register(root, new dev.duo.harness.tools.AskUserTool(answers));
+
+        Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
+        Session session = Session.latest(sessionsDir);
         if (session == null) {
-            session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
+            session = Session.create(sessionsDir);
         }
-        out.println("会话 " + session.id() + "（工具循环上下文）。/exit 退出。");
+        out.println("会话 " + session.id() + "（工具循环上下文）。/exit 退出，/new 开新话题。");
         out.flush();
 
-        ChatAgent agent = new dev.duo.harness.agent.internal.ToolCallingAgent(
-                new OpenAiCompatAdapter(config), tools, session,
-                new dev.duo.harness.agent.PromptRegistry(config.systemPrompt()));
+        // CLI 回答者（审批 y/n、提问呈现）+ 审计桥（审批事件落会话）——ADR-0008 呈现位
+        answers.register(root, new AuditingAnswerer(session, new ConsoleAnswerer(in, out)));
+
+        PromptRegistry prompts = new PromptRegistry(config.systemPrompt());
+        prompts.register(root, new PromptFragment("demo:platform", "回答使用中文，保持简洁；执行文件操作前先确认目标路径。"));
+
+        LlmAdapterHolder llm = new LlmAdapterHolder(new RetryingAdapter(new OpenAiCompatAdapter(config),
+                config.retryMaxAttempts(), config.retryInitialBackoffMs()));
+        SessionHolder sessionHolder = new SessionHolder(session);
+        ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
 
         while (true) {
             out.print("你> ");
@@ -93,6 +110,13 @@ public final class AgentReplMain {
                 break;
             }
             if (line.isBlank()) {
+                continue;
+            }
+            if (line.strip().equals("/new")) {
+                sessionHolder.session = Session.create(sessionsDir);
+                agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
+                out.println("新会话 " + sessionHolder.session.id() + "。");
+                out.flush();
                 continue;
             }
             try {
@@ -130,9 +154,38 @@ public final class AgentReplMain {
         root.dispose();
     }
 
+    private static ChatAgent buildAgent(dev.duo.harness.llm.LlmAdapter adapter, ToolsService tools,
+                                        Session session, PromptRegistry prompts) {
+        return new dev.duo.harness.agent.internal.ToolCallingAgent(adapter, tools, session, prompts);
+    }
+
+    /** 可变引用：/new 时换会话、重建 agent（ToolCallingAgent 持有 final 会话引用）。 */
+    private static final class SessionHolder {
+        Session session;
+
+        SessionHolder(Session session) {
+            this.session = session;
+        }
+    }
+
+    /** 可变引用：适配器仅构建一次，/new 重建 agent 时复用。 */
+    private static final class LlmAdapterHolder {
+        final dev.duo.harness.llm.LlmAdapter adapter;
+
+        LlmAdapterHolder(dev.duo.harness.llm.LlmAdapter adapter) {
+            this.adapter = adapter;
+        }
+    }
+
     /** tools 服务的视图接口（方法名即服务名）。 */
     interface AgentToolsView {
 
         ToolsService tools();
+    }
+
+    /** 交互服务的视图接口（方法名即服务名 "answers"）。 */
+    interface AgentAnswersView {
+
+        InteractionService answers();
     }
 }

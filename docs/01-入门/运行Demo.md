@@ -1,6 +1,6 @@
 # 运行 Demo
 
-> 状态：M1 + M2 一条命令演示全链路可用；M3 聊天 REPL 与 M5 工具循环 REPL 可交互运行（见下文）。
+> 状态：M1 + M2 一条命令演示全链路可用；M3 聊天 REPL、M5 工具循环 REPL、M6 人机协同（HITL）均可交互运行（见下文）。
 
 ## 一条命令
 
@@ -48,18 +48,20 @@ mvn -pl duo-harness-example -am package exec:java \
 
 `你> ` 提问，回答流式打印；多轮对话有上下文记忆，重启自动继续最近会话，`/new` 开新话题，`/exit` 退出。会话 JSONL 落 `~/.duo/sessions`，可回放。
 
-## 工具循环 REPL（M5）
+## 工具循环 REPL（M5 + M6）
 
 ```bash
 mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
 ```
 
-LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）：启动挂载 MCP files 连接（迷你 filesystem server，指向临时目录），两个标志性场景：
+LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）：启动挂载 MCP files 连接（迷你 filesystem server，指向临时目录），标志性场景：
 
 | 输入 | 预期 |
 |---|---|
 | `读一下 notes.txt` | `[调工具] mcp__files__read_file` → `[工具结果]` 真实文件内容 → 模型总结回答 |
-| `帮我写一个 output.txt，内容是测试` | `[调工具] mcp__files__write_file` → `[工具错误]` 被审批策略拒绝（always-deny）→ 模型理解原因，向用户解释并给替代方案 |
+| `帮我写一个 output.txt，内容是测试` | `[调工具] mcp__files__write_file` → `[待审批]` 终端呈现工具与参数，输入 `y` 放行（文件真实写入）或 `n` 拒绝（模型解释原因）——决定落会话审计 |
+| 需要补充信息的任务 | `[提问]` 模型经 ask_user 向你提问（选项序号或自由文本）→ 回答后模型继续 |
+| 连续重复同一调用 | 第 3 次起 `[提醒]` 附加于工具结果，逐级加码 |
 
-场景二体现治理链在 LLM 驱动下依然生效：审批拦截结果原样回填，模型自行调整行为而非 harness 层终止。
+交互安全语义（ADR-0008）：审批 one-shot、无"永久放行"；你不回答（Ctrl+C / EOF）一律按拒绝处理。`/new` 开新话题，`/exit` 退出；会话 JSONL 落 `~/.duo/agent-sessions`。LLM 调用自带重试（网络故障与 429/5xx 指数退避，参数见 config.yml `llm.retry` 段）。
