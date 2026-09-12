@@ -95,13 +95,11 @@ public final class ToolCallingAgent implements ChatAgent {
 
             // 工具执行桥：tool_calls 逐个经六段管线执行，结果以 TOOL 消息回填
             for (ToolCallRequest call : turn.toolCalls()) {
-                session.append(new SessionEvent(SessionEvent.TOOL_CALL, System.currentTimeMillis(),
-                        call.name() + " " + call.argumentsJson()));
+                session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson()));
                 listener.onToolCall(call.name(), call.argumentsJson());
                 ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()));
                 String resultText = String.valueOf(result.value());
-                session.append(new SessionEvent(SessionEvent.TOOL_RESULT, System.currentTimeMillis(),
-                        resultText));
+                session.append(SessionEvent.toolResult(call.id(), call.name(), resultText));
                 invocations.add(new ToolInvocation(call.name(), call.argumentsJson(),
                         resultText, result.isError()));
                 listener.onToolResult(call.name(), resultText, result.isError());

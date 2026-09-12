@@ -148,8 +148,11 @@ public final class Session {
                         messages.add(new Message(Message.Role.USER, event.text()));
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
+                case SessionEvent.TOOL_CALL ->
+                        messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
+                                event.toolCallId(), event.toolName(), event.text()))));
                 case SessionEvent.TOOL_RESULT ->
-                        messages.add(new Message(Message.Role.TOOL, event.text()));
+                        messages.add(Message.tool(event.toolCallId(), event.text()));
                 default -> { /* 流式 chunk 与未知类型不投影 */ }
             }
         }
@@ -162,10 +165,19 @@ public final class Session {
         return LocalDateTime.now().format(ID_TIMESTAMP) + "-" + suffix;
     }
 
-    /** 事件序列化为 JSONL 行（Jackson 统一读写路径，转义与格式由 ObjectMapper 保证）。 */
+    /** 事件序列化为 JSONL 行（Jackson 统一读写路径；工具事件额外携带 toolCallId/toolName）。 */
     private static String toJsonLine(SessionEvent event) throws IOException {
-        return JSON.writeValueAsString(java.util.Map.of(
-                "type", event.type(), "at", event.at(), "text", event.text()));
+        var node = JSON.createObjectNode();
+        node.put("type", event.type());
+        node.put("at", event.at());
+        node.put("text", event.text());
+        if (event.toolCallId() != null) {
+            node.put("toolCallId", event.toolCallId());
+        }
+        if (event.toolName() != null) {
+            node.put("toolName", event.toolName());
+        }
+        return JSON.writeValueAsString(node);
     }
 
     private static SessionEvent parse(String line) {
@@ -174,7 +186,11 @@ public final class Session {
             String type = node.path("type").asText();
             long at = node.path("at").asLong();
             String text = node.path("text").asText();
-            return new SessionEvent(type, at, text);
+            JsonNode idNode = node.get("toolCallId");
+            JsonNode nameNode = node.get("toolName");
+            return new SessionEvent(type, at, text,
+                    idNode == null || idNode.isNull() ? null : idNode.asText(),
+                    nameNode == null || nameNode.isNull() ? null : nameNode.asText());
         } catch (IOException e) {
             throw new PluginException("会话事件解析失败: " + line, e);
         }

@@ -6,6 +6,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmTurn;
+import dev.duo.harness.llm.ToolSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -58,7 +59,9 @@ class OpenAiCompatAdapterTest {
                 ChatMessage.user("第一问"),
                 ChatMessage.assistant("第一答"),
                 ChatMessage.user("第二问"));
-        collect(adapter(), new ChatRequest("你是助手", history));
+        List<ToolSpec> toolSpecs = List.of(
+                new ToolSpec("read_file", "读取文件", "{\"type\":\"object\"}"));
+        collect(adapter(), new ChatRequest("你是助手", history, toolSpecs));
 
         JsonNode body = json.readTree(server.lastRequestBody());
         assertEquals("test-model", body.path("model").asText());
@@ -73,6 +76,9 @@ class OpenAiCompatAdapterTest {
         assertEquals("user", body.path("messages").get(3).path("role").asText());
         assertEquals("第二问", body.path("messages").get(3).path("content").asText());
         assertEquals("Bearer sk-test", server.lastAuthorization());
+        assertEquals(1, body.path("tools").size(), "tools 清单应序列化");
+        assertEquals("function", body.path("tools").get(0).path("type").asText());
+        assertEquals("read_file", body.path("tools").get(0).path("function").path("name").asText());
     }
 
     @Test

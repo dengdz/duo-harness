@@ -122,9 +122,27 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
         ArrayNode messages = root.putArray("messages");
         messages.addObject().put("role", "system").put("content", request.systemPrompt());
         for (ChatMessage message : request.messages()) {
-            messages.addObject()
-                    .put("role", message.role().wire())
-                    .put("content", message.content());
+            ObjectNode node = messages.addObject()
+                    .put("role", message.role().wire());
+            if (message.role() == ChatMessage.Role.TOOL) {
+                // 工具结果回填：协议要求携带 tool_call_id 关联模型发起的调用
+                node.put("tool_call_id", message.toolCallId());
+                node.put("content", message.content());
+            } else if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
+                // assistant 工具调用消息：content 可空 + tool_calls 数组
+                node.put("content", message.content());
+                ArrayNode calls = node.putArray("tool_calls");
+                for (ToolCallRequest call : message.toolCalls()) {
+                    ObjectNode callNode = calls.addObject();
+                    callNode.put("id", call.id());
+                    callNode.put("type", "function");
+                    callNode.putObject("function")
+                            .put("name", call.name())
+                            .put("arguments", call.argumentsJson());
+                }
+            } else {
+                node.put("content", message.content());
+            }
         }
         if (!request.tools().isEmpty()) {
             ArrayNode tools = root.putArray("tools");
