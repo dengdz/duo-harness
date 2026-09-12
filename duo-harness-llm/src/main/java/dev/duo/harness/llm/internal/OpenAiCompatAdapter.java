@@ -11,6 +11,7 @@ import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.LlmTurn;
+import dev.duo.harness.llm.RetryableLlmException;
 import dev.duo.harness.llm.ToolCallRequest;
 import dev.duo.harness.llm.ToolSpec;
 
@@ -65,7 +66,8 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 streamLines(body, onChunk);
             }
         } catch (IOException e) {
-            throw new PluginException("LLM 调用失败: " + e.getMessage(), e);
+            // 网络故障可重试（RetryingAdapter 据此退避重试）
+            throw new RetryableLlmException("LLM 调用失败: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PluginException("LLM 调用被中断", e);
@@ -83,7 +85,8 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 return aggregateTurn(body, textSink);
             }
         } catch (IOException e) {
-            throw new PluginException("LLM 调用失败: " + e.getMessage(), e);
+            // 网络故障可重试（RetryingAdapter 据此退避重试）
+            throw new RetryableLlmException("LLM 调用失败: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PluginException("LLM 调用被中断", e);
@@ -246,7 +249,8 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 reasoning.length() == 0 ? null : reasoning.toString());
     }
 
-    /** 非 200 响应转点名异常：状态码 + provider 错误消息（error.message）或原文。body 读取失败降级为占位文本。 */
+    /** 非 200 响应转点名异常：状态码 + provider 错误消息（error.message）或原文。body 读取失败降级为占位文本。
+     *  瞬时服务端错误（429/502/503/504）标记为可重试；协议与凭证错误（400/401 等）不可重试。 */
     private PluginException errorFrom(int statusCode, InputStream body) {
         String text;
         try {
@@ -263,6 +267,11 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
         } catch (IOException ignored) {
             // 非 JSON 错误体：保留原文
         }
-        return new PluginException("LLM 调用失败: HTTP " + statusCode + " - " + providerMessage);
+        PluginException exception = new PluginException(
+                "LLM 调用失败: HTTP " + statusCode + " - " + providerMessage);
+        if (statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504) {
+            return new RetryableLlmException(exception.getMessage());
+        }
+        return exception;
     }
 }

@@ -8,10 +8,14 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 测试夹具：内置 HttpServer 模拟 OpenAI 兼容端点（先例：MiniFileSystemServer）。
- * 记录收到的请求体与 Authorization 头；按最近设定的脚本回放——SSE 行序列或错误响应。
+ * 记录收到的请求体与 Authorization 头；按最近设定的脚本回放——SSE 行序列或错误响应；
+ * 支持顺序脚本队列（重试语义测试：错误 → 错误 → 成功）。
  */
 final class MockOpenAiServer {
 
@@ -19,6 +23,10 @@ final class MockOpenAiServer {
     private volatile String lastRequestBody = "";
     private volatile String lastAuthorization = "";
     private volatile Script script = Script.sse(List.of());
+    /** 顺序脚本队列（非空时优先消费，耗尽后回退到最近设定的固定脚本）。 */
+    private final Queue<Script> scriptQueue = new ConcurrentLinkedQueue<>();
+    /** 收到的请求数（重试语义断言用）。 */
+    private final AtomicInteger requests = new AtomicInteger();
 
     private record Script(int statusCode, List<String> ssePayloads, String errorBody) {
 
@@ -40,7 +48,9 @@ final class MockOpenAiServer {
         server.createContext("/chat/completions", exchange -> {
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             lastAuthorization = exchange.getRequestHeaders().getFirst("Authorization");
-            Script current = script;
+            requests.incrementAndGet();
+            Script polled = scriptQueue.poll();
+            Script current = polled != null ? polled : script;
             if (current.statusCode() == 200) {
                 // SSE 流式：无定长头，写完即关
                 exchange.sendResponseHeaders(200, 0);
@@ -72,6 +82,27 @@ final class MockOpenAiServer {
     /** 脚本：非 200 错误响应（JSON 体）。 */
     void respondError(int statusCode, String jsonBody) {
         this.script = Script.error(statusCode, jsonBody);
+    }
+
+    /** 顺序脚本：按请求次序逐个消费，耗尽后回退到最近设定的固定脚本。 */
+    void respondSequentially(List<Script> scripts) {
+        scriptQueue.clear();
+        scripts.forEach(scriptQueue::add);
+    }
+
+    /** 已收到的请求数（含被重试替换的失败请求）。 */
+    int requestCount() {
+        return requests.get();
+    }
+
+    /** 顺序脚本的错误响应项。 */
+    static Script errorScript(int statusCode, String jsonBody) {
+        return Script.error(statusCode, jsonBody);
+    }
+
+    /** 顺序脚本的成功响应项（SSE 行序列）。 */
+    static Script sseScript(List<String> dataPayloads) {
+        return Script.sse(dataPayloads);
     }
 
     /** baseUrl（指向 mock 的 chat/completions）。 */

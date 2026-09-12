@@ -17,6 +17,8 @@
 - 交互审批 fail-closed 语义（ADR-0008）：无回答者、人未作答（EOF/中断）一律拒绝；不做"永久放行"
 - prompt 注册表（M6 工单 02，agent 域 "prompts"）：插件经 `register` 贡献提示片段（随作用域摘除、按注册序动态组装）；yml `llm.systemPrompt` 为最前用户片段，全空落内置缺省——M7 技能指令段的挂载点
 - `ask_user` 提问工具（M6 工单 03，tools 域）：模型发起的交互——参数最小 schema（question + 可选 options/multiSelect），执行本体经交互 seam 等人作答，回答即工具结果；走六段管线；无人应答 fail-closed 收敛为错误结果
+- `RetryingAdapter` LLM 重试装饰器（M6 工单 04，llm 域）：对网络故障与 429/502/503/504 指数退避重试（默认 3 次）；协议与凭证错误（400/401）直通不重试；流式安全——已交付增量后不再重试。消除 M5 已知限制"无自动重试"
+- 重复调用提醒插件 `RepeatReminderPlugin`（M6 工单 04，example 治理插件示范）：同一工具相同参数连续重复达阈值（默认 3/5/8）时在结果尾部附加逐级加码提醒（advisory，非 guard）；阈值可配置
 
 ### Changed
 
