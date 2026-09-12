@@ -25,6 +25,11 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/** 会话投影→llm 消息视图（直答测试用）。 */
+interface ToolsView {
+    ToolsService tools();
+}
+
 /** ToolCallingAgent 直答路径用例：会话写入、投影请求、回调序列、AgentReply 组装。 */
 class ToolCallingAgentTest {
 
@@ -151,6 +156,61 @@ class ToolCallingAgentTest {
         assertEquals(ChatMessage.Role.ASSISTANT, second.messages().get(1).role());
         assertEquals("第二问", second.messages().get(2).content());
         assertTrue(second.tools().isEmpty(), "工单 01 骨架无工具清单");
+    }
+
+    @Test
+    void registeredToolsAppearInRequestToolSpecs() throws IOException {
+        Session session = newSession();
+        // 真 ToolsService + 注册一个工具：请求的 tools 清单应携带它
+        dev.duo.harness.core.api.Context toolsRoot = dev.duo.harness.core.api.Context.root();
+        toolsRoot.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+        dev.duo.harness.tools.ToolsService impl = toolsRoot.as(ToolsView.class).tools();
+        impl.register(toolsRoot, echoDef());
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter capturing = new LlmAdapter() {
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                captured.add(request);
+                return new LlmTurn("ok", List.of());
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("循环路径走 streamTurn");
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(capturing, impl, session, "你是助手", 10);
+
+        agent.send("问", AgentListener.NONE);
+
+        assertEquals(1, captured.size());
+        assertEquals(1, captured.get(0).tools().size(), "注册的工具应出现在请求清单");
+        assertEquals("echo", captured.get(0).tools().get(0).name());
+    }
+
+    private static dev.duo.harness.tools.ToolDefinition echoDef() {
+        return new dev.duo.harness.tools.ToolDefinition() {
+            @Override
+            public String name() {
+                return "echo";
+            }
+
+            @Override
+            public String description() {
+                return "回声工具";
+            }
+
+            @Override
+            public com.fasterxml.jackson.databind.JsonNode parameters() {
+                return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                        .put("type", "object");
+            }
+
+            @Override
+            public String execute(dev.duo.harness.tools.ToolExecution execution) {
+                return "echo:ok";
+            }
+        };
     }
 
     @Test

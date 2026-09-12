@@ -12,6 +12,7 @@ import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.llm.LlmTurn;
 import dev.duo.harness.llm.ToolCallRequest;
+import dev.duo.harness.llm.ToolSpec;
 import dev.duo.harness.session.Message;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
@@ -115,9 +116,13 @@ public final class ToolCallingAgent implements ChatAgent {
         return new AgentReply(finalReply.toString(), invocations, true);
     }
 
-    /** 请求构造：system 指令 + 会话投影历史（本票无工具清单，留待工具执行桥工单扩展）。 */
+    /** 请求构造：system 指令 + 会话投影历史 + 工具清单（工具域全量，Function Calling）。 */
     private ChatRequest buildRequest() {
-        return new ChatRequest(systemPrompt, Messages.toChatMessages(session.deriveMessages()));
+        List<ToolSpec> specs = tools.list().stream()
+                .map(def -> new ToolSpec(def.name(), def.description(),
+                        def.parameters() == null ? "{}" : def.parameters().toString()))
+                .toList();
+        return new ChatRequest(systemPrompt, Messages.toChatMessages(session.deriveMessages()), specs);
     }
 
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */
