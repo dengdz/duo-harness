@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2000/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.duo</groupId>
+    <artifactId>duo-harness</artifactId>
+    <version>0.2.0</version>
+  </parent>
+
+  <artifactId>duo-harness-agent</artifactId>
+  <description>agent 循环：LLM + 会话 + 工具的编排层——Function Calling 工具循环，依赖图顶层汇合</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-llm</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-tools</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+  </dependencies>
+</project>

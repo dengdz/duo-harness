@@ -17,6 +17,7 @@
     <module>duo-harness-mcp</module>
     <module>duo-harness-llm</module>
     <module>duo-harness-session</module>
+    <module>duo-harness-agent</module>
     <module>duo-harness-example</module>
   </modules>
 

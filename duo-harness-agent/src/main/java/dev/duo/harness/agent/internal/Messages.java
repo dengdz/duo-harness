@@ -1,0 +1,23 @@
+package dev.duo.harness.agent.internal;
+
+import dev.duo.harness.llm.ChatMessage;
+import dev.duo.harness.session.Message;
+
+import java.util.List;
+
+/** 会话投影 → llm 消息的转换（多消费方共享的唯一映射点）。 */
+final class Messages {
+
+    private Messages() {
+    }
+
+    /** 会话投影消息逐条转换为 llm 契约消息（role 一一映射）。 */
+    static List<ChatMessage> toChatMessages(List<Message> messages) {
+        return messages.stream()
+                .map(message -> new ChatMessage(
+                        message.role() == Message.Role.USER
+                                ? ChatMessage.Role.USER : ChatMessage.Role.ASSISTANT,
+                        message.content()))
+                .toList();
+    }
+}
