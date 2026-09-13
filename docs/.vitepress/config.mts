@@ -47,7 +47,11 @@ export default defineConfig({
       },
       {
         text: '参考',
-        items: [{ text: '已知限制', link: '/limitations' }]
+        items: [
+          { text: '插件配置参考', link: '/05-参考/插件配置参考' },
+          { text: '会话事件类型表', link: '/05-参考/会话事件类型表' },
+          { text: '已知限制', link: '/limitations' }
+        ]
       }
     ],
     outline: { level: [2, 3], label: '本页目录' },
