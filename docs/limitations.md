@@ -21,12 +21,6 @@
 | 2 | MCP Java SDK 与 networknt 校验器版本耦合 | `mcp-json-jackson2:0.18.1` 硬依赖 networknt json-schema-validator 2.0.0；升级 SDK 时必须同步核对该版本（1.5.0 会因缺类在子进程抛 NoClassDefFoundError） |
 | 3 | demo 的 MCP 子进程 classpath 依赖运行环境探测 | `subprocessClasspath` 先取 `java.class.path`（IDEA/裸 java）、再枚举 ClassRealm URL（exec:java）；非标准 classloader 下探测会失败——仅 demo 受影响，核心模块无此依赖 |
 
-## M5（未发布）
-
-| # | 限制 | 说明与去向 |
-|---|---|---|
-| 1 | 思考内容（reasoning_content）不落会话日志 | 思考内容仅在 agent 循环内存中逐轮传递、不写入 JSONL——恢复历史会话时历史工具调用消息不带思考内容；provider 只要求最近一轮回传，实际影响为零 |
-
 ## M7（未发布）
 
 | # | 限制 | 说明与去向 |
