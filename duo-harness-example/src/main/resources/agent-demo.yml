@@ -46,7 +46,7 @@ plugins:
   - id: web
     name: dev.duo.harness.web.WebPlugin
     config:
-      port: 8080
+      port: 8081   # 8080 被本机其他项目（duoduo）占用，M8 验收改用 8081
 
   # ask_user 提问工具的挂载由 AgentReplMain 装配（构造注入交互服务后注册）
   # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载
