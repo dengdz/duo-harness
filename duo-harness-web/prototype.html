@@ -126,6 +126,15 @@
   }
   #send:hover { background: var(--brand-strong); }
 
+  /* 初始状态（EmptyHero 风格：居中品牌 + 标题 + 提示） */
+  #hero {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+  }
+  #hero .mark { font-size: 34px; font-weight: 600; color: var(--brand); letter-spacing: 0.02em; }
+  #hero .title { font-size: 26px; font-weight: 500; color: var(--text); }
+  #hero .hint { font-size: 13px; color: var(--text-dim); }
+
   /* 会话侧栏 */
   .sidebar-item {
     padding: 8px 10px; border-radius: 10px; cursor: pointer;
@@ -241,6 +250,11 @@
       <div class="msg assistant">计划已获批准并执行完成：todo.txt 已创建并回读校验一致。未改动其他文件，未 commit、未推送。</div>
     </div>
 
+    <div id="hero" style="display:none">
+      <div class="mark">duo-harness</div>
+      <div class="title">新会话</div>
+      <div class="hint">描述你想要构建的内容，或 /技能名 直调技能</div>
+    </div>
     <div class="composer">
       <input id="input" placeholder="输入消息，回车发送…（/技能名 直调）">
       <button id="send">发送</button>
@@ -281,17 +295,37 @@
   </section>
 
   <script>
-    // ===== 半交互原型：本地视觉流转 + 假响应（真实 SSE/agent 在工单 04/05 接入） =====
+    // ===== 半交互原型 v2：会话模型 + 初始状态（EmptyHero 风格）+ 假响应 =====
+    // 真实 SSE/agent 在工单 04/05 接入；本脚本的交互流转与渲染规则平移复用。
     const $ = (sel, root) => (root || document).querySelector(sel);
     const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+    const MESSAGES = $('#messages');
+    const HERO = $('#hero');
+
+    // 会话存储：id → 该会话的对话区 HTML（cc16 = 当前静态卡片序列）
+    const sessions = {
+      '20260913-064846-cc16': { label: '当前 · 今天 06:48 · 42 事件', html: MESSAGES.innerHTML },
+      '20260912-211843-a764': { label: '昨天 21:18 · 128 事件', html:
+        '<div class="msg user"><div class="bubble">帮我写一个 output.txt，内容是测试</div></div>' +
+        '<div class="card"><div class="tool">调工具 · <b>mcp__files__write_file</b> {"path": "output.txt"}</div></div>' +
+        '<div class="card error"><div class="tool">工具错误 · mcp__files__write_file</div>执行被拒绝: 被审批策略拒绝（策略: always-deny）</div>' +
+        '<div class="msg assistant">写入被拒绝了，当前策略是始终拒绝写入。需要调整审批策略后再让我重试。</div>' },
+      '20260912-193012-f00d': { label: '昨天 19:30 · 9 事件', html:
+        '<div class="msg user"><div class="bubble">读一下 notes.txt</div></div>' +
+        '<div class="card"><div class="tool">调工具 · <b>mcp__files__read_file</b> {"path": "notes.txt"}</div></div>' +
+        '<div class="card"><div class="tool">工具结果 · mcp__files__read_file</div>agent 演示的文件内容</div>' +
+        '<div class="msg assistant">notes.txt 的内容是「agent 演示的文件内容」。</div>' },
+    };
+    let currentId = '20260913-064846-cc16';
+    let eventCount = 42;
 
     function assistantSay(text) {
       const div = document.createElement('div');
       div.className = 'msg assistant';
       div.textContent = text;
-      const box = $('#messages');
-      box.appendChild(div);
-      box.scrollTop = box.scrollHeight;
+      MESSAGES.appendChild(div);
+      MESSAGES.scrollTop = MESSAGES.scrollHeight;
     }
     function resolveCard(card, note) {
       card.classList.remove('interactive');
@@ -302,88 +336,138 @@
       card.appendChild(done);
     }
 
-    // 审批卡：批准 / 拒绝
-    $$('#messages .interactive').forEach(card => {
-      const title = $('.question', card);
-      if (!title) return;
-      const buttons = $$('.choices .choice', card);
-      const isApproval = title.textContent.includes('[待审批]') && buttons.length === 2;
-      const isAsk = title.textContent.includes('[提问]');
-      const isPlan = title.textContent.includes('[计划呈交]') && buttons.length === 2;
+    function wireInteractions() {
+      $$('#messages .interactive').forEach(card => {
+        if (card.dataset.wired) return;
+        card.dataset.wired = '1';
+        const title = $('.question', card);
+        if (!title) return;
+        const buttons = $$('.choices .choice', card);
+        const isApproval = title.textContent.includes('[待审批]') && buttons.length === 2;
+        const isAsk = title.textContent.includes('[提问]');
+        const isPlan = title.textContent.includes('[计划呈交]') && buttons.length === 2;
 
-      if (isApproval) {
-        buttons[0].addEventListener('click', () => {
-          resolveCard(card, '✓ 已批准（回答者: console）');
-          assistantSay('[工具结果] 已写入 output.txt（2 字符）。写入完成，需要我回读校验吗？');
-        });
-        buttons[1].addEventListener('click', () => {
-          resolveCard(card, '✗ 已拒绝（回答者: console）');
-          assistantSay('写入被拒绝了：`output.txt` 未能创建，审批方点了拒绝。需要换一种方式吗？');
-        });
+        if (isApproval) {
+          buttons[0].addEventListener('click', () => {
+            resolveCard(card, '✓ 已批准（回答者: console）');
+            assistantSay('[工具结果] 已写入 output.txt（2 字符）。写入完成，需要我回读校验吗？');
+          });
+          buttons[1].addEventListener('click', () => {
+            resolveCard(card, '✗ 已拒绝（回答者: console）');
+            assistantSay('写入被拒绝了：`output.txt` 未能创建，审批方点了拒绝。需要换一种方式吗？');
+          });
+        }
+        if (isAsk) {
+          const free = $('.free-input input', card);
+          const submit = () => {
+            const answer = free && free.value.trim() ? free.value.trim() : null;
+            if (!answer) return;
+            resolveCard(card, '✓ 已回答：' + answer);
+            assistantSay('收到，你的回答是「' + answer + '」。我按这个继续。');
+          };
+          const sendBtn = $('.free-input button', card);
+          if (sendBtn) sendBtn.addEventListener('click', submit);
+          if (free) free.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+        }
+        if (isPlan) {
+          buttons[0].addEventListener('click', () => {
+            resolveCard(card, '✓ 计划已获批准（回答者: console）');
+            assistantSay('计划已获批准并执行完成：todo.txt 已创建并回读校验一致。未改动其他文件，未 commit、未推送。');
+          });
+          buttons[1].addEventListener('click', () => {
+            const feedback = window.prompt('请输入修改意见（原型演示）') || '';
+            resolveCard(card, '✗ 计划未获批准，反馈：' + (feedback || '无'));
+            assistantSay('收到反馈「' + (feedback || '无') + '」，我按此修改计划后再次呈交。');
+          });
+        }
+      });
+    }
+
+    function renderSession(id) {
+      const entry = sessions[id];
+      if (!entry) return;
+      if (entry.html) {
+        HERO.style.display = 'none';
+        MESSAGES.style.display = 'flex';
+        MESSAGES.innerHTML = entry.html;
+      } else {
+        MESSAGES.style.display = 'none';
+        HERO.style.display = 'flex';
+        $('.hero-title', HERO).textContent = '新会话';
       }
-      if (isAsk) {
-        const free = $('.free-input input', card);
-        const submit = () => {
-          const answer = free && free.value.trim() ? free.value.trim() : null;
-          if (!answer) return;
-          resolveCard(card, '✓ 已回答：' + answer);
-          assistantSay('收到，你的回答是「' + answer + '」。我按这个继续。');
-        };
-        const sendBtn = $('.free-input button', card);
-        if (sendBtn) sendBtn.addEventListener('click', submit);
-        if (free) free.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-      }
-      if (isPlan) {
-        buttons[0].addEventListener('click', () => {
-          resolveCard(card, '✓ 计划已获批准（回答者: console）');
-          assistantSay('计划已获批准并执行完成：todo.txt 已创建并回读校验一致。未改动其他文件，未 commit、未推送。');
-        });
-        buttons[1].addEventListener('click', () => {
-          const feedback = window.prompt('请输入修改意见（原型演示）') || '';
-          resolveCard(card, '✗ 计划未获批准，反馈：' + (feedback || '无'));
-          assistantSay('收到反馈「' + (feedback || '无') + '」，我按此修改计划后再次呈交。');
-        });
-      }
+      wireInteractions();
+    }
+
+    function saveCurrent() {
+      if (sessions[currentId]) sessions[currentId].html = MESSAGES.innerHTML;
+    }
+
+    function switchSession(id) {
+      if (id === currentId) return;
+      saveCurrent();
+      currentId = id;
+      renderSession(id);
+    }
+
+    function newSession() {
+      saveCurrent();
+      const id = '20260913-新-' + String(Object.keys(sessions).length + 1).padStart(2, '0');
+      sessions[id] = { label: '刚刚 · 0 事件', html: '' };
+      currentId = id;
+      // 侧栏置顶插入新会话并高亮
+      const item = document.createElement('div');
+      item.className = 'sidebar-item active';
+      item.dataset.sid = id;
+      item.innerHTML = '<div class="sid">' + id + '</div><div class="meta">刚刚 · 0 事件</div>';
+      item.addEventListener('click', () => {
+        $$('.sidebar-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        switchSession(id);
+      });
+      const sidebar = $('#newSession').parentElement;
+      sidebar.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+      sidebar.insertBefore(item, $('#newSession').nextSibling);
+      // 对话区 → 初始空状态（EmptyHero）
+      MESSAGES.style.display = 'none';
+      HERO.style.display = 'flex';
+      $('.hero-title', HERO).textContent = '新会话';
+    }
+
+    // 会话侧栏点击（现有条目）
+    $$('.sidebar-item').forEach(item => {
+      item.addEventListener('click', () => {
+        $$('.sidebar-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        switchSession(item.dataset.sid || item.querySelector('.sid').textContent);
+      });
     });
+    $('#newSession').addEventListener('click', newSession);
 
-    // 输入框：用户消息上屏 + 假回复
+    // 输入框：hero 态首条消息 → 切到对话流；普通态 → 上屏 + 假回复
     function sendInput() {
       const input = $('#input');
       const text = input.value.trim();
       if (!text) return;
+      input.value = '';
+      if (HERO.style.display !== 'none') {
+        HERO.style.display = 'none';
+        MESSAGES.style.display = 'flex';
+        MESSAGES.innerHTML = '';
+      }
       const div = document.createElement('div');
       div.className = 'msg user';
       const b = document.createElement('div');
       b.className = 'bubble';
       b.textContent = text;
       div.appendChild(b);
-      const box = $('#messages');
-      box.appendChild(div);
-      box.scrollTop = box.scrollHeight;
-      input.value = '';
+      MESSAGES.appendChild(div);
+      MESSAGES.scrollTop = MESSAGES.scrollHeight;
       assistantSay('（原型演示）已收到「' + text + '」。真实对话在工单 04 接入 SSE 后生效。');
     }
-    const sendBtn = $('#send');
-    if (sendBtn) sendBtn.addEventListener('click', sendInput);
-    const inputEl = $('#input');
-    if (inputEl) inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendInput(); });
+    $('#send').addEventListener('click', sendInput);
+    $('#input').addEventListener('keydown', e => { if (e.key === 'Enter') sendInput(); });
 
-    // 会话侧栏：点击切换高亮 + 对话区假切换
-    $$('.sidebar-item').forEach(item => {
-      item.addEventListener('click', () => {
-        $$('.sidebar-item').forEach(i => i.classList.remove('active'));
-        item.classList.add('active');
-        const box = $('#messages');
-        box.innerHTML = '<div class="msg"><div class="bubble">已切换到会话 ' +
-          $('.sid', item).textContent + '（原型演示：真实切换在工单 06 接入后重放该会话历史）。</div></div>';
-        box.scrollTop = 0;
-      });
-    });
-    const newBtn = $('#newSession');
-    if (newBtn) newBtn.addEventListener('click', () => {
-      $$('.sidebar-item').forEach(i => i.classList.remove('active'));
-      assistantSay('（原型演示）已创建新会话。');
-    });
+    wireInteractions();
   </script>
 </body>
 </html>
