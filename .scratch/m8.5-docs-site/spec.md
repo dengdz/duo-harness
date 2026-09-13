@@ -1,5 +1,7 @@
 # M8.5 Spec：文档站补全——框架描述 / 设计思想 / 使用方式
 
+> **验收记录**：2026-09-14 用户确认通过（站点浏览五篇新内容）。随 0.3.0 版本收口合并回 main。
+
 > 插入阶段（用户增设，2026-09-14）：M8 收官后站点审计暴露内容极薄——五章骨架三章"建设中"，三层核心诉求（框架描述 / 设计思想 / 使用方式）只有 ADR 与 demo 教程撑着。参照 DSH 建站方式（`website/` VitePress、docs/ 含 architecture / capability-seams / tool-catalog / subsystems 30+ 篇、英中双语——见 [docs/research/DSH/总览.md](../../docs/research/DSH/总览.md)），按"中文单语、务实够用"路线补齐。**落 0.3.0 分支**（分支纪律首次执行：0.3.0 已建，未建分支不进入实现）。
 
 ## Problem Statement

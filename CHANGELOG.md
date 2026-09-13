@@ -2,10 +2,11 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
-## 0.3.0（未发布）
+## 0.3.0（2026-09-14）
 
 ### Added
 
+- 文档站补全（M8.5）：04-架构《设计主线》（框架叙事 + ADR 导览）、02-指南《组装你的第一个 agent》（可照抄教程）、05-参考《插件配置参考》《会话事件类型表》《工具目录》（含对账测试防漂移）与《术语表》（CONTEXT.md 迁入，仓库根留指针）——框架描述 / 设计思想 / 使用方式三层齐备，五章节骨架首次全量
 - LLM 适配器（`duo-harness-llm` 新模块）：provider 中立流式调用契约 + OpenAI 兼容适配器——`baseUrl/apiKey/model` 配置化，DeepSeek/通义/Kimi/vLLM 等兼容 provider 开箱即用
 - 聊天演示 `ChatReplMain`：REPL 交互（`你> `/`AI> `、`/exit` 退出）、流式打印、错误原样呈现；多轮对话有上下文记忆，启动自动继续最近会话（`/new` 开新话题），会话落 `~/.duo/sessions` 可回放
 - `LlmConfig` 支持 `llm.systemPrompt` 可选配置（缺省内置指令；组装注册表属 M6）
