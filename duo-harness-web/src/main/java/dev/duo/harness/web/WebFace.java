@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -46,6 +47,8 @@ public final class WebFace {
     private final CopyOnWriteArrayList<OutputStream> sseOutputs = new CopyOnWriteArrayList<>();
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
     private final WebAnswerer webAnswerer;
+    /** 会话目录（侧栏列表与切换用）。 */
+    private final Path sessionsDir;
     /** 可换会话（/new 等价）：换绑时 SSE 监听器随之迁移。 */
     private volatile Session session;
     /** 对话执行者（/new 重建；volatile 保证跨线程可见）。 */
@@ -62,16 +65,21 @@ public final class WebFace {
     /** 新会话供给者（/new 每次给全新会话）。 */
     private volatile java.util.function.Supplier<Session> newSessionSupplier =
             () -> { throw new IllegalStateException("新会话供给者未装配"); };
-    /** 新会话回调（装配层重建 agent）。 */
-    private volatile Runnable newSessionCallback;
+    /**
+     * 会话变更回调（/new 与 /switch 共用）：装配层以入参会话重建 agent——
+     * ToolCallingAgent 持有 final 会话引用，不重建即分脑（消息落旧会话、
+     * 页面显示新会话，BUG-20260914-02）。
+     */
+    private volatile Consumer<Session> sessionChangedCallback = changed -> { };
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
-                    WebAnswerer webAnswerer) {
+                    WebAnswerer webAnswerer, Path sessionsDir) {
         this.server = server;
         this.ctx = ctx;
         this.tools = tools;
         this.session = session;
         this.webAnswerer = webAnswerer;
+        this.sessionsDir = sessionsDir;
     }
 
     /**
@@ -80,14 +88,19 @@ public final class WebFace {
      * @throws IOException 端口绑定失败
      */
     public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
-                                ChatAgent agent, WebAnswerer webAnswerer) throws IOException {
+                                ChatAgent agent, WebAnswerer webAnswerer, Path sessionsDir)
+            throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
         Objects.requireNonNull(agent, "agent");
+        // webAnswerer 可为 null（骨架用例不测 HITL）；non-null 时必有 sessionsDir
+        if (webAnswerer != null) {
+            Objects.requireNonNull(sessionsDir, "sessionsDir");
+        }
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer);
+        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir);
         face.bindSession(session);
         face.agent = agent;
         face.registerEndpoints();
@@ -112,19 +125,21 @@ public final class WebFace {
 
     private Disposable sseSubscription;
 
-    /** 换绑会话并通知装配层重建 agent（/new 语义）。 */
+    /** 换绑会话并通知装配层重建 agent（/new 语义；回调拿到的是已换绑的同一会话）。 */
     private void newSession() {
-        bindSession(newSessionSupplier.get());
-        if (newSessionCallback != null) {
-            newSessionCallback.run();
-        }
+        Session fresh = newSessionSupplier.get();
+        bindSession(fresh);
+        sessionChangedCallback.accept(fresh);
     }
 
-    /** 注册 /new 的供给者与回调（装配层接线；供 WebPlugin 调用，包级可见）。 */
-    void onNewSession(java.util.function.Supplier<Session> supplier,
-                      java.util.function.Consumer<Session> onCreated) {
+    /** 注册会话变更回调（装配层接线；/new 与 /switch 换绑后都回调重建 agent）。 */
+    void onSessionChanged(java.util.function.Consumer<Session> onChanged) {
+        this.sessionChangedCallback = java.util.Objects.requireNonNull(onChanged, "onChanged");
+    }
+
+    /** 注册 /new 的供给者（装配层接线；供 WebPlugin 调用，包级可见）。 */
+    void onNewSession(java.util.function.Supplier<Session> supplier) {
         this.newSessionSupplier = java.util.Objects.requireNonNull(supplier, "supplier");
-        this.newSessionCallback = () -> onCreated.accept(newSessionSupplier.get());
     }
 
     /** 测试与装配层用：替换对话执行者（/new 重建后调用）。 */
@@ -144,7 +159,7 @@ public final class WebFace {
             try {
                 writeSse(out, frame);
             } catch (IOException e) {
-                sseOutputs.remove(out);
+                removeClient(out);
             }
         }
     }
@@ -156,8 +171,19 @@ public final class WebFace {
                 out.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
                 out.flush();
             } catch (IOException e) {
-                sseOutputs.remove(out);
+                removeClient(out);
             }
+        }
+    }
+
+    /**
+     * 摘除死连接；全部客户端离场时悬空交互立即 fail-closed
+     * （人不在环 = 不批准，ADR-0008 语义延伸，工单 05）。
+     */
+    private void removeClient(OutputStream out) {
+        sseOutputs.remove(out);
+        if (webAnswerer != null && sseOutputs.isEmpty()) {
+            webAnswerer.failClosedAll();
         }
     }
 
@@ -233,22 +259,70 @@ public final class WebFace {
                 }
             });
         });
-        // 开新会话：换绑事件流 + 通知装配层重建 agent
+        // 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）
         server.createContext("/api/session/new", exchange -> {
+            exchange.getRequestBody().readAllBytes(); // POST 请求体必须清空（keep-alive 连接复用正确性）
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
-            newSession();
+            try {
+                newSession();
+            } catch (Exception e) {
+                byte[] msg = ("新会话创建失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+                exchange.sendResponseHeaders(500, msg.length);
+                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
+                return;
+            }
             byte[] body = ("{\"id\":\"" + session.id() + "\"}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
         });
+        // 会话列表（侧栏）：修改时间倒序
+        server.createContext("/api/sessions", exchange -> {
+            byte[] body = sessionsJson().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
+        });
+        // 切换会话：{id} → 加载该会话并换绑（SSE 推送新会话存量回放）；
+        // 会话变更回调重建 agent——不重建即分脑（agent 写旧会话、页面看新会话）
+        server.createContext("/api/session/switch", exchange -> {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            try {
+                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                String id = JSON.readTree(body).path("id").asText("");
+                if (id.isBlank()) {
+                    exchange.sendResponseHeaders(400, -1);
+                    return;
+                }
+                Session loaded = Session.load(sessionsDir.resolve(id + ".jsonl"));
+                bindSession(loaded);
+                sessionChangedCallback.accept(loaded);
+                byte[] ok = "{\"switched\":true}".getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+                exchange.sendResponseHeaders(200, ok.length);
+                try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
+            } catch (Exception e) {
+                byte[] msg = ("切换失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+                exchange.sendResponseHeaders(404, msg.length);
+                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
+            }
+        });
         // HITL 回答端点：{approved: bool} 或 {values: ["..."]} → 完成 WebAnswerer 悬空请求
         server.createContext("/api/answer", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            if (webAnswerer == null) {
+                exchange.sendResponseHeaders(503, -1);
                 return;
             }
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
@@ -269,6 +343,7 @@ public final class WebFace {
                 return;
             }
             byte[] resp = ("{\"completed\":" + completed + "}").getBytes(StandardCharsets.UTF_8);
+            System.out.println("[web] /api/answer completed=" + completed);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.sendResponseHeaders(200, resp.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
@@ -281,20 +356,21 @@ public final class WebFace {
             OutputStream out = exchange.getResponseBody();
             sseOutputs.add(out);
             try {
-                writeSse(out, ": connected");
-                // 存量回放（页面刷新后重放当前会话），增量由 pushEvent 广播
+                // 连接帧是 SSE 注释（冒号行），不是 data 帧——前端 JSON.parse 不消费它
+                out.write(": connected\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                // 存量回放（页面刷新后重放当前会话）+ replay/done 边界帧：
+                // 前端以此区分回放 chunk（丢弃）与实时 chunk（流式聚合），增量由 pushEvent 广播
                 for (SessionEvent event : session.events()) {
                     writeSse(out, toJson(event));
                 }
-            } catch (IOException e) {
-                sseOutputs.remove(out);
+                writeSse(out, "{\"type\":\"replay/done\"}");
+            } catch (Exception e) {
+                // 回放中断（含运行时异常）即摘除断连——客户端经 EventSource 重连重新回放
+                removeClient(out);
                 exchange.close();
             }
         });
-    }
-
-    private void removeSseOutput(OutputStream out) {
-        sseOutputs.remove(out);
     }
 
     private void writeSse(OutputStream out, String payload) throws IOException {
@@ -308,6 +384,20 @@ public final class WebFace {
         } catch (IOException e) {
             throw new IllegalStateException("事件 JSON 序列化失败", e);
         }
+    }
+
+    /** 侧栏 JSON：会话列表（修改时间倒序，current 标记当前会话）。 */
+    private String sessionsJson() {
+        var root = JSON.createObjectNode();
+        var arr = root.putArray("sessions");
+        String currentId = session.id();
+        for (Session.SessionSummary summary : Session.list(sessionsDir)) {
+            var node = arr.addObject()
+                    .put("id", summary.id())
+                    .put("lastModifiedMs", summary.lastModifiedMs());
+            node.put("current", summary.id().equals(currentId));
+        }
+        return root.toString();
     }
 
     /** 状态面 JSON：插件快照 + 工具清单。 */

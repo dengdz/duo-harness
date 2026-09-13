@@ -23,11 +23,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -55,6 +54,9 @@ class WebFaceTest {
 
     private WebFace face;
     private final HttpClient client = HttpClient.newHttpClient();
+    private final List<SessionEvent> received = new CopyOnWriteArrayList<>();
+    /** 会话变更回调的记录（/new 与 /switch 都应回调——分脑防御，BUG-20260914-02）。 */
+    private final List<Session> changedSessions = new CopyOnWriteArrayList<>();
 
     @AfterEach
     void tearDown() {
@@ -65,7 +67,6 @@ class WebFaceTest {
 
     /** 装配：真实 Context + ToolsPlugin（回声工具进清单）+ 指定会话与 agent；端口 0 = 随机。 */
     private WebFace start(Session session, ChatAgent agent) throws IOException {
-        currentSession = session;
         Context ctx = Context.root();
         ctx.plugin(new ToolsPlugin(), null).awaitStartup();
         ToolsService tools = ctx.as(ToolsView.class).tools();
@@ -91,11 +92,11 @@ class WebFaceTest {
                 return "echo";
             }
         });
-        face = WebFace.start(0, ctx, tools, session, agent, null);
-        face.onNewSession(() -> {
-            currentSession = Session.create(tempDir.resolve("sessions"));
-            return currentSession;
-        }, fresh -> { });
+        face = WebFace.start(0, ctx, tools, session, agent, null,
+                tempDir.resolve("web-sessions"));
+        // 会话变更接线：/new 与 /switch 换绑后回调（装配层职责，骨架用例记录变更）
+        face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
+        face.onSessionChanged(changed -> changedSessions.add(changed));
         return face;
     }
 
@@ -114,28 +115,18 @@ class WebFaceTest {
         return response.body();
     }
 
-    /** 单段直答 mock agent（模拟真实行为：user 消息入会话 + chunk 交 listener）。
-     *  session 引用延迟读取——mock 在 start() 之前构造，start 才设置 currentSession。 */
-    private ChatAgent scriptedAgent(String reply) {
-        return (userText, listener) -> {
-            currentSession.append(SessionEvent.userMessage(userText));
-            listener.onChunk(reply);
-            return new AgentReply(reply, List.of(), true);
-        };
-    }
-
-    private Session currentSession;
-
     @Test
     void servesStaticPageOnRoot() throws Exception {
-        start(Session.create(tempDir.resolve("sessions")), scriptedAgent("ok"));
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
         String body = get("/");
         assertTrue(body.contains("duo-harness"), "静态单页可达");
     }
 
     @Test
     void statusJsonContainsSnapshotsAndTools() throws Exception {
-        start(Session.create(tempDir.resolve("sessions")), scriptedAgent("ok"));
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
         String body = get("/api/status");
         JsonNode json = new ObjectMapper().readTree(body);
         assertEquals("ACTIVE", json.path("plugins").get(0).path("state").asText(), "ToolsPlugin ACTIVE");
@@ -145,11 +136,10 @@ class WebFaceTest {
     @Test
     void messagePostRunsAgentAndEventsLandInSession() throws Exception {
         Session session = Session.create(tempDir.resolve("sessions"));
-        start(session, scriptedAgent("你好呀"));
+        start(session, scriptedAgent(session, "你好呀"));
 
         HttpResponse<String> ack = post("/api/message", "{\"text\": \"你好\"}");
         assertEquals(202, ack.statusCode(), "POST 立即 202（异步执行）");
-        // 虚拟线程异步执行：轮询等待事件落会话（最多 5 秒）
         for (int i = 0; i < 50 && session.events().size() < 2; i++) {
             Thread.sleep(100);
         }
@@ -161,7 +151,6 @@ class WebFaceTest {
 
     @Test
     void concurrentMessageRejectedWith409() throws Exception {
-        // 慢 agent（阻塞 1 秒）验证单飞标志
         ChatAgent slow = (userText, listener) -> {
             listener.onChunk("慢回复");
             try {
@@ -183,12 +172,39 @@ class WebFaceTest {
     @Test
     void sessionNewCreatesFreshSession() throws Exception {
         Session first = Session.create(tempDir.resolve("sessions"));
-        start(first, scriptedAgent("ok"));
+        start(first, scriptedAgent(first, "ok"));
 
         HttpResponse<String> response = post("/api/session/new", "{}");
         assertEquals(200, response.statusCode());
         JsonNode json = new ObjectMapper().readTree(response.body());
         assertTrue(json.has("id"), "返回新会话 id");
         assertTrue(!json.get("id").asText().equals(first.id()), "id 不同于旧会话");
+        assertEquals(1, changedSessions.size(), "会话变更回调触发（agent 重建信号）");
+        assertEquals(json.get("id").asText(), changedSessions.get(0).id(), "回调拿到已换绑的新会话");
+    }
+
+    @Test
+    void sessionSwitchRebindsAndNotifiesRebuild() throws Exception {
+        // 分脑防御（BUG-20260914-02）：switch 换绑后必须触发会话变更回调重建 agent
+        Session other = Session.create(tempDir.resolve("web-sessions"));
+        other.append(SessionEvent.userMessage("另一个会话的历史"));
+        Session current = Session.create(tempDir.resolve("sessions"));
+        start(current, scriptedAgent(current, "ok"));
+
+        HttpResponse<String> response = post("/api/session/switch",
+                "{\"id\": \"" + other.id() + "\"}");
+        assertEquals(200, response.statusCode());
+        assertEquals(other.id(), face.currentSession().id(), "当前会话已换绑");
+        assertTrue(changedSessions.stream().anyMatch(s -> s.id().equals(other.id())),
+                "会话变更回调以换绑会话触发（agent 重建信号）");
+    }
+
+    /** 单段直答 mock agent（模拟真实 ToolCallingAgent：user 消息入会话 + chunk 交 listener）。 */
+    private ChatAgent scriptedAgent(Session session, String reply) {
+        return (userText, listener) -> {
+            session.append(SessionEvent.userMessage(userText));
+            listener.onChunk(reply);
+            return new AgentReply(reply, List.of(), true);
+        };
     }
 }

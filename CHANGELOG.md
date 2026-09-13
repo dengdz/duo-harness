@@ -26,15 +26,20 @@
 - 会话事件 `run/error`（M8）：运行错误直推帧（不落会话历史），页面渲染 [错误] 卡
 - Web 面接入 demo 装配（M8 工单 06）：agent-demo.yml `web` 行——一条命令同时具备 CLI 与浏览器双入口（会话目录单入口约定）
 - HITL Web answerer（M8 工单 05）：`WebAnswerer` 实现交互 seam（M6）——待答审批经 SSE 推送为页面按钮卡片，点选后 `POST /api/answer` 完成；**SSE 断连/超时一律 fail-closed**（悬空请求自动拒绝，人不在环 = 不批准）；ADR-0008 验证：呈现位零改动机制核
-- 会话事件 `run/error`（M8）：运行错误直推帧（不落会话历史），页面渲染 [错误] 卡
-- Web 面接入 demo 装配（M8 工单 06）：agent-demo.yml `web` 行——一条命令同时具备 CLI 与浏览器双入口（会话目录单入口约定）
-- HITL Web answerer（M8 工单 05）：`WebAnswerer` 实现交互 seam（M6）——待答审批经 SSE 推送为页面按钮卡片，点选后 `POST /api/answer` 完成；**SSE 断连/超时一律 fail-closed**（悬空请求自动拒绝，人不在环 = 不批准）；ADR-0008 验证：呈现位零改动机制核`WebPlugin`（Boot yml 一行，只绑 127.0.0.1，默认 8080）+ 静态单页（对话/状态双区，亮色 DSH 风格）+ `/api/status` 状态 JSON + `/api/events` SSE 会话事件流（存量回放 + 实时推送，虚拟线程执行器）
+- Web 单页重构为三区布局（M8）：会话侧栏（`/api/sessions` 列出 + `/api/session/switch` 切换 + 当前会话高亮 + ＋新话题）/ 对话面 / 状态面，样式对齐冻结原型（亮色 DSH token）；EmptyHero 新会话初始态；合一工具卡（状态徽标 + 可折叠结果 + 治理提醒独立标注）；审批 / 计划呈交 / 提问三张交互卡（事件委托，`approval/decided` 回放冻结）
+- `AuditingAnswerer` 审计桥提升至 agent 模块（会话经 Supplier 延迟解析）：CLI 与 Web 装配共用——Web 装配经它把审批请求/决定落会话事件，驱动页面审批卡（M8 工单 05 接线修复）
+- Web 双面骨架（M8 工单 02）：`WebPlugin`（Boot yml 一行，只绑 127.0.0.1，默认 18080）+ 静态单页 + `/api/status` 状态 JSON + `/api/events` SSE 会话事件流（存量回放 + 实时推送，虚拟线程执行器）
 - 技能系统（M7 工单 01，agent 域 "skills" 服务）：SKILL.md 目录包与单文件 `<name>.md` 双形态，四根发现（`.duo/skills` → `.agents/skills` → `~/.duo/skills` → `~/.agents/skills`，同名高优先根胜），启动加载、清单片段进 prompt 注册表；`skill` 工具供模型按名加载指令全文（走六段管线）；yml 禁用配置
 - prompt 注册表插件化（M7 工单 01）：`PromptPlugin` 发布 "prompts" 服务（config.systemPrompt 为最前用户指令片段）——技能清单、AGENTS.md 等装配级片段的注册点
 - AGENTS.md 注入（M7 工单 02，agent 域）：`AgentsMdPlugin` 加载 `~/.duo/AGENTS.md`（用户全局）+ 项目根 AGENTS.md（.git 定根），64KB 预算超限截断，注册为 agents-md 片段进 prompt 注册表——项目约定对运行时 agent 自动可见
 - 技能用户直调（M7 工单 03）：AgentRepl 输入 `/技能名 [任务]` 即注入该技能指令全文——点名的能力立即生效；未知名提示可用技能
 - 计划模式（M7 工单 04，引导式）：`/plan [任务]` 进入（挂计划指导片段：先探索再设计、不做修改性操作）、`exit_plan_mode` 工具呈交计划、用户批准后执行 / 打回带反馈继续；状态存 `plan/mode` 会话事件（续接恢复）；复核无人应答 fail-closed 保持计划模式
 - AgentRepl M7 装配（M7 工单 05）：内置演示技能 release-notes（.duo/skills，dogfood 形态）；三路触发与计划模式端到端可验收
+
+### Fixed
+
+- 切换会话后消息"丢失"（BUG-20260914-01）：`/api/session/switch` 换绑后现重建对话执行者——此前 agent 仍写旧会话，消息落错会话（页面看不到自己的消息、刷新"丢失"、切到别的会话反而可见）；`Session.events()` 改快照语义，流式追加期间的并发回放不再中断
+- 计划呈交在 Web 无卡片可答（BUG-20260914-02）：`exit_plan_mode` 现渲染为计划呈交卡（批准/打回带反馈），回答口径对齐工具判定——此前呈交后永久挂起至超时；`ask_user` 结果同样按工具名冻结提问卡
 
 ### Changed
 

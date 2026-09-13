@@ -16,7 +16,6 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -34,7 +33,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>会话身份在文件名：{@code ~/.duo/sessions/<id>.jsonl}，id = 启动时间 + 短随机后缀，
  * 人类可读；同秒内以后缀字典序区分——后缀 4 位十六进制补零，保证字典序与生成序一致。</p>
  *
- * <p>线程约定：实例非线程安全——单会话内串行使用（REPL/agent 循环均为串行消费）。</p>
+ * <p>线程约定：单写者（append 只在会话属主的执行线程上串行调用）；读侧
+ * {@link #events()} 返回快照、{@link #addListener} 用 CoW——读取与追加并发安全
+ * （M8 起 Web SSE 回放与 agent 流式追加并发是常态）。</p>
  */
 public final class Session {
 
@@ -87,6 +88,46 @@ public final class Session {
     }
 
     /** 目录内最近活动的会话（按文件修改时间，即最后被创建/写入的）；无会话返回 null。 */
+    /** 会话摘要（M8 会话侧栏数据源：id + 最近修改时间）。 */
+    public record SessionSummary(String id, Path jsonl, long lastModifiedMs) {
+
+        /** 构造时校验非空——错误前移到构造点。 */
+        public SessionSummary {
+            java.util.Objects.requireNonNull(id, "id");
+            java.util.Objects.requireNonNull(jsonl, "jsonl");
+        }
+    }
+
+    /**
+     * 列出目录下全部会话（按最近修改时间倒序；M8 会话侧栏数据源）。
+     *
+     * @param sessionsDir 会话目录（不存在或为空时返回空列表）
+     * @return 会话摘要列表
+     */
+    public static List<SessionSummary> list(Path sessionsDir) {
+        record Entry(String id, Path jsonl, long ms) { }
+        List<Entry> entries = new ArrayList<>();
+        if (Files.isDirectory(sessionsDir)) {
+            try (var list = Files.list(sessionsDir)) {
+                for (Path path : list.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
+                    try {
+                        entries.add(new Entry(
+                                path.getFileName().toString().replace(".jsonl", ""),
+                                path, Files.getLastModifiedTime(path).toMillis()));
+                    } catch (IOException ignored) {
+                        // 单个文件元数据读取失败跳过
+                    }
+                }
+            } catch (IOException e) {
+                throw new PluginException("会话目录遍历失败: " + sessionsDir, e);
+            }
+        }
+        return entries.stream()
+                .sorted((a, b) -> Long.compare(b.ms(), a.ms()))
+                .map(e -> new SessionSummary(e.id(), e.jsonl(), e.ms()))
+                .toList();
+    }
+
     public static Session latest(Path sessionsDir) {
         Path latest = null;
         FileTime latestTime = null;
@@ -122,9 +163,12 @@ public final class Session {
         return jsonl;
     }
 
-    /** 事件日志的只读视图。 */
+    /**
+     * 事件日志的只读快照：调用时刻的稳定拷贝——流式追加期间遍历安全
+     * （Web SSE 回放与 agent 追加并发是常态，活视图会在遍历中抛 CME）。
+     */
     public List<SessionEvent> events() {
-        return Collections.unmodifiableList(events);
+        return List.copyOf(events);
     }
 
     /**

@@ -23,6 +23,20 @@
 - 过程修正：WebFace 骨架测试传 null answerer（start 对 null 宽容）；WebPlugin inject 补 answers
 - 工单 05 完成后的装配语义增补（工单 06 前）：WebFace 新增 15s 心跳帧（SSE 保活 + 死连接摘除）、run/error 直推事件类型、/api/session/new 异常防护（500 点名）；静态页 SSE 渲染补 approval/requested 审批卡片与 chunk 聚合逻辑（BUG-20260913-04 修复随工单 06 提交）
 
+### 浏览器端到端实测补记（2026-09-13 晚，验收期间发现并修复）
+
+勾选项与实际接线不符的两处（测试揪出）：
+- **"待答经 SSE 推送"实为半截**：前端渲染分支在，但后端无人发 `approval/requested` 事件——Web 装配裸注册 WebAnswerer，缺审计桥。修复：`AuditingAnswerer` 从 example 提升到 agent 模块（会话改 Supplier 延迟解析，/new 换绑后留痕落当前会话），WebPlugin 以 `new AuditingAnswerer(face::currentSession, webAnswerer)` 注册
+- **"断连 fail-closed 双路径"未接线**：`failClosedAll()` 无任何调用方。修复：WebFace `removeClient` 统一摘除路径，全部客户端离场即 fail-closed
+
+连带修复：
+- SSE 连接帧被 writeSse 包成 `data: : connected` 数据帧，前端 JSON.parse 每次连接抛 SyntaxError → 改为真注释帧（冒号行）
+- replay/done 边界帧在 WebFace 重写中丢失（BUG-20260913-04 修复回退）→ 恢复
+- /api/session/new 不读 POST 请求体（keep-alive 连接复用正确性）→ 清空；/api/answer 补 answerer 缺失 503 守卫
+- /new 双调 supplier 产生孤儿会话（bindSession 与回调各调一次）→ 单次取用
+
+实测（浏览器端到端）：批准路径（卡片 → 批准 → 工具 ✓ → decided 冻结）与拒绝路径（卡片 → 拒绝 → 工具 ✗ 失败）全通；历史悬空单在 10 分钟兜底超时后按拒绝收场并在回放中冻结。
+
 ## Comments
 
 spec：[../spec.md](../spec.md)。断连 fail-closed 是 ADR-0008 安全语义在 Web 呈现位的延伸，也是"换呈现位"验证的一部分；fail-closed 后计划模式仍激活（模型可继续完善或用户重开页面再答）。

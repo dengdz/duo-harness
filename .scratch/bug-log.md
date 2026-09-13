@@ -8,6 +8,26 @@
 
 ---
 
+## BUG-20260914-02 · 计划呈交/提问在 Web 无卡片可答——悬空挂起 10 分钟
+
+- **日期**：2026-09-14（M8 工单 06 用户手动验收发现）
+- **症状**：`/plan` 后回复卡住只剩光标闪烁；JSONL 尾部 exit_plan_mode tool/call 后无 tool/result、无 assistant/message；全文件 0 条审批事件。
+- **根因**：ExitPlanModeTool 呈交计划用 question 类请求——审计桥对提问透传不发事件，前端把 exit_plan_mode 渲染成普通工具卡，pending 无人能答，挂满 10 分钟兜底超时。工单 05"提问/计划卡片工单 06 收口"的欠账。
+- **修复**：前端 exit_plan_mode → 计划呈交卡（批准=approved:true+values:["批准，开始执行"]；打回=approved:true+values:[反馈]）；tool/result 按工具名冻结 ask_user/exit_plan_mode 卡；计划卡正文解析 plan 字段。
+- **防复发**：交互 seam 提问类 pending 在 Web 必须有对应卡片（按 toolName 路由）；新增带提问的工具须同步前端路由。档案见 .scratch/bugs/BUG-20260914-02.md。
+
+---
+
+## BUG-20260914-01 · 切换会话后消息"丢失"——switch 换绑不重建 agent（分脑）
+
+- **日期**：2026-09-14（M8 工单 06 用户手动验收发现）
+- **症状**：发消息后有时看不到自己的气泡、回复卡住；刷新后"丢失"；切换会话后又能看到。
+- **根因**：/api/session/switch 只换绑 WebFace 会话引用，不重建 agent（ToolCallingAgent 持有 final 会话引用）——消息落旧会话、页面看新会话。鉴别点：消息在另一个会话里能找到。排查中连带修复 Session.events() 活视图的并发回放 CME（改快照语义）。
+- **修复**：会话变更回调泛化 onSessionChanged——/new 与 /switch 换绑后都重建 agent；WebFaceTest 补 switch 回调断言；客户端重连幂等（onopen 复位回放门）。
+- **防复发**：换绑会话与重建 agent 是同一动作两面，回调断言锁定；多标签共用"服务端当前会话"仍以单入口约定为前提。档案见 .scratch/bugs/BUG-20260914-01.md。
+
+---
+
 ## BUG-20260913-04 · Web 对话流 chunk 碎片化——每个增量渲染为独立气泡
 
 - **日期**：2026-09-13（M8 验收自动化测试发现）

@@ -1,4 +1,4 @@
-package dev.duo.harness.example.agentrepl;
+package dev.duo.harness.agent;
 
 
 import dev.duo.harness.session.Session;
@@ -35,7 +35,7 @@ class AuditingAnswererTest {
     @Test
     void approvalInteractionWritesRequestedAndDecidedEvents() throws IOException {
         Session session = Session.create(tempDir.resolve("sessions"));
-        AuditingAnswerer auditing = new AuditingAnswerer(session,
+        AuditingAnswerer auditing = new AuditingAnswerer(() -> session,
                 request -> InteractionAnswer.allow("console"));
 
         InteractionAnswer answer = auditing.answer(InteractionRequest.approval("write_file", "{\"path\":\"a.txt\"}"));
@@ -54,7 +54,7 @@ class AuditingAnswererTest {
     @Test
     void questionRequestsPassThroughWithoutAuditEvents() throws IOException {
         Session session = Session.create(tempDir.resolve("sessions"));
-        AuditingAnswerer auditing = new AuditingAnswerer(session,
+        AuditingAnswerer auditing = new AuditingAnswerer(() -> session,
                 request -> InteractionAnswer.answered(List.of("方案 A"), "console"));
 
         InteractionAnswer answer = auditing.answer(
@@ -67,7 +67,7 @@ class AuditingAnswererTest {
     @Test
     void decliningDelegatePassesThroughNull() throws IOException {
         Session session = Session.create(tempDir.resolve("sessions"));
-        AuditingAnswerer auditing = new AuditingAnswerer(session, request -> null);
+        AuditingAnswerer auditing = new AuditingAnswerer(() -> session, request -> null);
 
         assertNull(auditing.answer(InteractionRequest.approval("write_file", "{}")),
                 "委托者放弃作答权时原样透传 null");

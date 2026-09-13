@@ -3,6 +3,7 @@ package dev.duo.harness.example.agentrepl;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.PlanMode;
 import dev.duo.harness.agent.PromptFragment;
@@ -96,9 +97,6 @@ public final class AgentReplMain {
         out.println("会话 " + session.id() + "（工具循环上下文）。/exit 退出，/new 开新话题。");
         out.flush();
 
-        // CLI 回答者（审批 y/n、提问呈现）+ 审计桥（审批事件落会话）——ADR-0008 呈现位
-        answers.register(root, new AuditingAnswerer(session, new ConsoleAnswerer(in, out)));
-
         PromptRegistry prompts = root.as(AgentPromptsView.class).prompts();
         prompts.register(root, new PromptFragment("demo:platform", "执行文件操作前先确认目标路径。"));
 
@@ -111,6 +109,8 @@ public final class AgentReplMain {
         LlmAdapterHolder llm = new LlmAdapterHolder(new RetryingAdapter(new OpenAiCompatAdapter(config),
                 config.retryMaxAttempts(), config.retryInitialBackoffMs()));
         SessionHolder sessionHolder = new SessionHolder(session);
+        // CLI 回答者（审批 y/n、提问呈现）+ 审计桥（审批事件落会话）——ADR-0008 呈现位
+        answers.register(root, new AuditingAnswerer(sessionHolder::current, new ConsoleAnswerer(in, out)));
         ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
         tools.register(root, new dev.duo.harness.agent.ExitPlanModeTool(answers, sessionHolder::current, () -> {
             plan.active = false;

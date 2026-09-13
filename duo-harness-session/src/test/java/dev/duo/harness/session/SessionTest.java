@@ -181,6 +181,21 @@ class SessionTest {
     }
 
     @Test
+    void eventsSnapshotStableUnderAppend() {
+        // events() 是调用时刻的快照：追加不影响既有快照的遍历（Web SSE 回放与
+        // agent 流式追加并发的根防御——活视图会在遍历中抛 ConcurrentModificationException）
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("快照前"));
+        List<SessionEvent> snapshot = session.events();
+        java.util.Iterator<SessionEvent> iterator = snapshot.iterator();
+        session.append(SessionEvent.userMessage("快照后追加"));
+
+        assertEquals(1, snapshot.size(), "快照不受后续追加影响");
+        assertEquals("快照前", iterator.next().text(), "取快照时的迭代器在追加后仍可安全遍历");
+        assertEquals(2, session.events().size(), "后续快照可见新事件");
+    }
+
+    @Test
     void approvalEventsRoundTripAndSkipProjection() throws IOException {
         // M6 交互事件：审批请求与决定落会话（审计用），JSONL 往返一致、投影跳过
         Session session = Session.create(sessionsDir());

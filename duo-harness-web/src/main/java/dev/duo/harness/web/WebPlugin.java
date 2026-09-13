@@ -1,6 +1,7 @@
 package dev.duo.harness.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.core.api.Context;
@@ -70,17 +71,20 @@ public final class WebPlugin implements Plugin<JsonNode> {
         ChatAgent agent = new ToolCallingAgent(adapter, tools, session, prompts);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
-        answers.register(ctx, webAnswerer);
 
         try {
-            face = WebFace.start(port, ctx, tools, session, agent, webAnswerer);
+            face = WebFace.start(port, ctx, tools, session, agent, webAnswerer,
+                    DuoHome.resolve().resolveDir("agent-sessions"));
         } catch (java.io.IOException e) {
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
         }
-        // /new：全新会话 + 重建 agent（重试装饰器复用）
-        face.onNewSession(
-                () -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")),
-                fresh -> face.setAgent(new ToolCallingAgent(adapter, tools, fresh, prompts)));
+        // 审计桥包装（ADR-0008 决策 5）：approval/requested、approval/decided 事件落会话
+        // ——会话监听器推 SSE，页面据此渲染审批卡；会话经 face 延迟解析（/new 换绑后留新会话）
+        answers.register(ctx, new AuditingAnswerer(face::currentSession, webAnswerer));
+        // /new：全新会话；/switch：换绑既有会话——两者换绑后都经会话变更回调重建 agent
+        // （ToolCallingAgent 持有 final 会话引用，不重建即分脑）
+        face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));
+        face.onSessionChanged(fresh -> face.setAgent(new ToolCallingAgent(adapter, tools, fresh, prompts)));
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
         return face::stop;
     }
