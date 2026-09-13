@@ -125,18 +125,43 @@
         row.innerHTML = `<td>${t.name}</td><td>${t.description}</td>`;
       }
     }
+    // 工具合一卡（调用 + 结果，状态徽标按 isError 着色）
+    let openToolCard = null;
+    function toolCard(event) {
+      if (event.type === 'tool/call') {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<div class="tool">🔧 <b>${event.toolName || ''}</b> ` +
+          `<span class="badge badge-run">⟳ 运行中</span></div><pre>${event.text}</pre>`;
+        messages.appendChild(card);
+        openToolCard = card;
+      } else {
+        const card = openToolCard || messages.appendChild(document.createElement('div'));
+        if (!openToolCard) card.className = 'card';
+        const failed = event.type === 'run/error' || /执行被拒绝|执行失败/.test(event.text || '');
+        const badge = card.querySelector('.badge');
+        if (badge) {
+          badge.className = 'badge ' + (failed ? 'badge-fail' : 'badge-ok');
+          badge.textContent = failed ? '✗ 失败' : '✓ 成功';
+        }
+        if (event.text) {
+          const body = document.createElement('div');
+          body.style.cssText = 'font-family:var(--mono);font-size:12px;margin-top:6px;white-space:pre-wrap';
+          body.textContent = event.text;
+          card.appendChild(body);
+        }
+        openToolCard = null;
+      }
+      messages.scrollTop = messages.scrollHeight;
+    }
     const source = new EventSource('/api/events');
     source.onmessage = (e) => {
       const event = JSON.parse(e.data);
       if (event.type === 'user/message') bubble(event.text, 'user');
-      else if (event.type === 'assistant/message') bubble(event.text);
-      else if (event.type === 'tool/call' || event.type === 'tool/result') {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `<div class="tool">${event.type} · ${event.toolName || ''}</div>`;
-        messages.appendChild(card);
-        messages.scrollTop = messages.scrollHeight;
-      }
+      else if (event.type === 'assistant/chunk' || event.type === 'assistant/message') bubble(event.text);
+      else if (event.type === 'tool/call' || event.type === 'tool/result') toolCard(event);
+      else if (event.type === 'run/error') bubble('[错误] ' + event.text);
+      else if (event.type === 'approval/requested') bubble('[待审批] ' + (event.toolName || '') + '（Web 审批卡片在工单 05 接入）');
       refreshStatus();
     };
     refreshStatus();
@@ -145,17 +170,19 @@
     document.getElementById('input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') send();
     });
-    function send() {
+    async function send() {
       const input = document.getElementById('input');
       const text = input.value.trim();
       if (!text) return;
       bubble(text, 'user');
       input.value = '';
-      fetch('/api/message', {
+      const res = await fetch('/api/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       });
+      if (res.status === 409) bubble('[提示] 已有对话在执行中，请稍候。');
+      // 回复经 SSE 流式推送渲染（user 消息的会话事件由 agent 侧追加后回放）
     }
   </script>
 </body>

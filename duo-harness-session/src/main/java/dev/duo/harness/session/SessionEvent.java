@@ -43,6 +43,9 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 审批决定（M6 交互事件；text = 决定与来源，toolName = 工具名。投影时跳过）。 */
     public static final String APPROVAL_DECIDED = "approval/decided";
 
+    /** 运行错误（M8；text = 错误消息。直推帧不落会话——projection 跳过；类型保留供 SSE 通道复用）。 */
+    public static final String RUN_ERROR = "run/error";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");
@@ -95,6 +98,11 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：审批请求（工具调用被声明需审批、交由回答者作答前）。 */
     public static SessionEvent approvalRequested(String toolName, String detail) {
         return new SessionEvent(APPROVAL_REQUESTED, System.currentTimeMillis(), detail, null, toolName, null);
+    }
+
+    /** 便捷工厂：运行错误（SSE 直推帧用；不 append 进会话）。 */
+    public static SessionEvent errorEvent(String text) {
+        return new SessionEvent(RUN_ERROR, System.currentTimeMillis(), text);
     }
 
     /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"）。 */
