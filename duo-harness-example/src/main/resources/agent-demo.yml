@@ -9,6 +9,12 @@ plugins:
     config:
       systemPrompt: "你是在 duo-harness 中运行的助手，回答使用中文并保持简洁。"
 
+  # AGENTS.md 注入：~/.duo/AGENTS.md + 项目根（.git 定根），64KB 预算截断；
+  # 注册为 agents-md 片段——行序即组装序（用户指令 → 项目约定 → 技能清单）
+  - id: agents-md
+    name: dev.duo.harness.agent.AgentsMdPlugin
+    config: {}
+
   # 技能系统：四根发现（.duo/skills → .agents/skills → ~/.duo/skills → ~/.agents/skills）
   # + 清单片段进 prompt 注册表 + skill 工具挂载；disabled 可点名关闭技能
   - id: skills
