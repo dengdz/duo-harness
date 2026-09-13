@@ -15,6 +15,7 @@ export default defineConfig({
     siteTitle: 'duo-harness',
     nav: [
       { text: '入门', link: '/01-入门/运行Demo' },
+      { text: '指南', link: '/02-指南/组装你的第一个agent' },
       { text: '架构', link: '/04-架构/设计主线' },
       { text: '已知限制', link: '/limitations' },
       { text: 'ADR', link: '/adr/0001-自研插件容器内核' },
@@ -24,6 +25,10 @@ export default defineConfig({
       {
         text: '入门',
         items: [{ text: '运行 Demo', link: '/01-入门/运行Demo' }]
+      },
+      {
+        text: '指南',
+        items: [{ text: '组装你的第一个 agent', link: '/02-指南/组装你的第一个agent' }]
       },
       {
         text: '架构',
