@@ -5,6 +5,7 @@ import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.PromptFragment;
+import dev.duo.harness.agent.Skill;
 import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.DuoHome;
@@ -21,6 +22,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * M6 agent 演示入口：REPL 循环——LLM 自主调用工具（Function Calling 经
@@ -81,6 +83,7 @@ public final class AgentReplMain {
 
         ToolsService tools = root.as(AgentToolsView.class).tools();
         InteractionService answers = root.as(AgentAnswersView.class).answers();
+        dev.duo.harness.agent.SkillRegistry skills = root.as(AgentSkillsView.class).skills();
         tools.register(root, new dev.duo.harness.tools.AskUserTool(answers));
 
         Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
@@ -119,8 +122,16 @@ public final class AgentReplMain {
                 out.flush();
                 continue;
             }
+            String userText = resolveSkillInvocation(line.strip(), skills);
+            if (userText == null) {
+                List<String> available = skills.all().stream().map(Skill::name).toList();
+                out.println("未知命令: " + line.strip().split("\\s+", 2)[0]
+                        + (available.isEmpty() ? "" : "（可用技能: " + String.join(", ", available) + "）"));
+                out.flush();
+                continue;
+            }
             try {
-                var reply = agent.send(line.strip(), new AgentListener() {
+                var reply = agent.send(userText, new AgentListener() {
                     @Override
                     public void onChunk(String text) {
                         out.print(text);
@@ -193,5 +204,29 @@ public final class AgentReplMain {
     interface AgentPromptsView {
 
         PromptRegistry prompts();
+    }
+
+    /** 技能注册表的视图接口（方法名即服务名 "skills"）。 */
+    interface AgentSkillsView {
+
+        dev.duo.harness.agent.SkillRegistry skills();
+    }
+
+    /**
+     * 技能直调识别（用户直调路，M7 三路触发之三）：`/技能名 [其余输入]` →
+     * 技能指令全文前缀注入（"指令\n\n用户输入：其余"）；未匹配技能名返回 null
+     * （内置命令 /exit /new 由调用方先行处理，优先于技能名）。
+     */
+    static String resolveSkillInvocation(String line, dev.duo.harness.agent.SkillRegistry skills) {
+        if (!line.startsWith("/")) {
+            return line;
+        }
+        String[] parts = line.split("\\s+", 2);
+        dev.duo.harness.agent.Skill skill = skills.find(parts[0].substring(1));
+        if (skill == null) {
+            return null;
+        }
+        String rest = parts.length > 1 ? parts[1].strip() : "";
+        return rest.isBlank() ? skill.content() : skill.content() + "\n\n用户输入：" + rest;
     }
 }
