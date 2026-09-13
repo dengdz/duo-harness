@@ -69,21 +69,37 @@
   }
   @keyframes blink { 50% { opacity: 0; } }
 
-  /* 工具调用卡片 */
+  /* 工具卡片（合一形态，对齐 DSH ui-tool：调用+结果一张卡，状态徽标，结果可折叠） */
   .card {
     border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 10px 12px; margin-bottom: 12px; background: var(--surface-2);
     box-shadow: var(--shadow-lv1); font-size: 13px;
   }
-  .card .tool { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .card .tool { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
   .card .tool b { color: var(--brand-strong); }
   .card pre {
     font-family: var(--mono); font-size: 12px; background: var(--surface);
     border: 1px solid var(--border); border-radius: 8px; padding: 8px;
     white-space: pre-wrap; word-break: break-all;
   }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .badge-ok { background: #dcfce7; color: var(--ok); }
+  .badge-fail { background: var(--danger-tint); color: var(--danger); }
+  .badge-run { background: var(--brand-tint); color: var(--brand-strong); }
+  details.result { margin-top: 8px; }
+  details.result summary {
+    cursor: pointer; font-size: 12px; color: var(--text-dim); user-select: none;
+  }
+  details.result .result-body {
+    font-family: var(--mono); font-size: 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px;
+    white-space: pre-wrap; word-break: break-all;
+  }
   .card.error { border-color: var(--danger); background: var(--danger-tint); }
-  .card.error .tool { color: var(--danger); }
+  .card.error .tool, .card.error .tool b { color: var(--danger); }
   .remind {
     border-left: 3px solid var(--brand); padding: 6px 10px;
     color: var(--text-dim); font-size: 12px; margin-bottom: 12px; background: var(--brand-tint);
@@ -192,13 +208,14 @@
       <!-- 用户消息 -->
       <div class="msg user"><div class="bubble">把 notes.txt 读五遍</div></div>
 
-      <!-- 工具调用 + 结果卡片 -->
+      <!-- 工具卡（合一形态：调用 + 状态徽标 + 可折叠结果） -->
       <div class="card">
-        <div class="tool">调工具 · <b>mcp__files__read_file</b> {"path": "notes.txt"}</div>
-      </div>
-      <div class="card">
-        <div class="tool">工具结果 · mcp__files__read_file</div>
-        agent 演示的文件内容
+        <div class="tool">🔧 <b>mcp__files__read_file</b> <span class="badge badge-ok">✓ 成功</span></div>
+        <pre>{"path": "notes.txt"}</pre>
+        <details class="result" open>
+          <summary>▸ 结果（点击展开/收起）</summary>
+          <div class="result-body">agent 演示的文件内容</div>
+        </details>
       </div>
 
       <!-- 提醒标注（重复调用治理） -->
@@ -308,13 +325,11 @@
       '20260913-064846-cc16': { label: '当前 · 今天 06:48 · 42 事件', html: MESSAGES.innerHTML },
       '20260912-211843-a764': { label: '昨天 21:18 · 128 事件', html:
         '<div class="msg user"><div class="bubble">帮我写一个 output.txt，内容是测试</div></div>' +
-        '<div class="card"><div class="tool">调工具 · <b>mcp__files__write_file</b> {"path": "output.txt"}</div></div>' +
-        '<div class="card error"><div class="tool">工具错误 · mcp__files__write_file</div>执行被拒绝: 被审批策略拒绝（策略: always-deny）</div>' +
+        '<div class="card error"><div class="tool">🔧 <b>mcp__files__write_file</b> <span class="badge badge-fail">✗ 被拒绝</span></div><pre>{"path": "output.txt"}</pre><div class="result-body">执行被拒绝: 被审批策略拒绝（策略: always-deny）</div></div>' +
         '<div class="msg assistant">写入被拒绝了，当前策略是始终拒绝写入。需要调整审批策略后再让我重试。</div>' },
       '20260912-193012-f00d': { label: '昨天 19:30 · 9 事件', html:
         '<div class="msg user"><div class="bubble">读一下 notes.txt</div></div>' +
-        '<div class="card"><div class="tool">调工具 · <b>mcp__files__read_file</b> {"path": "notes.txt"}</div></div>' +
-        '<div class="card"><div class="tool">工具结果 · mcp__files__read_file</div>agent 演示的文件内容</div>' +
+        '<div class="card"><div class="tool">🔧 <b>mcp__files__read_file</b> <span class="badge badge-ok">✓ 成功</span></div><pre>{"path": "notes.txt"}</pre><details class="result"><summary>▸ 结果（点击展开/收起）</summary><div class="result-body">agent 演示的文件内容</div></details></div>' +
         '<div class="msg assistant">notes.txt 的内容是「agent 演示的文件内容」。</div>' },
     };
     let currentId = '20260913-064846-cc16';
