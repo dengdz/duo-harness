@@ -152,6 +152,30 @@ _Avoid_: 问卷、表单
 
 
 
+### 技能域
+
+**技能（Skill）**:
+SKILL.md 定义的流程能力包：name + description（frontmatter）+ 指令正文。启动时从发现根扫描加载；模型经 skill 工具按名加载指令、用户经 `/技能名` 直调。
+_Avoid_: 插件（插件是代码）、命令
+
+**发现根（Discovery Root）**:
+技能目录的优先级序：`.duo/skills`（项目）→ `.agents/skills`（项目，行业标准）→ `~/.duo/skills`（用户）→ `~/.agents/skills`（用户），同名高优先根胜。仅启动扫描，不做热加载。
+_Avoid_: 搜索路径、classpath
+
+### 计划模式
+
+**计划模式（Plan Mode）**:
+引导式的工作形态：激活时挂计划指导片段（先探索再设计、不做修改性操作），状态存于 plan/mode 会话事件（续接恢复）。不硬禁工具——写操作的防线是交互审批。
+_Avoid_: 只读模式、沙箱
+
+**计划呈交（exit_plan_mode）**:
+模型完成设计后调用：计划全文经交互 seam 呈交用户复核——批准写 exited 事件并开始执行，打回反馈进结果继续改计划；fail-closed 保持计划模式。
+_Avoid_: 确认弹窗
+
+**AGENTS.md 注入**:
+用户全局（~/.duo/AGENTS.md）与项目根（.git 定根）的 AGENTS.md 内容按序拼接（64KB 预算截断），注册为 prompt 注册表片段——项目约定对运行时 agent 自动可见。
+_Avoid_: 系统提示词模板
+
 ### 运行环境
 
 **Duo home（~/.duo）**:

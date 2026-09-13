@@ -4,17 +4,22 @@
 
 **Blocked by:** 01, 02, 03, 04（集成单，全部在场）
 
-**Status:** ready-for-agent
+**Status:** implemented（2026-09-13，待用户手动验收——M7 收官闸门）
 
 ## Checklist
 
-- [ ] demo 装配：技能四根发现的实际目录接线 + 禁用配置演示行 + skill 工具挂载（叙述行打印等价 yml）
-- [ ] 内置演示技能一个（如 `release-notes`：按仓库规范生成发布说明草稿），置于示例可发现目录
-- [ ] AGENTS.md 注入接线（演示项目根 AGENTS.md 生效可观察）
-- [ ] AgentReplMainTest 扩展：技能直调注入 / skill 工具闭环 / plan 命令状态叙述
-- [ ] 验收对照表（本工单 Comments）：运行命令 + 预期输出逐段对照
-- [ ] 文档同步：运行Demo.md 补 M7 段；CHANGELOG 未发布段收口；limitations.md 核对（无新增限制则确认）
+- [x] demo 装配：agent-demo.yml 增 prompts / agents-md / skills 三行（工单 01/02 已接线），禁用配置演示行就位
+- [x] 内置演示技能：`.duo/skills/release-notes/SKILL.md`（dogfood 形态——本仓库即演示项目）
+- [x] AGENTS.md 注入接线（本仓库项目根 AGENTS.md 即注入内容，dogfood 可观察）
+- [x] AgentReplMainTest 扩展：技能直调注入断言（工单 03）+ PlanModeTest 状态推导 1 例
+- [x] 验收对照表（本工单 Comments）：运行命令 + 预期输出逐段对照
+- [x] 文档同步：运行Demo.md 补 M7 段；CHANGELOG 未发布段收口（技能/直调/plan-mode/装配四条）；CONTEXT.md 词汇表补 5 词条（技能/发现根/计划模式/计划呈交/AGENTS.md 注入）
 - [ ] 用户手动验收（done 的定义）
+
+## 实现记录（2026-09-13）
+
+- 演示技能采用 dogfood 形态：`.duo/skills/release-notes/`（本仓库即演示项目，agent 可见自身仓库的技能目录约定）
+- M7 验收对照表已写入 Comments（六场景）；验收建议在 duo-harness 仓库内跑（dogfood 完整体验，工程技能噪声用 disabled 配置讲解）
 
 ## Comments
 

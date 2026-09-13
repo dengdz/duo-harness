@@ -24,6 +24,9 @@
 - 技能系统（M7 工单 01，agent 域 "skills" 服务）：SKILL.md 目录包与单文件 `<name>.md` 双形态，四根发现（`.duo/skills` → `.agents/skills` → `~/.duo/skills` → `~/.agents/skills`，同名高优先根胜），启动加载、清单片段进 prompt 注册表；`skill` 工具供模型按名加载指令全文（走六段管线）；yml 禁用配置
 - prompt 注册表插件化（M7 工单 01）：`PromptPlugin` 发布 "prompts" 服务（config.systemPrompt 为最前用户指令片段）——技能清单、AGENTS.md 等装配级片段的注册点
 - AGENTS.md 注入（M7 工单 02，agent 域）：`AgentsMdPlugin` 加载 `~/.duo/AGENTS.md`（用户全局）+ 项目根 AGENTS.md（.git 定根），64KB 预算超限截断，注册为 agents-md 片段进 prompt 注册表——项目约定对运行时 agent 自动可见
+- 技能用户直调（M7 工单 03）：AgentRepl 输入 `/技能名 [任务]` 即注入该技能指令全文——点名的能力立即生效；未知名提示可用技能
+- 计划模式（M7 工单 04，引导式）：`/plan [任务]` 进入（挂计划指导片段：先探索再设计、不做修改性操作）、`exit_plan_mode` 工具呈交计划、用户批准后执行 / 打回带反馈继续；状态存 `plan/mode` 会话事件（续接恢复）；复核无人应答 fail-closed 保持计划模式
+- AgentRepl M7 装配（M7 工单 05）：内置演示技能 release-notes（.duo/skills，dogfood 形态）；三路触发与计划模式端到端可验收
 
 ### Changed
 
