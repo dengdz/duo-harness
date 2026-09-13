@@ -21,6 +21,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public final class PromptRegistry {
 
+    /** 服务名（harness 保留裸名）。 */
+    public static final String SERVICE_NAME = "prompts";
+
     /** 用户指令片段（yml llm.systemPrompt；可空）。 */
     private final String userPrompt;
     /** 提示片段（注册序；CopyOnWrite 支撑组装时并发摘除）。 */

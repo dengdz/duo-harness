@@ -3,6 +3,19 @@ plugins:
   - id: tools
     name: dev.duo.harness.tools.ToolsPlugin
 
+  # prompt 注册表：systemPrompt 为最前用户指令片段（M7 起经插件发布为 "prompts" 服务）
+  - id: prompts
+    name: dev.duo.harness.agent.PromptPlugin
+    config:
+      systemPrompt: "你是在 duo-harness 中运行的助手，回答使用中文并保持简洁。"
+
+  # 技能系统：四根发现（.duo/skills → .agents/skills → ~/.duo/skills → ~/.agents/skills）
+  # + 清单片段进 prompt 注册表 + skill 工具挂载；disabled 可点名关闭技能
+  - id: skills
+    name: dev.duo.harness.agent.SkillsPlugin
+    config:
+      disabled: []
+
   # 交互服务：回答者注册表（console answerer 由 AgentReplMain 在装配层注册）
   - id: answers
     name: dev.duo.harness.tools.InteractionPlugin

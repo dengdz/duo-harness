@@ -94,8 +94,8 @@ public final class AgentReplMain {
         // CLI 回答者（审批 y/n、提问呈现）+ 审计桥（审批事件落会话）——ADR-0008 呈现位
         answers.register(root, new AuditingAnswerer(session, new ConsoleAnswerer(in, out)));
 
-        PromptRegistry prompts = new PromptRegistry(config.systemPrompt());
-        prompts.register(root, new PromptFragment("demo:platform", "回答使用中文，保持简洁；执行文件操作前先确认目标路径。"));
+        PromptRegistry prompts = root.as(AgentPromptsView.class).prompts();
+        prompts.register(root, new PromptFragment("demo:platform", "执行文件操作前先确认目标路径。"));
 
         LlmAdapterHolder llm = new LlmAdapterHolder(new RetryingAdapter(new OpenAiCompatAdapter(config),
                 config.retryMaxAttempts(), config.retryInitialBackoffMs()));
@@ -187,5 +187,11 @@ public final class AgentReplMain {
     interface AgentAnswersView {
 
         InteractionService answers();
+    }
+
+    /** prompt 注册表的视图接口（方法名即服务名 "prompts"）。 */
+    interface AgentPromptsView {
+
+        PromptRegistry prompts();
     }
 }
