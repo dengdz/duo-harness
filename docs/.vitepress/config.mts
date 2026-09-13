@@ -15,7 +15,7 @@ export default defineConfig({
     siteTitle: 'duo-harness',
     nav: [
       { text: '入门', link: '/01-入门/运行Demo' },
-      { text: '架构', link: '/04-架构/模块划分' },
+      { text: '架构', link: '/04-架构/设计主线' },
       { text: '已知限制', link: '/limitations' },
       { text: 'ADR', link: '/adr/0001-自研插件容器内核' },
       { text: 'GitHub', link: 'https://github.com/dengdz/duo-harness' }
@@ -27,7 +27,10 @@ export default defineConfig({
       },
       {
         text: '架构',
-        items: [{ text: '模块划分', link: '/04-架构/模块划分' }]
+        items: [
+          { text: '设计主线', link: '/04-架构/设计主线' },
+          { text: '模块划分', link: '/04-架构/模块划分' }
+        ]
       },
       {
         text: '决策记录（ADR）',
