@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03, 04（集成单，全部在场）
 
-**Status:** implemented（2026-09-13，待用户手动验收——M7 收官闸门）
+**Status:** done（2026-09-13 用户手动验收通过——M7 收官）
 
 ## Checklist
 
@@ -14,7 +14,7 @@
 - [x] AgentReplMainTest 扩展：技能直调注入断言（工单 03）+ PlanModeTest 状态推导 1 例
 - [x] 验收对照表（本工单 Comments）：运行命令 + 预期输出逐段对照
 - [x] 文档同步：运行Demo.md 补 M7 段；CHANGELOG 未发布段收口（技能/直调/plan-mode/装配四条）；CONTEXT.md 词汇表补 5 词条（技能/发现根/计划模式/计划呈交/AGENTS.md 注入）
-- [ ] 用户手动验收（done 的定义）
+- [x] 用户手动验收（done 的定义）
 
 ## 实现记录（2026-09-13）
 
