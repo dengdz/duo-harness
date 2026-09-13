@@ -39,4 +39,4 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 4. 引入新依赖先征得同意
 5. UI 改动必须视觉验证后才算完成
 6. CHANGELOG.md 是版本唯一锚点，用户可见变更同 diff 记账
-7. 开发提交不落 main，main 只收验收后的版本合并
+7. 开发提交不落 main，main 只收验收后的版本合并（M9 起严格执行：里程碑启动第一步切版本分支如 `0.3.0`；M3-M8 直落 main 为既成历史不追改，见 duo-workflow 版本号规范）
