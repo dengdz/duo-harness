@@ -154,11 +154,28 @@
       }
       messages.scrollTop = messages.scrollHeight;
     }
+    // 流式聚合：chunk 追加到最后一个助手气泡（碎片化修复，BUG-20260913-04）
+    let streamingBubble = null;
     const source = new EventSource('/api/events');
+    let replayed = true; // 收到服务端 replay/done 边界帧前，历史 chunk 不渲染（assistant/message 为准）
     source.onmessage = (e) => {
       const event = JSON.parse(e.data);
-      if (event.type === 'user/message') bubble(event.text, 'user');
-      else if (event.type === 'assistant/chunk' || event.type === 'assistant/message') bubble(event.text);
+      if (event.type === 'replay/done') { replayed = false; return; }
+      if (event.type === 'assistant/chunk' && replayed) return; // 历史碎片不回放
+      if (event.type === 'user/message') { bubble(event.text, 'user'); streamingBubble = null; }
+      else if (event.type === 'tool/call') { streamingBubble = null; toolCard(event); }
+      else if (event.type === 'tool/result') toolCard(event);
+      else if (event.type === 'assistant/chunk') {
+        // 流式聚合：回放的历史 chunk 与实时 chunk 都聚合到同一气泡，
+        // assistant/message 完整事件到达时以其文本为准（绝无碎片）
+        if (!streamingBubble) streamingBubble = bubble('', 'assistant');
+        streamingBubble.textContent += event.text;
+        messages.scrollTop = messages.scrollHeight;
+      }
+      else if (event.type === 'assistant/message') {
+        if (streamingBubble) { streamingBubble.textContent = event.text; streamingBubble = null; }
+        else bubble(event.text);
+      }
       else if (event.type === 'tool/call' || event.type === 'tool/result') toolCard(event);
       else if (event.type === 'run/error') bubble('[错误] ' + event.text);
       else if (event.type === 'approval/requested') {

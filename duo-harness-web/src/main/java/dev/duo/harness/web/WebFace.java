@@ -256,10 +256,12 @@ public final class WebFace {
             sseOutputs.add(out);
             try {
                 writeSse(out, ": connected");
-                // 先补发存量事件（页面刷新后回放当前会话），增量由 pushEvent 广播
+                // 先补发存量事件（页面刷新后回放当前会话），增量由 pushEvent 广播；
+                // 回放完成发边界帧——客户端据此区分"历史 chunk（跳过渲染）"与"实时 chunk（聚合渲染）"
                 for (SessionEvent event : session.events()) {
                     writeSse(out, toJson(event));
                 }
+                writeSse(out, "{\"type\":\"replay/done\"}");
             } catch (IOException e) {
                 sseOutputs.remove(out);
                 webAnswerer.failClosedAll();
