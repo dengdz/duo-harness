@@ -41,6 +41,13 @@ plugins:
     name: dev.duo.harness.example.mcpfs.RepeatReminderPlugin
     config: {}
 
+  # Web 双面：本地浏览器界面（对话 + 状态 + HITL 卡片），只绑 127.0.0.1
+  # 注意：Web 面与 CLI（AgentRepl）操作同一会话目录——单入口使用（见运行Demo M8 段）
+  - id: web
+    name: dev.duo.harness.web.WebPlugin
+    config:
+      port: 8080
+
   # ask_user 提问工具的挂载由 AgentReplMain 装配（构造注入交互服务后注册）
   # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载
   # （MiniFileSystemServer 指向临时目录）——等价形态见 demo-m2.yml 注释

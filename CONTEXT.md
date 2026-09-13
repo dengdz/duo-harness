@@ -176,6 +176,20 @@ _Avoid_: 确认弹窗
 用户全局（~/.duo/AGENTS.md）与项目根（.git 定根）的 AGENTS.md 内容按序拼接（64KB 预算截断），注册为 prompt 注册表片段——项目约定对运行时 agent 自动可见。
 _Avoid_: 系统提示词模板
 
+### Web 呈现域
+
+**状态面（Status Panel）**:
+浏览器右区的系统健康视图：插件六态表（Context.snapshots）+ 工具清单（含 MCP 远端）。SSE 触发实时刷新。
+_Avoid_: 仪表盘、管理后台
+
+**SSE 事件流（Event Stream）**:
+会话事件到浏览器的单向推送通道（Server-Sent Events）：存量回放 + 实时增量；页面按事件类型渲染消息/工具卡/交互卡。
+_Avoid_: WebSocket、轮询
+
+**Web answerer**:
+交互 seam 的浏览器呈现位：待答审批/提问/计划经 SSE 推送为交互卡片，点选后 POST 回答完成等待中的请求。断连一律 fail-closed。
+_Avoid_: 前端回调
+
 ### 运行环境
 
 **Duo home（~/.duo）**:

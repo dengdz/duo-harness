@@ -24,8 +24,10 @@
 - Web 双面地基 API（M8 工单 01）：core `Context.snapshots()` 只读插件状态快照（M8 状态面数据源）+ session `Session.addListener` 事件订阅（M8 事件流推送源，注销器摘除）——纯新增向后兼容
 - 对话面（M8 工单 04）：`POST /api/message` 装配全套 M5-M7 对话执行者（工具循环 + 重试 + prompt 注册表）异步执行——chunk 与工具调用/结果经 SSE 实时推送渲染为合一工具卡（状态徽标三色：运行中/成功/失败）；`POST /api/session/new` 开新会话；单飞串行（执行中再发 409）
 - 会话事件 `run/error`（M8）：运行错误直推帧（不落会话历史），页面渲染 [错误] 卡
+- Web 面接入 demo 装配（M8 工单 06）：agent-demo.yml `web` 行——一条命令同时具备 CLI 与浏览器双入口（会话目录单入口约定）
 - HITL Web answerer（M8 工单 05）：`WebAnswerer` 实现交互 seam（M6）——待答审批经 SSE 推送为页面按钮卡片，点选后 `POST /api/answer` 完成；**SSE 断连/超时一律 fail-closed**（悬空请求自动拒绝，人不在环 = 不批准）；ADR-0008 验证：呈现位零改动机制核
 - 会话事件 `run/error`（M8）：运行错误直推帧（不落会话历史），页面渲染 [错误] 卡
+- Web 面接入 demo 装配（M8 工单 06）：agent-demo.yml `web` 行——一条命令同时具备 CLI 与浏览器双入口（会话目录单入口约定）
 - HITL Web answerer（M8 工单 05）：`WebAnswerer` 实现交互 seam（M6）——待答审批经 SSE 推送为页面按钮卡片，点选后 `POST /api/answer` 完成；**SSE 断连/超时一律 fail-closed**（悬空请求自动拒绝，人不在环 = 不批准）；ADR-0008 验证：呈现位零改动机制核`WebPlugin`（Boot yml 一行，只绑 127.0.0.1，默认 8080）+ 静态单页（对话/状态双区，亮色 DSH 风格）+ `/api/status` 状态 JSON + `/api/events` SSE 会话事件流（存量回放 + 实时推送，虚拟线程执行器）
 - 技能系统（M7 工单 01，agent 域 "skills" 服务）：SKILL.md 目录包与单文件 `<name>.md` 双形态，四根发现（`.duo/skills` → `.agents/skills` → `~/.duo/skills` → `~/.agents/skills`，同名高优先根胜），启动加载、清单片段进 prompt 注册表；`skill` 工具供模型按名加载指令全文（走六段管线）；yml 禁用配置
 - prompt 注册表插件化（M7 工单 01）：`PromptPlugin` 发布 "prompts" 服务（config.systemPrompt 为最前用户指令片段）——技能清单、AGENTS.md 等装配级片段的注册点
