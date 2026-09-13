@@ -35,7 +35,7 @@ mvn -pl duo-harness-example -am package exec:java
 - 编辑 `demo-m2.yml`：把审批 policy 换成 `auto-approve` 并白名单 `mcp__files__write_file`，重跑可见写操作放行、临时目录出现新文件
 - 示例插件源码在 `duo-harness-example` 的 `dev.duo.harness.example` 包树——`greeting`（服务对）、`tools`（工具与治理）、`approval`（审批策略）、`contract`（输出契约与 guard）、`mcpfs`（迷你 filesystem server 与写保护）五个功能子包
 
-M2 逐工单验收对照表见 `.scratch/m2-tools-mcp/acceptance.md`（含预期日志原文快照）。
+M2 逐工单验收对照表见仓库归档（`.scratch/` 随库入库，站外内容）。
 
 ## 聊天 REPL（M3 + M4）
 
