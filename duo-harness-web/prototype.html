@@ -279,5 +279,111 @@
       </table>
     </div>
   </section>
+
+  <script>
+    // ===== 半交互原型：本地视觉流转 + 假响应（真实 SSE/agent 在工单 04/05 接入） =====
+    const $ = (sel, root) => (root || document).querySelector(sel);
+    const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+    function assistantSay(text) {
+      const div = document.createElement('div');
+      div.className = 'msg assistant';
+      div.textContent = text;
+      const box = $('#messages');
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+    function resolveCard(card, note) {
+      card.classList.remove('interactive');
+      $$('.choices, .free-input', card).forEach(el => el.remove());
+      const done = document.createElement('div');
+      done.style.cssText = 'font-size:12px;color:var(--ok);font-weight:600';
+      done.textContent = note;
+      card.appendChild(done);
+    }
+
+    // 审批卡：批准 / 拒绝
+    $$('#messages .interactive').forEach(card => {
+      const title = $('.question', card);
+      if (!title) return;
+      const buttons = $$('.choices .choice', card);
+      const isApproval = title.textContent.includes('[待审批]') && buttons.length === 2;
+      const isAsk = title.textContent.includes('[提问]');
+      const isPlan = title.textContent.includes('[计划呈交]') && buttons.length === 2;
+
+      if (isApproval) {
+        buttons[0].addEventListener('click', () => {
+          resolveCard(card, '✓ 已批准（回答者: console）');
+          assistantSay('[工具结果] 已写入 output.txt（2 字符）。写入完成，需要我回读校验吗？');
+        });
+        buttons[1].addEventListener('click', () => {
+          resolveCard(card, '✗ 已拒绝（回答者: console）');
+          assistantSay('写入被拒绝了：`output.txt` 未能创建，审批方点了拒绝。需要换一种方式吗？');
+        });
+      }
+      if (isAsk) {
+        const free = $('.free-input input', card);
+        const submit = () => {
+          const answer = free && free.value.trim() ? free.value.trim() : null;
+          if (!answer) return;
+          resolveCard(card, '✓ 已回答：' + answer);
+          assistantSay('收到，你的回答是「' + answer + '」。我按这个继续。');
+        };
+        const sendBtn = $('.free-input button', card);
+        if (sendBtn) sendBtn.addEventListener('click', submit);
+        if (free) free.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+      }
+      if (isPlan) {
+        buttons[0].addEventListener('click', () => {
+          resolveCard(card, '✓ 计划已获批准（回答者: console）');
+          assistantSay('计划已获批准并执行完成：todo.txt 已创建并回读校验一致。未改动其他文件，未 commit、未推送。');
+        });
+        buttons[1].addEventListener('click', () => {
+          const feedback = window.prompt('请输入修改意见（原型演示）') || '';
+          resolveCard(card, '✗ 计划未获批准，反馈：' + (feedback || '无'));
+          assistantSay('收到反馈「' + (feedback || '无') + '」，我按此修改计划后再次呈交。');
+        });
+      }
+    });
+
+    // 输入框：用户消息上屏 + 假回复
+    function sendInput() {
+      const input = $('#input');
+      const text = input.value.trim();
+      if (!text) return;
+      const div = document.createElement('div');
+      div.className = 'msg user';
+      const b = document.createElement('div');
+      b.className = 'bubble';
+      b.textContent = text;
+      div.appendChild(b);
+      const box = $('#messages');
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      input.value = '';
+      assistantSay('（原型演示）已收到「' + text + '」。真实对话在工单 04 接入 SSE 后生效。');
+    }
+    const sendBtn = $('#send');
+    if (sendBtn) sendBtn.addEventListener('click', sendInput);
+    const inputEl = $('#input');
+    if (inputEl) inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendInput(); });
+
+    // 会话侧栏：点击切换高亮 + 对话区假切换
+    $$('.sidebar-item').forEach(item => {
+      item.addEventListener('click', () => {
+        $$('.sidebar-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        const box = $('#messages');
+        box.innerHTML = '<div class="msg"><div class="bubble">已切换到会话 ' +
+          $('.sid', item).textContent + '（原型演示：真实切换在工单 06 接入后重放该会话历史）。</div></div>';
+        box.scrollTop = 0;
+      });
+    });
+    const newBtn = $('#newSession');
+    if (newBtn) newBtn.addEventListener('click', () => {
+      $$('.sidebar-item').forEach(i => i.classList.remove('active'));
+      assistantSay('（原型演示）已创建新会话。');
+    });
+  </script>
 </body>
 </html>
