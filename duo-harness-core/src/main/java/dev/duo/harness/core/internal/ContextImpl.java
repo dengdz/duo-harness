@@ -10,6 +10,7 @@ import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginConfigException;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginHandle;
+import java.util.List;
 import dev.duo.harness.core.api.events.WaterfallListener;
 import dev.duo.harness.core.api.events.WaterfallNext;
 import org.slf4j.Logger;
@@ -294,6 +295,11 @@ public final class ContextImpl implements Context {
     public Object serial(String event, Object args) {
         Objects.requireNonNull(event, "event");
         return events.serial(event, args);
+    }
+
+    @Override
+    public List<dev.duo.harness.core.api.PluginSnapshot> snapshots() {
+        return pluginInstances.snapshots();
     }
 
     @Override

@@ -162,6 +162,25 @@ class SessionTest {
     }
 
     @Test
+    void listenerReceivesAppendsAndRemovableStopsDelivery() throws Exception {
+        // M8 事件流推送源：append 成功后监听器同步收到事件；注销器生效
+        Session session = Session.create(sessionsDir());
+        List<SessionEvent> received = new java.util.ArrayList<>();
+        dev.duo.harness.core.api.Disposable removal = session.addListener(received::add);
+
+        session.append(SessionEvent.userMessage("第一条"));
+        session.append(SessionEvent.userMessage("第二条"));
+        removal.dispose();
+        session.append(SessionEvent.userMessage("注销后"));
+
+        assertEquals(2, received.size(), "注销前两条均送达");
+        assertEquals("第一条", received.get(0).text());
+        assertEquals("第二条", received.get(1).text());
+        assertEquals(3, session.events().size(), "注销不影响事件落盘");
+        assertEquals("注销后", session.events().get(2).text());
+    }
+
+    @Test
     void approvalEventsRoundTripAndSkipProjection() throws IOException {
         // M6 交互事件：审批请求与决定落会话（审计用），JSONL 往返一致、投影跳过
         Session session = Session.create(sessionsDir());

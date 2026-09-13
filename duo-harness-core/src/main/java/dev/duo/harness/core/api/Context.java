@@ -1,5 +1,7 @@
 package dev.duo.harness.core.api;
 
+import java.util.List;
+
 import dev.duo.harness.core.api.events.EventListener;
 import dev.duo.harness.core.api.events.WaterfallListener;
 import dev.duo.harness.core.api.events.WaterfallNext;
@@ -165,4 +167,16 @@ public interface Context {
      * @throws PluginException 监听器或终端抛错时包装上抛（cause 保留原始异常）
      */
     <T, R> R waterfall(String event, T args, WaterfallNext<T, R> terminal);
+
+    // === 状态快照 ===
+
+    /**
+     * 全部已挂载插件的状态快照（只读，M8 状态面数据源）。
+     *
+     * <p>返回挂载时刻的即时视图：插件标识 + 六态状态。随挂载 / 卸载 / 状态
+     * 迁移实时变化——每次调用重新取快照，不缓存。</p>
+     *
+     * @return 插件状态快照列表（挂载序；无插件时为空列表，不返回 null）
+     */
+    List<PluginSnapshot> snapshots();
 }

@@ -2,6 +2,7 @@ package dev.duo.harness.session;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.PluginException;
 
 import java.io.BufferedReader;
@@ -17,6 +18,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -40,6 +44,8 @@ public final class Session {
     private final String id;
     private final Path jsonl;
     private final List<SessionEvent> events = new ArrayList<>();
+    /** 事件监听器（CoW：回调中注销不破坏遍历）。 */
+    private final List<Consumer<SessionEvent>> listeners = new CopyOnWriteArrayList<>();
 
     private Session(String id, Path jsonl) {
         this.id = id;
@@ -121,6 +127,20 @@ public final class Session {
         return Collections.unmodifiableList(events);
     }
 
+    /**
+     * 订阅事件：append 成功后同步回调（M8 事件流的推送源，如 Web SSE）。
+     *
+     * <p>回调在写线程上执行——实现应快速返回，重活自行转线程。</p>
+     *
+     * @param listener 事件回调
+     * @return 注销器（幂等移除）
+     */
+    public Disposable addListener(Consumer<SessionEvent> listener) {
+        Objects.requireNonNull(listener, "listener");
+        listeners.add(listener);
+        return () -> listeners.remove(listener);
+    }
+
     /** 唯一写入原语：内存追加 + JSONL 同步追加落盘（崩溃最多丢正在写的一条）。 */
     public void append(SessionEvent event) {
         try {
@@ -136,6 +156,10 @@ public final class Session {
             events.add(event);
         } catch (IOException e) {
             throw new PluginException("会话事件落盘失败: " + event.type(), e);
+        }
+        // 落盘成功后才通知——监听器看到的事件必然已持久化
+        for (Consumer<SessionEvent> listener : listeners) {
+            listener.accept(event);
         }
     }
 

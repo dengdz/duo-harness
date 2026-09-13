@@ -29,6 +29,14 @@ final class PluginRegistry {
         instances.remove(instance);
     }
 
+    /** 全部已挂载插件的状态快照（挂载序；M8 状态面数据源）。 */
+    List<dev.duo.harness.core.api.PluginSnapshot> snapshots() {
+        return instances.stream()
+                .map(instance -> new dev.duo.harness.core.api.PluginSnapshot(
+                        instance.pluginName(), instance.state()))
+                .toList();
+    }
+
     /** 服务就绪：依赖该服务的实例复查（PENDING 者据此启动）。 */
     void onServiceAvailable(String name) {
         recheckDependentsOf(name);
