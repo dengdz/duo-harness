@@ -9,7 +9,7 @@ mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
 ```
 
-启动后观察两段输出：**插件状态表**（每个插件行 → ACTIVE）与 `Web 面已启动: http://127.0.0.1:18080`。浏览器打开它，三区界面就是你的 agent 门户。终端输入 `/exit` 退出。
+启动后控制台会打印 `Web 面已启动: http://127.0.0.1:18080` 与会话提示行。浏览器打开这个地址：右侧状态面的插件表就是逐行装配的实时核对（每个装配行 → ACTIVE），三区界面即你的 agent 门户。终端输入 `/exit` 退出。
 
 **你刚刚组装了什么**：这一条命令背后是 `duo-harness-example/src/main/resources/agent-demo.yml`——里面的每一行 `plugins:` 条目就是一个被挂载的能力。下一步打开它。
 
