@@ -36,6 +36,8 @@ public final class WebFace {
     private final Context ctx;
     private final ToolsService tools;
     private final List<Disposable> sseSubscriptions = new CopyOnWriteArrayList<>();
+    /** HITL Web answerer（工单 05）：待答请求经 SSE 推送，POST /api/answer 完成。 */
+    private final WebAnswerer webAnswerer;
     /** 可换会话（/new 等价）：换绑时 SSE 监听器随之迁移。 */
     private volatile Session session;
     /** 对话执行者（工单 04 装配；null = 对话面未就绪）。 */
@@ -43,11 +45,13 @@ public final class WebFace {
     /** 单飞标志：一次只跑一轮 send（CLI 单入口同约定）。 */
     private final java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-    private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session) {
+    private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
+                    WebAnswerer webAnswerer) {
         this.server = server;
         this.ctx = ctx;
         this.tools = tools;
         this.session = session;
+        this.webAnswerer = webAnswerer;
     }
 
     /**
@@ -56,13 +60,13 @@ public final class WebFace {
      * @throws IOException 端口绑定失败
      */
     public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
-                                ChatAgent agent) throws IOException {
+                                ChatAgent agent, WebAnswerer webAnswerer) throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        WebFace face = new WebFace(server, ctx, tools, session);
+        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer);
         face.bindSession(session);
         face.agent = agent;
         face.registerEndpoints();
@@ -112,13 +116,20 @@ public final class WebFace {
 
     /** SSE 帧推送：单个会话事件 → data 帧（断连由写异常路径处理）。 */
     private void pushEvent(SessionEvent event) {
+        boolean anyAlive = false;
         for (var out : sseOutputs.toArray(OutputStream[]::new)) {
             try {
                 writeSse(out, toJson(event));
+                anyAlive = true;
             } catch (IOException e) {
                 // 客户端断开：关闭连接，输出流由调用处清理
                 try { out.close(); } catch (IOException ignored) { }
+                sseOutputs.remove(out);
             }
+        }
+        // 全部 SSE 客户端断开（页面离开）→ 悬空交互立即 fail-closed（ADR-0008）
+        if (!anyAlive && sseOutputs.isEmpty() && webAnswerer != null) {
+            webAnswerer.failClosedAll();
         }
     }
     private final List<OutputStream> sseOutputs = new CopyOnWriteArrayList<>();
@@ -210,6 +221,33 @@ public final class WebFace {
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
         });
+        server.createContext("/api/answer", exchange -> {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            boolean completed;
+            try {
+                JsonNode node = JSON.readTree(body);
+                // 审批：{approved: true/false}；提问/计划：{values: ["..."]}；混合兼容
+                if (node.has("values") && node.get("values").isArray()) {
+                    List<String> values = new java.util.ArrayList<>();
+                    node.get("values").forEach(n -> values.add(n.asText()));
+                    completed = webAnswerer.complete(!values.isEmpty() && !"拒绝".equals(values.get(0)), values);
+                } else {
+                    boolean approved = node.path("approved").asBoolean(false);
+                    completed = webAnswerer.complete(approved, List.of());
+                }
+            } catch (Exception e) {
+                exchange.sendResponseHeaders(400, -1);
+                return;
+            }
+            byte[] resp = ("{\"completed\":" + completed + "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, resp.length);
+            try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
+        });
         server.createContext("/api/events", exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -224,6 +262,7 @@ public final class WebFace {
                 }
             } catch (IOException e) {
                 sseOutputs.remove(out);
+                webAnswerer.failClosedAll();
                 exchange.close();
             }
         });

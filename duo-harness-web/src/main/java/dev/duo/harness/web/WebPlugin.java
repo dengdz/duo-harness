@@ -13,6 +13,8 @@ import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.RetryingAdapter;
 import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
+import dev.duo.harness.tools.AnswersView;
+import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.ToolsService;
 
@@ -43,7 +45,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     @Override
     public Set<String> inject() {
-        return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME);
+        return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME, InteractionService.SERVICE_NAME);
     }
 
     @Override
@@ -57,6 +59,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ? config.get("port").asInt(DEFAULT_PORT) : DEFAULT_PORT;
         ToolsService tools = ctx.as(WebToolsView.class).tools();
         PromptRegistry prompts = ctx.as(WebPromptsView.class).prompts();
+        InteractionService answers = ctx.as(WebAnswersView.class).answers();
 
         // 对话执行者（M5 循环 + M6 prompt 注册表 + M8 重试；LLM 未配置 → 插件 FAILED 点名）
         LlmConfig llm = LlmConfig.load();
@@ -67,9 +70,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
             session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
         }
         ChatAgent agent = new ToolCallingAgent(adapter, tools, session, prompts);
+        // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
+        WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
+        answers.register(ctx, webAnswerer);
 
         try {
-            face = WebFace.start(port, ctx, tools, session, agent);
+            face = WebFace.start(port, ctx, tools, session, agent, webAnswerer);
         } catch (java.io.IOException e) {
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
         }
@@ -91,5 +97,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebPromptsView {
 
         PromptRegistry prompts();
+    }
+
+    /** 交互服务的视图接口（方法名即服务名 "answers"）。 */
+    interface WebAnswersView {
+
+        InteractionService answers();
     }
 }

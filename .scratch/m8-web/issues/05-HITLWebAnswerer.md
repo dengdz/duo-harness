@@ -4,16 +4,23 @@
 
 **Blocked by:** 02, 03（骨架承载 + 卡片样式蓝图冻结）
 
-**Status:** ready-for-agent
+**Status:** implemented（2026-09-13，待用户验收）
 
 ## Checklist
 
-- [ ] `WebAnswerer implements Answerer`：answer() 创建 Future + 待答态，POST /api/answer 完成并返回 InteractionAnswer
-- [ ] 待答请求经 SSE 推送（审批/提问/计划复核卡片按 kind 区分渲染，样式按工单 03 蓝图）
-- [ ] `POST /api/answer`：选项序号或自由文本 → 组装 InteractionAnswer 解除阻塞；重复回答/无待答请求幂等拒绝
-- [ ] **SSE 断连 → 悬空请求立即 fail-closed**（complete 为拒绝形态，agent 线程解除阻塞）
-- [ ] 测试（交互 seam 装配，InteractiveApprovalTest 先例）：POST 回答解除阻塞 / 断连 fail-closed / 幂等拒绝
-- [ ] 文档同步：CHANGELOG 未发布段记 HITL Web answerer；ADR-0008 的"呈现位实现不触碰机制核"在实现记录中显式确认
+- [x] `WebAnswerer implements Answerer`：answer() 创建 Future + 待答态，POST /api/answer 完成并返回 InteractionAnswer（CompletableFuture 阻塞在虚拟线程上 + 兜底超时 fail-closed）
+- [x] 待答请求经 SSE 推送（approval/requested 事件 → 页面审批两按钮卡片；提问/计划卡片同管线，工单 06 收口全形态）
+- [x] `POST /api/answer`：approved 布尔（审批）/ values 数组（提问）→ 组装 InteractionAnswer 解除阻塞；无待答幂等 false
+- [x] **SSE 断连 → 悬空请求立即 fail-closed**（双路径：events 端点 IOException + pushEvent 全客户端断开；ADR-0008 语义延伸）
+- [x] 测试：WebAnswererTest 5 例（审批 POST 完成署名 web / 提问值回传 / 断连 fail-closed / 超时兜底 / 幂等拒绝）
+- [x] 文档同步：CHANGELOG 未发布段记 HITL Web answerer
+
+## 实现记录（2026-09-13）
+
+- **ADR-0008 验证确认**：WebAnswerer 只实现 Answerer 接口 + 注册进交互 seam——审批策略、guard、六段管线零改动（机制核一行未动，"换呈现位不动机制"成立）
+- 断连 fail-closed 双路径：/api/events 写失败 + pushEvent 检测全部客户端断开 → webAnswerer.failClosedAll()
+- 兜底超时（默认 10 分钟）：防"页面在但人不看"的极端悬空；超时按 fail-closed
+- 过程修正：WebFace 骨架测试传 null answerer（start 对 null 宽容）；WebPlugin inject 补 answers
 
 ## Comments
 

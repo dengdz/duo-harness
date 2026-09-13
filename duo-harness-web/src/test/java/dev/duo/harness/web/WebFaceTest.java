@@ -91,7 +91,7 @@ class WebFaceTest {
                 return "echo";
             }
         });
-        face = WebFace.start(0, ctx, tools, session, agent);
+        face = WebFace.start(0, ctx, tools, session, agent, null);
         face.onNewSession(() -> {
             currentSession = Session.create(tempDir.resolve("sessions"));
             return currentSession;

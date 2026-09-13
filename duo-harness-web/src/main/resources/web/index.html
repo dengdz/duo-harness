@@ -161,7 +161,32 @@
       else if (event.type === 'assistant/chunk' || event.type === 'assistant/message') bubble(event.text);
       else if (event.type === 'tool/call' || event.type === 'tool/result') toolCard(event);
       else if (event.type === 'run/error') bubble('[错误] ' + event.text);
-      else if (event.type === 'approval/requested') bubble('[待审批] ' + (event.toolName || '') + '（Web 审批卡片在工单 05 接入）');
+      else if (event.type === 'approval/requested') {
+        // HITL 交互卡片（工单 05）：审批两按钮 → POST /api/answer
+        const card = document.createElement('div');
+        card.className = 'card interactive';
+        card.innerHTML = `<div class="question">[待审批] 工具 ${event.toolName || ''} 请求执行</div>` +
+          `<pre>${event.text || ''}</pre>` +
+          `<div class="choices"><button class="choice primary" data-approved="true">批准本次执行</button>` +
+          `<button class="choice" data-approved="false">拒绝</button></div>`;
+        messages.appendChild(card);
+        messages.scrollTop = messages.scrollHeight;
+        $$('#messages .interactive [data-approved]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            await fetch('/api/answer', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ approved: btn.dataset.approved === 'true' })
+            });
+            card.classList.remove('interactive');
+            const done = document.createElement('div');
+            done.style.cssText = 'font-size:12px;font-weight:600;color:' +
+              (btn.dataset.approved === 'true' ? 'var(--ok)' : 'var(--danger)');
+            done.textContent = btn.dataset.approved === 'true' ? '✓ 已批准' : '✗ 已拒绝';
+            card.appendChild(done);
+            $$('.choices', card).forEach(el => el.remove());
+          });
+        });
+      }
       refreshStatus();
     };
     refreshStatus();
