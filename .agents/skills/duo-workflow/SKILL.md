@@ -13,7 +13,7 @@ description: duo-harness 开发流程总规范——任何开发类请求的入�
 
 流程：设计访谈 → spec/ADR → 拆工单 → 逐单实现 → 审查 → 验收 → 版本合并。
 
-1. 设计访谈段**模型不可自动触发**，提示用户显式调用：`/grill-me`（要沉淀决策记录用 `/grill-with-docs`，产出 CONTEXT.md + docs/adr/）
+1. 设计访谈段**模型不可自动触发**，提示用户显式调用：`/grill-me`（要沉淀决策记录用 `/grill-with-docs`，产出 docs/05-参考/术语表.md + docs/adr/）
 2. 结论成型后提示：`/to-spec`（落 `.scratch/<feature>/spec.md`）→ `/to-tickets`（拆 `.scratch/<feature>/issues/NN-*.md` 工单）
 3. 执行段提示 `/implement`，一单一会话，会话间用 `/handoff` 交接；核心逻辑走 tdd 红绿循环（可自动触发）
 4. 审查：duo-code-review + code-review 双轴（Standards/Spec）+ ocr 行级意见

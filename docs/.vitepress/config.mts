@@ -50,6 +50,7 @@ export default defineConfig({
         items: [
           { text: '插件配置参考', link: '/05-参考/插件配置参考' },
           { text: '工具目录', link: '/05-参考/工具目录' },
+          { text: '术语表', link: '/05-参考/术语表' },
           { text: '会话事件类型表', link: '/05-参考/会话事件类型表' },
           { text: '已知限制', link: '/limitations' }
         ]
