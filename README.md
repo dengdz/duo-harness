@@ -1,6 +1,6 @@
 # duo-harness
 
-Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / LLM / 会话 / agent 循环）以插件形式组装。最新发布 0.2.0；main 分支已落地 M3-M5（LLM 适配、会话上下文、agent 工具循环），随下一版本发布。
+Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / LLM / 会话 / 技能 / 计划模式 / 人机协同）以插件形式组装。最新发布 0.2.0；main 分支已落地 M3-M7（LLM 适配、会话上下文、工具循环、HITL、技能与计划模式），随下一版本发布。
 
 ## 一条命令看它做什么
 
@@ -19,7 +19,7 @@ mvn -pl duo-harness-example -am package exec:java
 | `duo-harness-mcp` | MCP 接入：官方 Java SDK 连接 stdio 服务器，断连重连，远端工具自动同步进工具域 |
 | `duo-harness-llm` | LLM 适配：provider 中立流式调用契约 + OpenAI 兼容适配器（`~/.duo/config.yml` 配置） |
 | `duo-harness-session` | 会话域：事件溯源（append 单写 + JSONL 落盘）与多轮上下文投影 |
-| `duo-harness-agent` | agent 循环：LLM + 会话 + 工具编排（Function Calling 闭环，迭代上限防失控） |
+| `duo-harness-agent` | agent 编排：工具循环（Function Calling 闭环）、prompt 注册表、技能系统、计划模式、AGENTS.md 注入 |
 | `duo-harness-example` | 示例插件集与演示入口（DemoMain / ChatRepl / AgentRepl） |
 
 ## 文档
