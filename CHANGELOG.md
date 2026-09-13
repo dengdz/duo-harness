@@ -22,6 +22,7 @@
 - AgentRepl 升级为 HITL 演示（M6 工单 05）：写操作终端 y/n 逐次审批（console answerer + 审计桥，决定落会话）、模型 ask_user 提问（选项序号/自由文本）、`/new` 开新话题；`llm.retry` 段可配重试参数；prompt 注册表演示片段
 - 会话 `tool/call` 事件持久化思考内容（reasoning 字段，可选向后兼容）：思考模型长工具链的历史请求天然完整（provider 要求回传），跨进程恢复可回放思考过程（M6 验收缺陷根治，BUG-20260913-03）
 - Web 双面地基 API（M8 工单 01）：core `Context.snapshots()` 只读插件状态快照（M8 状态面数据源）+ session `Session.addListener` 事件订阅（M8 事件流推送源，注销器摘除）——纯新增向后兼容
+- Web 双面骨架（M8 工单 02，新模块 `duo-harness-web`）：`WebPlugin`（Boot yml 一行，只绑 127.0.0.1，默认 8080）+ 静态单页（对话/状态双区，亮色 DSH 风格）+ `/api/status` 状态 JSON + `/api/events` SSE 会话事件流（存量回放 + 实时推送，虚拟线程执行器）
 - 技能系统（M7 工单 01，agent 域 "skills" 服务）：SKILL.md 目录包与单文件 `<name>.md` 双形态，四根发现（`.duo/skills` → `.agents/skills` → `~/.duo/skills` → `~/.agents/skills`，同名高优先根胜），启动加载、清单片段进 prompt 注册表；`skill` 工具供模型按名加载指令全文（走六段管线）；yml 禁用配置
 - prompt 注册表插件化（M7 工单 01）：`PromptPlugin` 发布 "prompts" 服务（config.systemPrompt 为最前用户指令片段）——技能清单、AGENTS.md 等装配级片段的注册点
 - AGENTS.md 注入（M7 工单 02，agent 域）：`AgentsMdPlugin` 加载 `~/.duo/AGENTS.md`（用户全局）+ 项目根 AGENTS.md（.git 定根），64KB 预算超限截断，注册为 agents-md 片段进 prompt 注册表——项目约定对运行时 agent 自动可见

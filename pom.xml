@@ -18,6 +18,7 @@
     <module>duo-harness-llm</module>
     <module>duo-harness-session</module>
     <module>duo-harness-agent</module>
+    <module>duo-harness-web</module>
     <module>duo-harness-example</module>
   </modules>
 
