@@ -4,17 +4,23 @@
 
 **Blocked by:** None (依赖 M6 已收官的交互 seam 与 prompt 注册表)
 
-**Status:** ready-for-agent
+**Status:** implemented（2026-09-13，待用户验收）
 
 ## Checklist
 
-- [ ] `plan/mode` 会话事件类型（text = entered/exited）+ 从事件流恢复计划状态（最后一次事件决定）
-- [ ] `/plan [任务]` / `/plan off` REPL 命令（写事件 + 呈现状态叙述）
-- [ ] 计划指导片段：激活时挂 prompt 注册表（"先探索再设计、不做修改性操作、完成后调用 exit_plan_mode"），退出即摘除
-- [ ] `exit_plan_mode` ToolDefinition：参数 `plan` 必校验；经交互 seam 发起计划复核（选项固定"批准，开始执行" / "继续计划，我要给反馈"）；批准写 exited 事件、打回结果携带反馈；fail-closed 三态全覆盖
-- [ ] 测试（会话往返 seam）：plan/mode 事件落盘 + 续接恢复
-- [ ] 测试（交互 seam 装配，InteractiveApprovalTest 先例）：批准 / 打回（反馈进结果）/ fail-closed
-- [ ] 文档同步：CHANGELOG 未发布段记 plan-mode；词汇表新增"计划模式 / exit_plan_mode"词条
+- [x] `plan/mode` 会话事件类型（text = entered/exited）+ 从事件流恢复计划状态（最后一次事件决定）——PlanMode.isActive + AgentRepl 启动恢复
+- [x] `/plan [任务]` / `/plan off` REPL 命令（写事件 + 呈现状态叙述）
+- [x] 计划指导片段：激活时挂 prompt 注册表，退出即摘除（装配态 PlanHolder：active + guidance 注销器）
+- [x] `exit_plan_mode` ToolDefinition：参数 `plan` 必校验；经交互 seam 计划复核（批准精确匹配"批准，开始执行" / 自由文本即打回反馈）；fail-closed 保持计划模式（对齐 DSH）
+- [x] 测试（会话往返 seam）：ExitPlanModeToolTest 3 例含事件断言（批准写 exited / 打回不写 / fail-closed 不写）
+- [x] 测试（交互 seam 装配）：批准（回调触发）/ 打回（反馈进结果）/ fail-closed 三态
+- [x] 文档同步：CHANGELOG 未发布段记 plan-mode；词汇表词条随 M7 收口统一落 CONTEXT.md
+
+## 实现记录（2026-09-13）
+
+- 契约：PlanMode（事件常量 + GUIDANCE 指导文本 + isActive 事件流推导）+ ExitPlanModeTool（answers + Supplier<Session>（/new 换会话后事件仍落新会话）+ approvedCallback（装配侧摘指导片段，Disposable.dispose 的受检异常在装配 lambda 内转换））
+- 打回形态：自由文本反馈进工具结果（正常形态非错误）；fail-closed 保持计划模式（对齐 DSH：无评审通道不退模式，模型可继续完善或用户 /plan off）
+- /plan 携带任务：进入计划模式后任务按普通输入推进（指导片段已激活，模型自然先计划）
 
 ## Comments
 

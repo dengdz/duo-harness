@@ -4,10 +4,12 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.PlanMode;
 import dev.duo.harness.agent.PromptFragment;
 import dev.duo.harness.agent.Skill;
 import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.RetryingAdapter;
@@ -100,10 +102,27 @@ public final class AgentReplMain {
         PromptRegistry prompts = root.as(AgentPromptsView.class).prompts();
         prompts.register(root, new PromptFragment("demo:platform", "执行文件操作前先确认目标路径。"));
 
+        PlanHolder plan = new PlanHolder();
+        plan.active = PlanMode.isActive(session);
+        if (plan.active) {
+            plan.guidance = prompts.register(root, new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
+            out.println("（续接会话：当前处于计划模式，/plan off 可退出）");
+        }
         LlmAdapterHolder llm = new LlmAdapterHolder(new RetryingAdapter(new OpenAiCompatAdapter(config),
                 config.retryMaxAttempts(), config.retryInitialBackoffMs()));
         SessionHolder sessionHolder = new SessionHolder(session);
         ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
+        tools.register(root, new dev.duo.harness.agent.ExitPlanModeTool(answers, sessionHolder::current, () -> {
+            plan.active = false;
+            if (plan.guidance != null) {
+                try {
+                    plan.guidance.dispose();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+                plan.guidance = null;
+            }
+        }));
 
         while (true) {
             out.print("你> ");
@@ -118,17 +137,58 @@ public final class AgentReplMain {
             if (line.strip().equals("/new")) {
                 sessionHolder.session = Session.create(sessionsDir);
                 agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
+                plan.active = false;
+                if (plan.guidance != null) {
+                    plan.guidance.dispose();
+                    plan.guidance = null;
+                }
                 out.println("新会话 " + sessionHolder.session.id() + "。");
                 out.flush();
                 continue;
             }
-            String userText = resolveSkillInvocation(line.strip(), skills);
-            if (userText == null) {
-                List<String> available = skills.all().stream().map(Skill::name).toList();
-                out.println("未知命令: " + line.strip().split("\\s+", 2)[0]
-                        + (available.isEmpty() ? "" : "（可用技能: " + String.join(", ", available) + "）"));
-                out.flush();
-                continue;
+            String userText;
+            if (line.strip().equals("/plan") || line.strip().startsWith("/plan ")) {
+                String rest = line.strip().length() > 5 ? line.strip().substring(5).strip() : "";
+                if (rest.equals("off")) {
+                    if (plan.active) {
+                        sessionHolder.current().append(PlanMode.exitedEvent());
+                        if (plan.guidance != null) {
+                            plan.guidance.dispose();
+                            plan.guidance = null;
+                        }
+                        plan.active = false;
+                        out.println("已退出计划模式。");
+                    } else {
+                        out.println("当前不在计划模式。");
+                    }
+                    out.flush();
+                    continue;
+                }
+                if (plan.active) {
+                    out.println("已在计划模式中。");
+                    out.flush();
+                } else {
+                    sessionHolder.current().append(PlanMode.enteredEvent());
+                    plan.active = true;
+                    plan.guidance = prompts.register(root,
+                            new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
+                    out.println("已进入计划模式（先探索与设计，完成后调 exit_plan_mode 呈交计划；/plan off 退出）。");
+                    out.flush();
+                }
+                if (rest.isEmpty()) {
+                    continue;
+                }
+                // /plan 携带任务描述：已进入计划模式，按普通输入推进
+                userText = rest;
+            } else {
+                userText = resolveSkillInvocation(line.strip(), skills);
+                if (userText == null) {
+                    List<String> available = skills.all().stream().map(Skill::name).toList();
+                    out.println("未知命令: " + line.strip().split("\\s+", 2)[0]
+                            + (available.isEmpty() ? "" : "（可用技能: " + String.join(", ", available) + "）"));
+                    out.flush();
+                    continue;
+                }
             }
             try {
                 var reply = agent.send(userText, new AgentListener() {
@@ -177,6 +237,16 @@ public final class AgentReplMain {
         SessionHolder(Session session) {
             this.session = session;
         }
+
+        Session current() {
+            return session;
+        }
+    }
+
+    /** 计划模式装配态：激活标志 + 指导片段的注销器（批准/退出时摘除）。 */
+    private static final class PlanHolder {
+        boolean active;
+        Disposable guidance;
     }
 
     /** 可变引用：适配器仅构建一次，/new 重建 agent 时复用。 */
