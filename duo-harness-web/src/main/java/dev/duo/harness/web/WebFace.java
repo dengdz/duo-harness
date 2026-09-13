@@ -15,35 +15,55 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.Objects;
-import java.util.concurrent.Executors;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * Web 双面呈现位（M8）：JDK 内置 HttpServer 承载的本地服务——静态单页（双区布局）、
- * `/api/status`（插件快照 + 工具清单 JSON）、`/api/events`（SSE 会话事件流）。
+ * `/api/status`（插件快照 + 工具清单 JSON）、`/api/events`（SSE 会话事件流）、
+ * `/api/message`（对话入口，虚拟线程异步执行 agent.send）、`/api/session/new`（开新会话）、
+ * `/api/answer`（HITL 回答完成，接 M6 交互 seam 的 Web answerer）。
  *
  * <p>只绑定 127.0.0.1（ADR-0007 v3 安全基线，鉴权 M9+）；执行器用虚拟线程
- * （每任务一线程，SSE 长连接不占平台线程，ADR-0002 同源）。会话事件经
- * {@link Session#addListener} 订阅，每个 SSE 连接独立订阅、断开即注销。</p>
+ * （每任务一线程，SSE 长连接不占平台线程，ADR-0002 同源）。SSE 连接带 15s
+ * 心跳帧保活（写失败即摘除死连接，兼防代理静默断连）；事件经会话监听器广播；
+ * 全部客户端断开时悬空交互 fail-closed（经 {@link WebAnswerer}，ADR-0008 延伸）。</p>
  */
 public final class WebFace {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final long HEARTBEAT_INTERVAL_MS = 15_000;
 
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
-    private final List<Disposable> sseSubscriptions = new CopyOnWriteArrayList<>();
-    /** HITL Web answerer（工单 05）：待答请求经 SSE 推送，POST /api/answer 完成。 */
+    /** SSE 客户端输出流（多客户端广播，心跳写失败即摘除）。 */
+    private final CopyOnWriteArrayList<OutputStream> sseOutputs = new CopyOnWriteArrayList<>();
+    /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
     private final WebAnswerer webAnswerer;
     /** 可换会话（/new 等价）：换绑时 SSE 监听器随之迁移。 */
     private volatile Session session;
-    /** 对话执行者（工单 04 装配；null = 对话面未就绪）。 */
+    /** 对话执行者（/new 重建；volatile 保证跨线程可见）。 */
     private volatile ChatAgent agent;
     /** 单飞标志：一次只跑一轮 send（CLI 单入口同约定）。 */
-    private final java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final AtomicBoolean busy = new AtomicBoolean(false);
+    /** 心跳调度器（保活 + 死连接摘除）。 */
+    private final java.util.concurrent.ScheduledExecutorService heartbeat =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "web-sse-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
+    /** 新会话供给者（/new 每次给全新会话）。 */
+    private volatile java.util.function.Supplier<Session> newSessionSupplier =
+            () -> { throw new IllegalStateException("新会话供给者未装配"); };
+    /** 新会话回调（装配层重建 agent）。 */
+    private volatile Runnable newSessionCallback;
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
                     WebAnswerer webAnswerer) {
@@ -64,12 +84,15 @@ public final class WebFace {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
+        Objects.requireNonNull(agent, "agent");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         WebFace face = new WebFace(server, ctx, tools, session, webAnswerer);
         face.bindSession(session);
         face.agent = agent;
         face.registerEndpoints();
+        face.heartbeat.scheduleAtFixedRate(face::pingAll,
+                HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
         server.start();
         return face;
     }
@@ -81,27 +104,27 @@ public final class WebFace {
             try {
                 sseSubscription.dispose();
             } catch (Exception e) {
-                // 旧会话监听器注销失败无碍：新订阅已就位
+                // 旧监听器注销失败无碍：新订阅已就位
             }
         }
         sseSubscription = session.addListener(this::pushEvent);
     }
+
     private Disposable sseSubscription;
-    /** 新会话供给者（装配层提供——/new 每次给全新会话，agent 随之重建）。 */
-    private volatile java.util.function.Supplier<Session> newSessionSupplier =
-            () -> { throw new IllegalStateException("新会话供给者未装配"); };
-    /** 新会话回调（装配层重建 agent 并换绑会话）。 */
-    private volatile Runnable newSessionCallback;
-    void onNewSession(java.util.function.Supplier<Session> supplier, java.util.function.Consumer<Session> onCreated) {
-        this.newSessionSupplier = java.util.Objects.requireNonNull(supplier, "supplier");
-        this.newSessionCallback = () -> onCreated.accept(newSessionSupplier.get());
-    }
-    /** 装配层触发：开新会话（换绑事件流 + 回调重建 agent）。 */
+
+    /** 换绑会话并通知装配层重建 agent（/new 语义）。 */
     private void newSession() {
         bindSession(newSessionSupplier.get());
         if (newSessionCallback != null) {
             newSessionCallback.run();
         }
+    }
+
+    /** 注册 /new 的供给者与回调（装配层接线；供 WebPlugin 调用，包级可见）。 */
+    void onNewSession(java.util.function.Supplier<Session> supplier,
+                      java.util.function.Consumer<Session> onCreated) {
+        this.newSessionSupplier = java.util.Objects.requireNonNull(supplier, "supplier");
+        this.newSessionCallback = () -> onCreated.accept(newSessionSupplier.get());
     }
 
     /** 测试与装配层用：替换对话执行者（/new 重建后调用）。 */
@@ -114,27 +137,32 @@ public final class WebFace {
         return session;
     }
 
-    /** SSE 帧推送：单个会话事件 → data 帧（断连由写异常路径处理）。 */
+    /** SSE 帧推送：单个会话事件广播到全部客户端（写失败的连接摘除）。 */
     private void pushEvent(SessionEvent event) {
-        boolean anyAlive = false;
-        for (var out : sseOutputs.toArray(OutputStream[]::new)) {
+        String frame = toJson(event);
+        for (OutputStream out : sseOutputs.toArray(OutputStream[]::new)) {
             try {
-                writeSse(out, toJson(event));
-                anyAlive = true;
+                writeSse(out, frame);
             } catch (IOException e) {
-                // 客户端断开：关闭连接，输出流由调用处清理
-                try { out.close(); } catch (IOException ignored) { }
                 sseOutputs.remove(out);
             }
         }
-        // 全部 SSE 客户端断开（页面离开）→ 悬空交互立即 fail-closed（ADR-0008）
-        if (!anyAlive && sseOutputs.isEmpty() && webAnswerer != null) {
-            webAnswerer.failClosedAll();
+    }
+
+    /** 心跳：向全部 SSE 客户端写注释帧，写失败即摘除死连接。 */
+    private void pingAll() {
+        for (OutputStream out : sseOutputs.toArray(OutputStream[]::new)) {
+            try {
+                out.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            } catch (IOException e) {
+                sseOutputs.remove(out);
+            }
         }
     }
-    private final List<OutputStream> sseOutputs = new CopyOnWriteArrayList<>();
 
     private void registerEndpoints() {
+        // 静态单页
         server.createContext("/", exchange -> {
             byte[] page = readClasspage();
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
@@ -143,6 +171,7 @@ public final class WebFace {
                 out.write(page);
             }
         });
+        // 状态面 JSON
         server.createContext("/api/status", exchange -> {
             byte[] body = statusJson().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
@@ -151,6 +180,9 @@ public final class WebFace {
                 out.write(body);
             }
         });
+        // 对话入口：立即 202，虚拟线程异步执行 agent.send；
+        // user/message、tool/call、tool/result、assistant/message 由 agent 侧追加（经会话监听器广播），
+        // assistant/chunk 由本端 AgentListener 追加（Web 面只补这一种会话事件）。
         server.createContext("/api/message", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
@@ -169,7 +201,8 @@ public final class WebFace {
                 exchange.sendResponseHeaders(400, -1);
                 return;
             }
-            if (agent == null) {
+            ChatAgent current = agent;
+            if (current == null) {
                 byte[] msg = "对话面未就绪（agent 未装配）".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
                 exchange.sendResponseHeaders(503, msg.length);
@@ -186,41 +219,33 @@ public final class WebFace {
             exchange.sendResponseHeaders(202, -1);
             Thread.ofVirtual().start(() -> {
                 try {
-                    // Web 面只补 assistant/chunk 的会话事件（tool/call、tool/result、assistant/message 由 agent 自身追加）
-                    agent.send(text, new dev.duo.harness.agent.AgentListener() {
+                    current.send(text, new dev.duo.harness.agent.AgentListener() {
                         @Override
                         public void onChunk(String chunk) {
                             session.append(SessionEvent.assistantChunk(chunk));
                         }
                     });
                 } catch (Exception e) {
-                    // 错误呈现：非会话事件的直推帧（页面渲染 [错误] 卡），不污染会话历史
+                    // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史
                     pushEvent(SessionEvent.errorEvent(String.valueOf(e.getMessage())));
                 } finally {
                     busy.set(false);
                 }
             });
         });
+        // 开新会话：换绑事件流 + 通知装配层重建 agent
         server.createContext("/api/session/new", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
-            // 新会话：换绑事件流 + 通知装配层重建 agent（sessionSupplier 回调）
-            try {
-                newSession();
-            } catch (Exception e) {
-                byte[] msg = ("新会话创建失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-                exchange.sendResponseHeaders(500, msg.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
-                return;
-            }
+            newSession();
             byte[] body = ("{\"id\":\"" + session.id() + "\"}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
         });
+        // HITL 回答端点：{approved: bool} 或 {values: ["..."]} → 完成 WebAnswerer 悬空请求
         server.createContext("/api/answer", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
@@ -248,6 +273,7 @@ public final class WebFace {
             exchange.sendResponseHeaders(200, resp.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
         });
+        // SSE 会话事件流：连接帧 + 存量回放 + 增量广播（断开摘除输出流）
         server.createContext("/api/events", exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -256,27 +282,19 @@ public final class WebFace {
             sseOutputs.add(out);
             try {
                 writeSse(out, ": connected");
-                // 先补发存量事件（页面刷新后回放当前会话），增量由 pushEvent 广播；
-                // 回放完成发边界帧——客户端据此区分"历史 chunk（跳过渲染）"与"实时 chunk（聚合渲染）"
+                // 存量回放（页面刷新后重放当前会话），增量由 pushEvent 广播
                 for (SessionEvent event : session.events()) {
                     writeSse(out, toJson(event));
                 }
-                writeSse(out, "{\"type\":\"replay/done\"}");
             } catch (IOException e) {
                 sseOutputs.remove(out);
-                webAnswerer.failClosedAll();
                 exchange.close();
             }
         });
     }
 
-    private void removeSubscription(Disposable subscription) {
-        sseSubscriptions.remove(subscription);
-        try {
-            subscription.dispose();
-        } catch (Exception ignored) {
-            // 注销失败无碍：连接已死
-        }
+    private void removeSseOutput(OutputStream out) {
+        sseOutputs.remove(out);
     }
 
     private void writeSse(OutputStream out, String payload) throws IOException {
@@ -321,21 +339,27 @@ public final class WebFace {
         }
     }
 
-    /** 实际绑定端口（构造传 0 时为系统分配值；SSE 推送 JSON 序列化需要）。 */
+    /** 实际绑定端口（构造传 0 时为系统分配值）。 */
     public int port() {
         return server.getAddress().getPort();
     }
 
     /** 当前活跃的 SSE 连接数（观测用）。 */
     public int sseConnections() {
-        return sseSubscriptions.size();
+        return sseOutputs.size();
     }
 
-    /** 停止服务（插件 dispose 调用）。 */
+    /** 停止服务与心跳（插件 dispose 调用）。 */
     public void stop() {
-        for (Disposable subscription : List.copyOf(sseSubscriptions)) {
-            removeSubscription(subscription);
+        heartbeat.shutdownNow();
+        for (OutputStream out : List.copyOf(sseOutputs)) {
+            try {
+                out.close();
+            } catch (IOException ignored) {
+                // 连接已死
+            }
         }
+        sseOutputs.clear();
         server.stop(0);
     }
 }

@@ -21,6 +21,7 @@
 - 断连 fail-closed 双路径：/api/events 写失败 + pushEvent 检测全部客户端断开 → webAnswerer.failClosedAll()
 - 兜底超时（默认 10 分钟）：防"页面在但人不看"的极端悬空；超时按 fail-closed
 - 过程修正：WebFace 骨架测试传 null answerer（start 对 null 宽容）；WebPlugin inject 补 answers
+- 工单 05 完成后的装配语义增补（工单 06 前）：WebFace 新增 15s 心跳帧（SSE 保活 + 死连接摘除）、run/error 直推事件类型、/api/session/new 异常防护（500 点名）；静态页 SSE 渲染补 approval/requested 审批卡片与 chunk 聚合逻辑（BUG-20260913-04 修复随工单 06 提交）
 
 ## Comments
 

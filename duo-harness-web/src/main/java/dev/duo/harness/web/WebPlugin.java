@@ -1,9 +1,7 @@
 package dev.duo.harness.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.PromptRegistry;
-import dev.duo.harness.agent.PromptsView;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
@@ -12,13 +10,12 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.RetryingAdapter;
-import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
-import dev.duo.harness.tools.AnswersView;
-import dev.duo.harness.tools.InteractionService;
+import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.session.Session;
+import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
+import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
 
-import java.nio.file.Path;
 import java.util.Set;
 
 /**
@@ -27,10 +24,10 @@ import java.util.Set;
  * （装配自己的对话执行者，全套 M5-M7 装配：重试适配器 + prompt 注册表 + 会话）。
  * 只绑 127.0.0.1，无鉴权（本地个人工具场景，鉴权 M9+）。
  *
- * <p>inject tools + prompts：状态面与对话面的两个数据源（标准服务注入模式）。
- * 技能清单 / AGENTS.md 片段由对应插件（SkillsPlugin / AgentsMdPlugin）注册进
- * prompts 服务——本插件只做对话执行者装配，不重复注册。LLM 未配置时插件
- * FAILED 点名（对话面不可用，状态面仍可看）。</p>
+ * <p>inject tools + prompts + answers：状态面与对话面的三个数据源（标准服务注入
+ * 模式）。技能清单 / AGENTS.md 片段由对应插件（SkillsPlugin / AgentsMdPlugin）
+ * 注册进 prompts 服务——本插件只做对话执行者装配，不重复注册。LLM 未配置时
+ * 插件 FAILED 点名（对话面不可用，状态面仍可看）。</p>
  *
  * <p>配置（块内字段可省）：</p>
  * <pre>{@code config:
@@ -45,7 +42,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     @Override
     public Set<String> inject() {
-        return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME, InteractionService.SERVICE_NAME);
+        return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
+                InteractionService.SERVICE_NAME);
     }
 
     @Override
