@@ -49,7 +49,8 @@ export default defineConfig({
           { text: '0007 里程碑重排agent循环提前', link: '/adr/0007-里程碑重排agent循环提前' },
           { text: '0008 交互机制与呈现分离', link: '/adr/0008-交互机制与呈现分离seam与answerer' },
           { text: '0009 治理计量切provider真实usage', link: '/adr/0009-治理计量切provider真实usage' },
-          { text: '0010 SSE快照加游标增量回放', link: '/adr/0010-SSE快照加游标增量回放' }
+          { text: '0010 SSE快照加游标增量回放', link: '/adr/0010-SSE快照加游标增量回放' },
+          { text: '0011 CLI插件化呈现位对称与通用启动器', link: '/adr/0011-CLI插件化呈现位对称与通用启动器' }
         ]
       },
       {
