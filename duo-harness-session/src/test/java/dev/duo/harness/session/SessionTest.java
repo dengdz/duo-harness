@@ -187,11 +187,16 @@ class SessionTest {
     }
 
     @Test
-    void listenerReceivesAppendsAndRemovableStopsDelivery() throws Exception {
-        // M8 事件流推送源：append 成功后监听器同步收到事件；注销器生效
+    void listenerReceivesAppendsWithLogIndexAndRemovableStopsDelivery() throws Exception {
+        // M8 事件流推送源 + M10 游标锚点：append 成功后监听器同步收到（序号, 事件）；
+        // 序号是重连游标（SSE Last-Event-ID）的锚点，注销器生效
         Session session = Session.create(sessionsDir());
-        List<SessionEvent> received = new java.util.ArrayList<>();
-        dev.duo.harness.core.api.Disposable removal = session.addListener(received::add);
+        List<String> received = new java.util.ArrayList<>();
+        List<Integer> indexes = new java.util.ArrayList<>();
+        dev.duo.harness.core.api.Disposable removal = session.addListener((index, event) -> {
+            indexes.add(index);
+            received.add(event.text());
+        });
 
         session.append(SessionEvent.userMessage("第一条"));
         session.append(SessionEvent.userMessage("第二条"));
@@ -199,8 +204,9 @@ class SessionTest {
         session.append(SessionEvent.userMessage("注销后"));
 
         assertEquals(2, received.size(), "注销前两条均送达");
-        assertEquals("第一条", received.get(0).text());
-        assertEquals("第二条", received.get(1).text());
+        assertEquals("第一条", received.get(0));
+        assertEquals("第二条", received.get(1));
+        assertEquals(List.of(0, 1), indexes, "回调携带日志序号（append-only 列表下标）");
         assertEquals(3, session.events().size(), "注销不影响事件落盘");
         assertEquals("注销后", session.events().get(2).text());
     }

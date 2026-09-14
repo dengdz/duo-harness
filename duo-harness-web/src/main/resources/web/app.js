@@ -358,6 +358,13 @@ const sse = (() => {
   let replayed = true; // 边界帧前为回放：历史 chunk 不渲染（以 assistant/message 为准）
 
   function handle(event) {
+    if (event.type === 'replay/start') {
+      // 快照（首连 / 游标越界兜底）→ 清空重建；增量（断线补齐）→ 保留页面已有内容（ADR-0010）
+      if (event.mode === 'snapshot') render.resetForReplay();
+      replayed = true;
+      app.clearSendBusy();
+      return;
+    }
     if (event.type === 'replay/done') { replayed = false; app.clearSendBusy(); app.afterReplay(); return; }
     if (event.type === 'assistant/chunk' && replayed) return; // 历史碎片不回放
     if (event.type === 'user/message') render.user(event.text);
@@ -376,11 +383,10 @@ const sse = (() => {
 
   function connect() {
     const source = new EventSource('/api/events');
-    // 连接/重连服务端都全量回放：复位回放门并清空渲染区，按回放语义重建（幂等）
+    // 回放门由 replay/start 帧驱动（快照/增量分路）；连接建立到该帧之间按回放语义处理
     source.onopen = () => {
       replayed = true;
-      render.resetForReplay();
-      app.clearSendBusy(); // 重连期间可能错过了 user/message 解除帧——回放复位兜底
+      app.clearSendBusy(); // 断线期间可能错过解除帧——连接建立即复位
     };
     source.onmessage = (e) => {
       try {
@@ -391,7 +397,7 @@ const sse = (() => {
       }
     };
     source.onerror = () => {
-      // 断连由浏览器自动重连；重连后服务端会重放当前会话
+      // 断连由浏览器自动重连（EventSource 自动携带 Last-Event-ID 游标，服务端只补缺失段）
     };
   }
 

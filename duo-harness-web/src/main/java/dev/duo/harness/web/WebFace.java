@@ -51,11 +51,13 @@ public final class WebFace {
      * "断旧立新"窗口里新连接可能尚未入列，立即拒会误杀仍有人能答的审批。
      */
     static final long FAIL_CLOSED_GRACE_MS = 2_000;
+    /** SSE 游标请求头（浏览器重连自动携带，值为最后收到的 id）。 */
+    private static final String LAST_EVENT_ID_HEADER = "Last-Event-ID";
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
-    /** SSE 客户端输出流（多客户端广播，心跳写失败即摘除）。 */
-    private final CopyOnWriteArrayList<OutputStream> sseOutputs = new CopyOnWriteArrayList<>();
+    /** SSE 客户端连接（多客户端广播，心跳写失败即摘除）。 */
+    private final CopyOnWriteArrayList<SseClient> sseOutputs = new CopyOnWriteArrayList<>();
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
     private final WebAnswerer webAnswerer;
     /** 上下文治理（状态面占用查询的同源数据源；null = 无治理装配，状态面省略占用）。 */
@@ -140,7 +142,7 @@ public final class WebFace {
                 // 旧监听器注销失败无碍：新订阅已就位
             }
         }
-        sseSubscription = session.addListener(this::pushEvent);
+        sseSubscription = target.addListener(this::pushSessionEvent);
     }
 
     private Disposable sseSubscription;
@@ -172,26 +174,62 @@ public final class WebFace {
         return session;
     }
 
-    /** SSE 帧推送：单个会话事件广播到全部客户端（写失败的连接摘除）。 */
-    private void pushEvent(SessionEvent event) {
+    /** 会话事件广播：帧带日志序号 id——浏览器以最后收到的 id 作重连游标（ADR-0010）。 */
+    private void pushSessionEvent(int index, SessionEvent event) {
+        // 序号由会话在写入处随回调给出（不从日志末尾反推——并发追加下反推会错位）
         String frame = toJson(event);
-        for (OutputStream out : sseOutputs.toArray(OutputStream[]::new)) {
+        broadcast(client -> client.send(dataFrameWithId(index, frame)));
+    }
+
+    /** 非会话帧广播（run/error 等直推帧）：帧不带序号，契约见 {@link #dataFrame}。 */
+    private void pushTransientFrame(String payload) {
+        broadcast(client -> client.send(dataFrame(payload)));
+    }
+
+    /** 帧写动作（写失败 IOException 即摘除该连接）。 */
+    @FunctionalInterface
+    private interface FrameSink {
+
+        void write(SseClient client) throws IOException;
+    }
+
+    /** 广播到全部连接：逐连接执行帧写，写失败即摘除死连接。 */
+    private void broadcast(FrameSink sink) {
+        for (SseClient client : sseOutputs.toArray(SseClient[]::new)) {
             try {
-                writeSse(out, frame);
+                sink.write(client);
             } catch (IOException e) {
-                removeClient(out);
+                removeClient(client);
             }
         }
     }
 
     /** 心跳：向全部 SSE 客户端写注释帧，写失败即摘除死连接。 */
     private void pingAll() {
-        for (OutputStream out : sseOutputs.toArray(OutputStream[]::new)) {
+        broadcast(client -> client.send(": ping\n\n"));
+    }
+
+    /** SSE 客户端连接：输出流 + 帧写串行化。回放（连接线程）与实时广播（写线程）
+     *  会并发写同一连接，不加锁则帧字节交错、前端解析失败。 */
+    static final class SseClient {
+
+        private final OutputStream out;
+
+        SseClient(OutputStream out) {
+            this.out = out;
+        }
+
+        /** 单帧原子写（含 flush）。 */
+        synchronized void send(String frame) throws IOException {
+            out.write(frame.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+
+        synchronized void close() {
             try {
-                out.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
-                out.flush();
-            } catch (IOException e) {
-                removeClient(out);
+                out.close();
+            } catch (IOException ignored) {
+                // 连接已死
             }
         }
     }
@@ -200,10 +238,10 @@ public final class WebFace {
      * 摘除死连接；全部客户端离场时悬空交互按"无人能答"拒绝（ADR-0008 语义延伸）。
      * 拒绝经 {@link #scheduleFailClosedCheck()} 去抖：立即判空会误杀刷新场景
      * （断旧立新窗口里新连接尚未入列）。包级可见供测试确定性驱动摘除时点——
-     * 传入的流即使不在连接列表中也生效：判定只看"摘除后列表是否为空"。
+     * 传入的连接即使不在列表中也生效：判定只看"摘除后列表是否为空"。
      */
-    void removeClient(OutputStream out) {
-        sseOutputs.remove(out);
+    void removeClient(SseClient client) {
+        sseOutputs.remove(client);
         if (webAnswerer != null && sseOutputs.isEmpty()) {
             scheduleFailClosedCheck();
         }
@@ -315,7 +353,7 @@ public final class WebFace {
                     // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
                     // 帧内只给通用文案——异常细节服务端控制台留痕，不外推（M10-02 脱敏口径）
                     System.out.println("[web] 消息处理失败: " + e);
-                    pushEvent(SessionEvent.errorEvent("消息处理失败，详情见服务端日志"));
+                    pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
                 } finally {
                     busy.set(false);
                 }
@@ -428,34 +466,73 @@ public final class WebFace {
             exchange.sendResponseHeaders(200, resp.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
         });
-        // SSE 会话事件流：连接帧 + 存量回放 + 增量广播（断开摘除输出流）
+        // SSE 会话事件流：连接帧 + 快照/增量回放 + 实时广播（断开摘除输出流）。
+        // 首连（无 Last-Event-ID）全量快照；断线重连带游标只补其后事件（ADR-0010）
         server.createContext("/api/events", exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
             exchange.sendResponseHeaders(200, 0);
-            OutputStream out = exchange.getResponseBody();
-            sseOutputs.add(out);
+            SseClient client = new SseClient(exchange.getResponseBody());
+            sseOutputs.add(client);
             try {
                 // 连接帧是 SSE 注释（冒号行），不是 data 帧——前端 JSON.parse 不消费它
-                out.write(": connected\n\n".getBytes(StandardCharsets.UTF_8));
-                out.flush();
-                // 存量回放（页面刷新后重放当前会话）+ replay/done 边界帧：
-                // 前端以此区分回放 chunk（丢弃）与实时 chunk（流式聚合），增量由 pushEvent 广播
-                for (SessionEvent event : session.events()) {
-                    writeSse(out, toJson(event));
+                client.send(": connected\n\n");
+                // 回放窗口：replay/start 告知模式（前端据此决定是否清空重建）→ 事件帧（带
+                // 日志序号 id）→ replay/done 边界帧（前端以此刻区分回放 chunk 与实时 chunk）
+                String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
+                List<SessionEvent> events = session.events(); // 一次快照：events() 每次整体拷贝
+                ReplayWindow window = resolveReplayWindow(cursor, events);
+                // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
+                System.out.println("[web] SSE 连接：模式=" + (window.snapshot() ? "snapshot" : "incremental")
+                        + "，游标=" + cursor + "，事件数=" + events.size());
+                client.send(dataFrame("{\"type\":\"replay/start\",\"mode\":\""
+                        + (window.snapshot() ? "snapshot" : "incremental") + "\"}"));
+                for (int i = window.from(); i < events.size(); i++) {
+                    client.send(dataFrameWithId(i, toJson(events.get(i))));
                 }
-                writeSse(out, "{\"type\":\"replay/done\"}");
+                client.send(dataFrame("{\"type\":\"replay/done\"}"));
             } catch (Exception e) {
                 // 回放中断（含运行时异常）即摘除断连——客户端经 EventSource 重连重新回放
-                removeClient(out);
+                removeClient(client);
                 exchange.close();
             }
         });
     }
 
-    private void writeSse(OutputStream out, String payload) throws IOException {
-        out.write(("data: " + payload.replace("\n", "\ndata: ") + "\n\n").getBytes(StandardCharsets.UTF_8));
-        out.flush();
+    /** 回放窗口：起点下标 + 是否快照模式。 */
+    private record ReplayWindow(int from, boolean snapshot) { }
+
+    /**
+     * 解析重连游标决定回放窗口：无游标 → 全量快照；游标合法且落在日志范围内 →
+     * 只补其后事件（增量）；解析失败或越界（日志经治理折叠、序号对不上）→
+     * 全量快照兜底——宁可重放不可丢事件（ADR-0010）。
+     */
+    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events) {
+        if (cursor != null && !cursor.isBlank()) {
+            try {
+                int parsed = Integer.parseInt(cursor.strip());
+                if (parsed >= 0 && parsed < events.size()) {
+                    return new ReplayWindow(parsed + 1, false);
+                }
+            } catch (NumberFormatException ignored) {
+                // 非法游标按无游标处理（快照兜底）
+            }
+        }
+        return new ReplayWindow(0, true);
+    }
+
+    /**
+     * 非会话帧（replay/start、replay/done、run/error、心跳注释）：不带序号——这些帧
+     * 不落会话日志，无下标可锚；给它们安上别的序号会污染浏览器游标（客户端会误认为该
+     * 序号的日志事件已收到，重连时跳过它）。
+     */
+    private static String dataFrame(String payload) {
+        return "data: " + payload.replace("\n", "\ndata: ") + "\n\n";
+    }
+
+    /** 会话事件帧：带日志序号 id——浏览器重连自动以 Last-Event-ID 回传作游标（ADR-0010）。 */
+    private static String dataFrameWithId(int id, String payload) {
+        return "id: " + id + "\n" + dataFrame(payload);
     }
 
     private String toJson(SessionEvent event) {
@@ -552,12 +629,8 @@ public final class WebFace {
     /** 停止服务与心跳（插件 dispose 调用）。 */
     public void stop() {
         heartbeat.shutdownNow();
-        for (OutputStream out : List.copyOf(sseOutputs)) {
-            try {
-                out.close();
-            } catch (IOException ignored) {
-                // 连接已死
-            }
+        for (SseClient client : List.copyOf(sseOutputs)) {
+            client.close();
         }
         sseOutputs.clear();
         server.stop(0);

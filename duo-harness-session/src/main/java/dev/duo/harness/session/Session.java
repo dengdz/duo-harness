@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -46,7 +46,7 @@ public final class Session {
     private final Path jsonl;
     private final List<SessionEvent> events = new ArrayList<>();
     /** 事件监听器（CoW：回调中注销不破坏遍历）。 */
-    private final List<Consumer<SessionEvent>> listeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Integer, SessionEvent>> listeners = new CopyOnWriteArrayList<>();
 
     private Session(String id, Path jsonl) {
         this.id = id;
@@ -172,14 +172,16 @@ public final class Session {
     }
 
     /**
-     * 订阅事件：append 成功后同步回调（M8 事件流的推送源，如 Web SSE）。
+     * 订阅事件：append 成功后同步回调，携带事件的日志序号（在 append-only 列表中的下标）——
+     * 序号是重连游标（SSE 的 Last-Event-ID，ADR-0010）等消费方的锚点，由会话在写入处
+     * 直接给出，消费方无须从日志末尾反推（反推在并发追加下会错位）。
      *
      * <p>回调在写线程上执行——实现应快速返回，重活自行转线程。</p>
      *
-     * @param listener 事件回调
+     * @param listener 事件回调（日志序号, 事件）
      * @return 注销器（幂等移除）
      */
-    public Disposable addListener(Consumer<SessionEvent> listener) {
+    public Disposable addListener(BiConsumer<Integer, SessionEvent> listener) {
         Objects.requireNonNull(listener, "listener");
         listeners.add(listener);
         return () -> listeners.remove(listener);
@@ -202,8 +204,8 @@ public final class Session {
             throw new PluginException("会话事件落盘失败: " + event.type(), e);
         }
         // 落盘成功后才通知——监听器看到的事件必然已持久化
-        for (Consumer<SessionEvent> listener : listeners) {
-            listener.accept(event);
+        for (BiConsumer<Integer, SessionEvent> listener : listeners) {
+            listener.accept(events.size() - 1, event);
         }
     }
 

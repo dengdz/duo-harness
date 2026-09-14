@@ -417,7 +417,7 @@ class WebFaceTest {
         askApproval(webAnswerer, got, done);
 
         // 摘除死连接（写失败后的摘除时点）→ 列表空 → 进入宽限
-        face.removeClient(new java.io.ByteArrayOutputStream());
+        face.removeClient(new WebFace.SseClient(new java.io.ByteArrayOutputStream()));
         Thread.sleep(500);
         assertTrue(webAnswerer.currentPending() != null, "宽限期内不得立即拒绝");
         assertTrue(done.await(WebFace.FAIL_CLOSED_GRACE_MS + 1_500, TimeUnit.MILLISECONDS),
@@ -438,7 +438,7 @@ class WebFaceTest {
         askApproval(webAnswerer, got, done);
 
         // 旧连接摘除 → 宽限窗口开启；刷新后的新连接窗口内入列
-        face.removeClient(new java.io.ByteArrayOutputStream());
+        face.removeClient(new WebFace.SseClient(new java.io.ByteArrayOutputStream()));
         HttpResponse<java.io.InputStream> reconnect = client.send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + "/api/events")).GET().build(),
                 HttpResponse.BodyHandlers.ofInputStream());
@@ -474,6 +474,189 @@ class WebFaceTest {
             assertTrue(replay.get().contains("approval/requested"),
                     "新连接回放应含 approval/requested（审批卡数据源）: "
                             + replay.get().substring(0, Math.min(300, replay.get().length())));
+        }
+    }
+
+    /**
+     * SSE 采集器（测试夹具）：后台线程逐块累积流输出，{@link #close()} 关流打断。
+     * SSE 长连接不结束——读取必须非阻塞，限时取回已到达部分。
+     */
+    private static final class SseCollector implements AutoCloseable {
+        private final java.io.InputStream body;
+        private final Thread reader;
+        private final AtomicReference<String> captured = new AtomicReference<>("");
+
+        private SseCollector(java.io.InputStream body) {
+            this.body = body;
+            this.reader = Thread.ofVirtual().start(this::pump);
+        }
+
+        private void pump() {
+            byte[] buffer = new byte[1_024];
+            StringBuilder collected = new StringBuilder();
+            try {
+                int read;
+                while ((read = body.read(buffer)) != -1) {
+                    collected.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
+                    captured.set(collected.toString());
+                }
+            } catch (Exception e) {
+                // 关流打断：已累积部分保留
+            }
+        }
+
+        /** 等待至多 millis，返回当前累积文本。 */
+        String awaitText(long millis) throws InterruptedException {
+            Thread.sleep(millis);
+            return captured.get();
+        }
+
+        @Override
+        public void close() {
+            try {
+                body.close();
+            } catch (Exception ignored) {
+                // 已关
+            }
+            reader.interrupt();
+        }
+    }
+
+    /** 连 /api/events（可带 Last-Event-ID 游标头）并返回采集器。 */
+    private SseCollector openSse(String lastEventId) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + face.port() + "/api/events"));
+        if (lastEventId != null) {
+            builder.header("Last-Event-ID", lastEventId);
+        }
+        return new SseCollector(client.send(builder.GET().build(),
+                HttpResponse.BodyHandlers.ofInputStream()).body());
+    }
+
+    @Test
+    void sseCursorAtLatestDeliversEmptyIncrement() throws Exception {
+        // 游标指向最后一条（客户端已追平）→ 增量模式但零补发（仅边界帧）——
+        // 追平是重连后的常见稳态，不能被误判成需要全量重放
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("第一问"));
+        session.append(SessionEvent.assistantMessage("第一答"));
+        start(session, scriptedAgent(session, "ok"));
+
+        String stream;
+        try (SseCollector sse = openSse("1")) {
+            stream = sse.awaitText(600);
+        }
+
+        assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"incremental\""),
+                "追平游标仍为增量模式: " + stream);
+        assertTrue(stream.contains("\"type\":\"replay/done\""), "边界帧在场");
+        assertTrue(!stream.contains("\"type\":\"user/message\"")
+                        && !stream.contains("\"type\":\"assistant/message\""),
+                "无缺失段则不补发任何事件: " + stream);
+    }
+
+    @Test
+    void sseSnapshotReplayCarriesEventIds() throws Exception {
+        // 增量回放协议（工单 M10-05 / ADR-0010）：首连无游标 → 快照模式，会话事件帧带
+        // 日志序号 id；边界帧（replay/start、replay/done）不带 id（非会话事件无序号）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("第一问"));
+        session.append(SessionEvent.assistantMessage("第一答"));
+        start(session, scriptedAgent(session, "ok"));
+
+        String stream;
+        try (SseCollector sse = openSse(null)) {
+            stream = sse.awaitText(800);
+        }
+
+        assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"snapshot\""),
+                "首连为快照模式: " + stream);
+        assertTrue(stream.contains("id: 0\n"), "首条事件带序号 0: " + stream);
+        assertTrue(stream.contains("id: 1\n"), "第二条事件带序号 1: " + stream);
+        assertTrue(stream.contains("user/message") && stream.contains("assistant/message"), "事件内容在场");
+        assertTrue(stream.contains("\"type\":\"replay/done\""), "边界帧在场");
+        // 边界帧自带帧头（\n\ndata: 紧跟 JSON）：若被加上 id 行则格式变为 \n\nid: N\ndata: ...
+        assertTrue(stream.contains("\n\ndata: {\"type\":\"replay/start\""),
+                "replay/start 帧不带序号: " + stream);
+        assertTrue(stream.contains("\n\ndata: {\"type\":\"replay/done\"}"),
+                "replay/done 帧不带序号: " + stream);
+    }
+
+    @Test
+    void sseIncrementalReplayFromLastEventId() throws Exception {
+        // 断线重连（带 Last-Event-ID）→ 增量模式：只补其后的缺失段，已渲染的存量不重发
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("第一问"));
+        session.append(SessionEvent.assistantMessage("第一答"));
+        session.append(SessionEvent.userMessage("第二问"));
+        start(session, scriptedAgent(session, "ok"));
+
+        String stream;
+        try (SseCollector sse = openSse("1")) {
+            stream = sse.awaitText(800);
+        }
+
+        assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"incremental\""),
+                "带游标为增量模式: " + stream);
+        assertTrue(stream.contains("id: 2\n"), "补发游标之后的事件: " + stream);
+        assertTrue(!stream.contains("id: 0\n") && !stream.contains("id: 1\n"), "存量不重发: " + stream);
+        assertTrue(stream.contains("第二问"), "补发内容为缺失段");
+        assertTrue(!stream.contains("第一问") && !stream.contains("第一答"), "已渲染历史不重发");
+    }
+
+    @Test
+    void sseOutOfRangeOrInvalidCursorFallsBackToSnapshot() throws Exception {
+        // 游标越界（日志经治理折叠）/ 非法游标 → 全量快照兜底：宁可重放不可丢事件
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("第一问"));
+        session.append(SessionEvent.assistantMessage("第一答"));
+        start(session, scriptedAgent(session, "ok"));
+
+        for (String cursor : List.of("99", "abc", "-3")) {
+            String stream;
+            try (SseCollector sse = openSse(cursor)) {
+                stream = sse.awaitText(600);
+            }
+            assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"snapshot\""),
+                    "游标 " + cursor + " 回退快照: " + stream);
+            assertTrue(stream.contains("id: 0\n") && stream.contains("id: 1\n"),
+                    "游标 " + cursor + " 全量重发: " + stream);
+        }
+    }
+
+    @Test
+    void sseLiveFramesCarryEventIds() throws Exception {
+        // 实时广播帧同样带序号：浏览器以最后收到的 id 作为重连游标——
+        // 实时帧缺 id 会让重连从旧游标补发，已渲染的事件重复呈现
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        try (SseCollector sse = openSse(null)) {
+            sse.awaitText(300); // 空会话回放完成
+            session.append(SessionEvent.userMessage("实时消息"));
+            String stream = sse.awaitText(600);
+            assertTrue(stream.contains("id: 0\n"), "实时帧带序号: " + stream);
+            assertTrue(stream.contains("实时消息"), "实时帧内容在场: " + stream);
+        }
+    }
+
+    @Test
+    void sseErrorFrameCarriesNoId() throws Exception {
+        // 非会话帧（run/error 不落会话日志）不带 id：无日志下标可锚（ADR-0010 决策 1），
+        // 带上别的 id 会污染浏览器游标（客户端会误以为该序号的日志事件已收到）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        ChatAgent failing = (userText, listener) -> {
+            throw new IllegalStateException("模拟执行故障");
+        };
+        start(session, failing);
+
+        try (SseCollector sse = openSse(null)) {
+            sse.awaitText(300);
+            post("/api/message", "{\"text\": \"触发故障\"}");
+            String stream = sse.awaitText(1_000);
+            assertTrue(stream.contains("run/error"), "错误帧在场: " + stream);
+            assertTrue(stream.contains("\n\ndata: {\"type\":\"run/error\""),
+                    "错误帧不带序号: " + stream);
         }
     }
 
