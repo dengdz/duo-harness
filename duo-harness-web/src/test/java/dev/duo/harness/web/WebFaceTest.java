@@ -19,11 +19,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.channels.FileChannel;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -692,6 +694,65 @@ class WebFaceTest {
             assertTrue(stream.contains("run/error"), "错误帧在场: " + stream);
             assertTrue(stream.contains("\n\ndata: {\"type\":\"run/error\""),
                     "错误帧不带序号: " + stream);
+        }
+    }
+
+    @Test
+    void concurrentSwitchesLeakNoSessionLocks() throws Exception {
+        // 换绑串行化回归（工单 M10-03 验收发现）：并发切换下"关闭上一个"链条必须线性——
+        // 各关各的快照会跳过中间会话，其独占锁永久泄漏（之后切到它永远 409）。
+        // 压力后不变量：除当前会话外，其余会话文件必须全部可加锁（无泄漏）。
+        Path listed = tempDir.resolve("web-sessions");
+        Session a = Session.create(listed);
+        a.append(SessionEvent.userMessage("A"));
+        Session b = Session.create(listed);
+        b.append(SessionEvent.userMessage("B"));
+        a.close();
+        b.close();
+        Session current = Session.create(listed);
+        current.append(SessionEvent.userMessage("初始"));
+        start(current, scriptedAgent(current, "ok"));
+
+        List<String> targets = List.of(a.id(), b.id(), current.id());
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        List<Thread> threads = new java.util.ArrayList<>();
+        List<AssertionError> failures = new java.util.concurrent.CopyOnWriteArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            String target = targets.get(i % targets.size());
+            threads.add(Thread.ofVirtual().start(() -> {
+                try {
+                    start.await();
+                    HttpResponse<String> response = post("/api/session/switch",
+                            "{\"id\": \"" + target + "\"}");
+                    if (response.statusCode() != 200 && response.statusCode() != 409) {
+                        failures.add(new AssertionError(
+                                "切换 " + target + " 异常状态 " + response.statusCode()));
+                    }
+                } catch (Exception e) {
+                    failures.add(new AssertionError(e));
+                }
+            }));
+        }
+        start.countDown();
+        for (Thread thread : threads) {
+            thread.join(5_000);
+        }
+        assertTrue(failures.isEmpty(), () -> "并发切换出现异常: " + failures);
+
+        // 不变量：全部并发结束后，除当前会话外其余会话必须可加锁（无泄漏的独占锁）
+        String currentId = face.currentSession().id();
+        for (String id : targets) {
+            if (id.equals(currentId)) {
+                continue;
+            }
+            try (FileChannel probe = FileChannel.open(
+                    listed.resolve(id + ".jsonl"), StandardOpenOption.READ, StandardOpenOption.WRITE)) {
+                java.nio.channels.FileLock lock = probe.tryLock();
+                assertTrue(lock != null, "会话 " + id + " 的独占锁被泄漏（非当前会话却不可加锁）");
+                if (lock != null) {
+                    lock.release();
+                }
+            }
         }
     }
 

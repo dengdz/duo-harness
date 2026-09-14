@@ -135,21 +135,27 @@ public final class WebFace {
         return face;
     }
 
+    /** 换绑串行化锁：并发切换（连点侧栏/新话题）下保证"关闭上一个"链条线性、会话锁不泄漏。 */
+    private final Object bindLock = new Object();
+
     /** 绑定会话的事件监听（SSE 推送源）；换会话时先解绑旧的，并释放旧会话的独占锁。 */
     private void bindSession(Session target) {
-        Session previous = session;
-        session = target;
-        if (sseSubscription != null) {
-            try {
-                sseSubscription.dispose();
-            } catch (Exception e) {
-                // 旧监听器注销失败无碍：新订阅已就位
+        synchronized (bindLock) {
+            Session previous = session;
+            session = target;
+            if (sseSubscription != null) {
+                try {
+                    sseSubscription.dispose();
+                } catch (Exception e) {
+                    // 旧监听器注销失败无碍：新订阅已就位
+                }
             }
-        }
-        sseSubscription = target.addListener(this::pushSessionEvent);
-        if (previous != null && previous != target) {
-            // 换绑即本进程不再使用旧会话：释放独占锁（否则旧会话被本进程白占，他处打不开）
-            previous.close();
+            sseSubscription = target.addListener(this::pushSessionEvent);
+            if (previous != null && previous != target) {
+                // 换绑即本进程不再使用旧会话：释放独占锁（否则旧会话被本进程白占，他处打不开）。
+                // 必须串行：并发换绑各关各的快照会跳过中间会话，其独占锁永久泄漏
+                previous.close();
+            }
         }
     }
 
