@@ -46,32 +46,44 @@ public final class ToolCallingAgent implements ChatAgent {
     private final Session session;
     private final PromptRegistry prompts;
     private final int maxIterations;
+    /** 上下文治理管线（M9；null = 未装配，投影直通——治理可选零残留）。 */
+    private final dev.duo.harness.agent.ContextGovernance governance;
 
     /** 便捷构造：迭代上限取默认值，单一 system 提示（包装为用户指令片段）。 */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session, String systemPrompt) {
-        this(llm, tools, session, new PromptRegistry(systemPrompt), MAX_ITERATIONS);
+        this(llm, tools, session, new PromptRegistry(systemPrompt), MAX_ITERATIONS, null);
     }
 
     /** 便捷构造：单一 system 提示 + 显式迭代上限。 */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             String systemPrompt, int maxIterations) {
-        this(llm, tools, session, new PromptRegistry(systemPrompt), maxIterations);
+        this(llm, tools, session, new PromptRegistry(systemPrompt), maxIterations, null);
     }
 
-    /** 便捷构造：prompt 注册表 + 默认迭代上限。 */
+    /** 便捷构造：prompt 注册表 + 默认迭代上限（无治理——投影直通）。 */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session, PromptRegistry prompts) {
-        this(llm, tools, session, prompts, MAX_ITERATIONS);
+        this(llm, tools, session, prompts, MAX_ITERATIONS, null);
+    }
+
+    /** 便捷构造：prompt 注册表 + 显式迭代上限（无治理——投影直通）。 */
+    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
+                            PromptRegistry prompts, int maxIterations) {
+        this(llm, tools, session, prompts, maxIterations, null);
     }
 
     /**
+     * 完整构造：含上下文治理管线（M9）。
+     *
      * @param llm           LLM 流式适配器
      * @param tools         工具域服务（Function Calling 的执行后端）
      * @param session       会话（多轮记忆来源与事件落点）
      * @param prompts       prompt 注册表（每轮组装 system 提示）
      * @param maxIterations 最大循环轮数（防死循环上限）
+     * @param governance    上下文治理管线（投影 → 管线 → 请求；null = 不治理）
      */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
-                            PromptRegistry prompts, int maxIterations) {
+                            PromptRegistry prompts, int maxIterations,
+                            dev.duo.harness.agent.ContextGovernance governance) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
@@ -80,6 +92,7 @@ public final class ToolCallingAgent implements ChatAgent {
             throw new IllegalArgumentException("maxIterations 至少为 1: " + maxIterations);
         }
         this.maxIterations = maxIterations;
+        this.governance = governance;
     }
 
     @Override
@@ -127,13 +140,17 @@ public final class ToolCallingAgent implements ChatAgent {
         return new AgentReply(finalReply.toString(), invocations, true);
     }
 
-    /** 请求构造：组装 system 提示 + 会话投影历史 + 工具清单（工具域全量，Function Calling）。 */
+    /** 请求构造：组装 system 提示 + 会话投影历史（过治理管线）+ 工具清单（Function Calling）。 */
     private ChatRequest buildRequest() {
         List<ToolSpec> specs = tools.list().stream()
                 .map(def -> new ToolSpec(def.name(), def.description(),
                         def.parameters() == null ? "{}" : def.parameters().toString()))
                 .toList();
-        return new ChatRequest(prompts.compose(), Messages.toChatMessages(session.deriveMessages()), specs);
+        List<Message> projected = session.deriveMessages();
+        if (governance != null) {
+            projected = governance.govern(projected, session);
+        }
+        return new ChatRequest(prompts.compose(), Messages.toChatMessages(projected), specs);
     }
 
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */
