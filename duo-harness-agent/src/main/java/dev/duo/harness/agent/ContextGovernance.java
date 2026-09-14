@@ -50,6 +50,12 @@ public final class ContextGovernance {
     /** spill 预览尾长（字符）。 */
     static final int SPILL_PREVIEW_TAIL = 500;
 
+    /** 修剪保留头长（字符）。 */
+    static final int PRUNE_HEAD_CHARS = 2_000;
+
+    /** 修剪保留尾长（字符）。 */
+    static final int PRUNE_TAIL_CHARS = 1_000;
+
     private final LlmAdapter llm;
 
     public ContextGovernance(LlmAdapter llm) {
@@ -74,27 +80,45 @@ public final class ContextGovernance {
         return governed;
     }
 
-    /** spill + 修剪：工具结果的体量治理——先卸能卸的（spill），再收窄次长的（修剪，工单 03）。 */
+    /** spill + 修剪：工具结果的体量治理——先卸能卸的（spill），再收窄次长的（修剪）。 */
     private List<Message> spillAndPrune(List<Message> messages, dev.duo.harness.session.Session session) {
         List<Message> result = messages;
         for (int i = 0; i < result.size(); i++) {
             Message message = result.get(i);
             if (message.role() != Message.Role.TOOL
-                    || message.content() == null
-                    || message.content().length() <= SPILL_THRESHOLD_CHARS) {
+                    || message.content() == null) {
                 continue;
             }
-            String replacement = spill(message, session);
-            if (replacement == null) {
-                continue; // 卸载失败保留原结果（治理永不丢数据）
+            int length = message.content().length();
+            if (length > SPILL_THRESHOLD_CHARS) {
+                String replacement = spill(message, session);
+                if (replacement == null) {
+                    continue; // 卸载失败保留原结果（治理永不丢数据）
+                }
+                if (result == messages) {
+                    result = new ArrayList<>(messages);
+                }
+                result.set(i, new Message(Message.Role.TOOL, replacement,
+                        message.toolCallId(), null, null));
+            } else if (length > PRUNE_THRESHOLD_CHARS) {
+                if (result == messages) {
+                    result = new ArrayList<>(messages);
+                }
+                result.set(i, new Message(Message.Role.TOOL, prune(message.content()),
+                        message.toolCallId(), null, null));
             }
-            if (result == messages) {
-                result = new ArrayList<>(messages);
-            }
-            result.set(i, new Message(Message.Role.TOOL, replacement,
-                    message.toolCallId(), null, null));
         }
         return result;
+    }
+
+    /** 修剪：头 2K + 标注 + 尾 1K（次长结果的体量收窄；原文仍在 JSONL）。 */
+    private String prune(String content) {
+        int middle = content.length() - PRUNE_HEAD_CHARS - PRUNE_TAIL_CHARS;
+        System.out.println("[上下文治理] 工具结果 " + content.length() + " 字符超 "
+                + PRUNE_THRESHOLD_CHARS + "，修剪中段 " + middle + " 字符");
+        return content.substring(0, PRUNE_HEAD_CHARS)
+                + "\n…[已修剪中段 " + middle + " 字符，完整原文在会话日志中]…\n"
+                + content.substring(content.length() - PRUNE_TAIL_CHARS);
     }
 
     /** 单条 spill：原文落盘，返回"预览 + 定位符"替换文本；失败返回 null。 */
