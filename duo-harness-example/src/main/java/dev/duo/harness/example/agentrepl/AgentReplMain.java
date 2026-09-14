@@ -111,7 +111,10 @@ public final class AgentReplMain {
         SessionHolder sessionHolder = new SessionHolder(session);
         // CLI 回答者（审批 y/n、提问呈现）+ 审计桥（审批事件落会话）——ADR-0008 呈现位
         answers.register(root, new AuditingAnswerer(sessionHolder::current, new ConsoleAnswerer(in, out)));
-        ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
+        GovernanceHolder governanceHolder = new GovernanceHolder(
+                new dev.duo.harness.agent.ContextGovernance(llm.adapter));
+        ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts,
+                governanceHolder.governance);
         tools.register(root, new dev.duo.harness.agent.ExitPlanModeTool(answers, sessionHolder::current, () -> {
             plan.active = false;
             if (plan.guidance != null) {
@@ -136,7 +139,8 @@ public final class AgentReplMain {
             }
             if (line.strip().equals("/new")) {
                 sessionHolder.session = Session.create(sessionsDir);
-                agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts);
+                agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts,
+                        governanceHolder.governance);
                 plan.active = false;
                 if (plan.guidance != null) {
                     plan.guidance.dispose();
@@ -226,8 +230,10 @@ public final class AgentReplMain {
     }
 
     private static ChatAgent buildAgent(dev.duo.harness.llm.LlmAdapter adapter, ToolsService tools,
-                                        Session session, PromptRegistry prompts) {
-        return new dev.duo.harness.agent.internal.ToolCallingAgent(adapter, tools, session, prompts);
+                                        Session session, PromptRegistry prompts,
+                                        dev.duo.harness.agent.ContextGovernance governance) {
+        return new dev.duo.harness.agent.internal.ToolCallingAgent(adapter, tools, session, prompts,
+                dev.duo.harness.agent.internal.ToolCallingAgent.MAX_ITERATIONS, governance);
     }
 
     /** 可变引用：/new 时换会话、重建 agent（ToolCallingAgent 持有 final 会话引用）。 */
@@ -247,6 +253,15 @@ public final class AgentReplMain {
     private static final class PlanHolder {
         boolean active;
         Disposable guidance;
+    }
+
+    /** 可变引用：上下文治理随适配器仅构建一次，/new 重建 agent 时复用（M9）。 */
+    private static final class GovernanceHolder {
+        final dev.duo.harness.agent.ContextGovernance governance;
+
+        GovernanceHolder(dev.duo.harness.agent.ContextGovernance governance) {
+            this.governance = governance;
+        }
     }
 
     /** 可变引用：适配器仅构建一次，/new 重建 agent 时复用。 */

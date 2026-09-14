@@ -2,6 +2,13 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.4.0（未发布）
+
+### Added
+
+- 上下文治理四件套（M9，agent 域）：`ContextGovernance` 读侧治理管线——spill（超大工具结果落盘 + 预览定位符）→ 工具结果修剪（超 8K 头尾收窄）→ token 计量（本地估算）→ compaction（超窗口阈值时远端历史折叠为四节摘要，近端原文保留）。**治理只影响模型看到的请求，会话 JSONL 日志永远完整**；各阈值常量集中于 `ContextGovernance`，演示装配默认启用
+- `ToolCallingAgent` 新增治理构造器：投影 → 治理管线 → 请求；旧构造器保留（null = 不治理，零行为变化）
+
 ## 0.3.0（2026-09-14）
 
 ### Added

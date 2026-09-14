@@ -39,7 +39,7 @@ import java.util.Objects;
 public final class ToolCallingAgent implements ChatAgent {
 
     /** 最大迭代轮数（每轮 = 一次 LLM 调用往返；防异常任务无限循环烧 token）。 */
-    static final int MAX_ITERATIONS = 10;
+    public static final int MAX_ITERATIONS = 10;
 
     private final LlmAdapter llm;
     private final ToolsService tools;

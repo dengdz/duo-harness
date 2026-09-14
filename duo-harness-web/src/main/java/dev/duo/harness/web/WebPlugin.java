@@ -68,7 +68,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
         if (session == null) {
             session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
         }
-        ChatAgent agent = new ToolCallingAgent(adapter, tools, session, prompts);
+        // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置
+        dev.duo.harness.agent.ContextGovernance governance =
+                new dev.duo.harness.agent.ContextGovernance(adapter);
+        ChatAgent agent = new ToolCallingAgent(adapter, tools, session, prompts,
+                ToolCallingAgent.MAX_ITERATIONS, governance);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -84,7 +88,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // /new：全新会话；/switch：换绑既有会话——两者换绑后都经会话变更回调重建 agent
         // （ToolCallingAgent 持有 final 会话引用，不重建即分脑）
         face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));
-        face.onSessionChanged(fresh -> face.setAgent(new ToolCallingAgent(adapter, tools, fresh, prompts)));
+        face.onSessionChanged(fresh -> face.setAgent(new ToolCallingAgent(adapter, tools, fresh, prompts,
+                ToolCallingAgent.MAX_ITERATIONS, governance)));
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
         return face::stop;
     }
