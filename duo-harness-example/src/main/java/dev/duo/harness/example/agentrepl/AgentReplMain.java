@@ -91,8 +91,17 @@ public final class AgentReplMain {
         registerIfAbsent(tools, root, "ask_user", () -> new dev.duo.harness.tools.AskUserTool(answers));
 
         Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
-        Session session = Session.latest(sessionsDir);
-        if (session == null) {
+        Session session;
+        try {
+            session = Session.latest(sessionsDir);
+            if (session == null) {
+                session = Session.create(sessionsDir);
+            }
+        } catch (dev.duo.harness.session.SessionLockedException e) {
+            // 单写者检测：最新会话已被占用（本进程的 Web 面，或其他进程）——明确提示并
+            // 改为新建会话继续：绝不静默共享同一日志（两个属主各持内存视图、JSONL 交错追加）
+            out.println("[提示] " + e.getMessage());
+            out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
             session = Session.create(sessionsDir);
         }
         out.println("会话 " + session.id() + "（工具循环上下文）。/exit 退出，/new 开新话题。");
@@ -139,9 +148,11 @@ public final class AgentReplMain {
                 continue;
             }
             if (line.strip().equals("/new")) {
+                Session previous = sessionHolder.session;
                 sessionHolder.session = Session.create(sessionsDir);
                 agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts,
                         governanceHolder.governance);
+                previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                 plan.active = false;
                 if (plan.guidance != null) {
                     plan.guidance.dispose();
@@ -227,6 +238,7 @@ public final class AgentReplMain {
         }
         out.println("=== 对话结束 ===");
         out.flush();
+        sessionHolder.current().close(); // 退出即释放会话独占锁（他处可续接该会话）
         root.dispose();
     }
 

@@ -105,6 +105,9 @@ public final class WebFace {
      * 启动并绑定 127.0.0.1:port（port 0 = 系统随机分配，测试用）。
      * governance 可为 null（无治理装配时状态面省略上下文占用字段）。
      *
+     * <p><b>会话所有权</b>：WebFace 接管传入会话的生命周期——换绑（/new、/switch）时
+     * 关闭旧会话释放其独占锁，{@link #stop()} 关闭当前会话。调用方无须（也不应）再关闭。</p>
+     *
      * @throws IOException 端口绑定失败
      */
     public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
@@ -132,8 +135,9 @@ public final class WebFace {
         return face;
     }
 
-    /** 绑定会话的事件监听（SSE 推送源）；换会话时先解绑旧的。 */
+    /** 绑定会话的事件监听（SSE 推送源）；换会话时先解绑旧的，并释放旧会话的独占锁。 */
     private void bindSession(Session target) {
+        Session previous = session;
         session = target;
         if (sseSubscription != null) {
             try {
@@ -143,6 +147,10 @@ public final class WebFace {
             }
         }
         sseSubscription = target.addListener(this::pushSessionEvent);
+        if (previous != null && previous != target) {
+            // 换绑即本进程不再使用旧会话：释放独占锁（否则旧会话被本进程白占，他处打不开）
+            previous.close();
+        }
     }
 
     private Disposable sseSubscription;
@@ -412,6 +420,15 @@ public final class WebFace {
                     exchange.sendResponseHeaders(400, -1);
                     return;
                 }
+                if (id.equals(session.id())) {
+                    // 切到当前会话：幂等成功——重新 load 自己必撞独占锁（OverlappingFileLockException），
+                    // 而语义上本就无需动作（侧栏点当前项、重复提交切换请求都不该失败）
+                    byte[] ok = "{\"switched\":true}".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+                    exchange.sendResponseHeaders(200, ok.length);
+                    try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
+                    return;
+                }
                 Session loaded = Session.load(sessionsDir.resolve(id + ".jsonl"));
                 bindSession(loaded);
                 sessionChangedCallback.accept(loaded);
@@ -419,6 +436,13 @@ public final class WebFace {
                 exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
                 exchange.sendResponseHeaders(200, ok.length);
                 try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
+            } catch (dev.duo.harness.session.SessionLockedException e) {
+                // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
+                System.out.println("[web] 会话切换被拒（占用冲突）: " + e.getMessage());
+                byte[] msg = e.brief().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+                exchange.sendResponseHeaders(409, msg.length);
+                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
             } catch (Exception e) {
                 // 异常细节（含文件系统路径）仅服务端控制台留痕，不回显给响应体（M10-02 脱敏）
                 System.out.println("[web] 会话切换失败: " + e);
@@ -626,7 +650,7 @@ public final class WebFace {
         return sseOutputs.size();
     }
 
-    /** 停止服务与心跳（插件 dispose 调用）。 */
+    /** 停止服务与心跳（插件 dispose 调用），并关闭当前会话（会话所有权见 {@link #start}）。 */
     public void stop() {
         heartbeat.shutdownNow();
         for (SseClient client : List.copyOf(sseOutputs)) {
@@ -634,5 +658,6 @@ public final class WebFace {
         }
         sseOutputs.clear();
         server.stop(0);
+        session.close();
     }
 }

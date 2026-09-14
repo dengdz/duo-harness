@@ -11,6 +11,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.attribute.FileTime;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -19,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -35,7 +39,14 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * <p>线程约定：单写者（append 只在会话属主的执行线程上串行调用）；读侧
  * {@link #events()} 返回快照、{@link #addListener} 用 CoW——读取与追加并发安全
- * （M8 起 Web SSE 回放与 agent 流式追加并发是常态）。</p>
+ * （M8 起 Web SSE 回放与 agent 流式追加并发是常态）。close 的线程约定与单写者相反：
+ * 它通常在 HTTP / 调度线程上执行（换绑、停止服务），与 append 线程并发——原子标志保证
+ * 幂等，append 在关闭后立即失败。</p>
+ *
+ * <p><b>独占语义</b>：打开会话即取得 JSONL 文件的进程级独占锁，持有至
+ * {@link #close()}——同一会话被第二个进程（或本进程第二实例）打开时抛
+ * {@link SessionLockedException}，把"两个进程各写各的内存视图、日志交错追加"
+ * 的静默分脑变为打开即失败。换绑到其他会话、进程退出前应 close 释放。</p>
  */
 public final class Session {
 
@@ -47,13 +58,23 @@ public final class Session {
     private final List<SessionEvent> events = new ArrayList<>();
     /** 事件监听器（CoW：回调中注销不破坏遍历）。 */
     private final List<BiConsumer<Integer, SessionEvent>> listeners = new CopyOnWriteArrayList<>();
+    /** 独占锁的文件通道（持有至 {@link #close()}）。 */
+    private final FileChannel lockChannel;
+    /** 会话文件的独占锁（进程级单写者检测）。 */
+    private final FileLock fileLock;
+    /** 已关闭标志（close 幂等）。 */
+    private final AtomicBoolean closed =
+            new AtomicBoolean(false);
 
-    private Session(String id, Path jsonl) {
+    private Session(String id, Path jsonl, FileChannel lockChannel,
+                    FileLock fileLock) {
         this.id = id;
         this.jsonl = jsonl;
+        this.lockChannel = lockChannel;
+        this.fileLock = fileLock;
     }
 
-    /** 新建会话：生成 id 并创建 JSONL 文件。 */
+    /** 新建会话：生成 id、创建 JSONL 文件并取得独占锁。 */
     public static Session create(Path sessionsDir) {
         String id = newId();
         Path file = sessionsDir.resolve(id + ".jsonl");
@@ -63,16 +84,20 @@ public final class Session {
         } catch (IOException e) {
             throw new PluginException("无法创建会话文件: " + file, e);
         }
-        return new Session(id, file);
+        return lock(id, file);
     }
 
-    /** 从 JSONL 重放读回会话（文件必须存在且为合法会话日志）。 */
+    /**
+     * 从 JSONL 重放读回会话（文件必须存在且为合法会话日志）。
+     *
+     * @throws SessionLockedException 文件已被本进程另一实例或其他进程占用
+     */
     public static Session load(Path jsonl) {
         String id = jsonl.getFileName().toString();
         if (id.endsWith(".jsonl")) {
             id = id.substring(0, id.length() - ".jsonl".length());
         }
-        Session session = new Session(id, jsonl);
+        Session session = lock(id, jsonl);
         try (BufferedReader reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -82,9 +107,66 @@ public final class Session {
                 session.events.add(parse(line));
             }
         } catch (IOException e) {
+            session.close(); // 读取失败即释放锁，不留半开状态
             throw new PluginException("会话文件读取失败: " + jsonl, e);
         }
         return session;
+    }
+
+    /**
+     * 取得会话文件独占锁并构造实例：**单写者检测**——同进程第二实例由
+     * OverlappingFileLockException 拒绝，跨进程由 tryLock 返回 null 拒绝
+     * （锁是协商式：别人不用锁硬写仍能写，本机制防的是"双方都以为自己独占"）。
+     *
+     * @throws SessionLockedException 锁已被占用
+     * @throws PluginException        文件无法打开（权限、路径等）
+     */
+    private static Session lock(String id, Path jsonl) {
+        FileChannel channel = null;
+        try {
+            channel = FileChannel.open(jsonl,
+                    StandardOpenOption.READ, StandardOpenOption.WRITE);
+            FileLock fileLock = channel.tryLock();
+            if (fileLock == null) {
+                channel.close();
+                throw new SessionLockedException(id, jsonl);
+            }
+            return new Session(id, jsonl, channel, fileLock);
+        } catch (OverlappingFileLockException e) {
+            closeQuietly(channel);
+            throw new SessionLockedException(id, jsonl, e);
+        } catch (IOException e) {
+            closeQuietly(channel);
+            throw new PluginException("会话文件打开失败: " + jsonl, e);
+        }
+    }
+
+    private static void closeQuietly(FileChannel channel) {
+        if (channel != null) {
+            try {
+                channel.close();
+            } catch (IOException ignored) {
+                // 打开失败路径上的清理，忽略
+            }
+        }
+    }
+
+    /**
+     * 关闭会话：释放独占锁与文件通道、摘除全部事件监听器（幂等）。本进程不再独占该会话，
+     * 其他进程与实例可重新打开；调用方应在会话生命周期结束时调用（Web 停止、CLI 退出、
+     * 换绑到其他会话时）。关闭后写入与订阅均失效——应停止使用本实例。
+     */
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            fileLock.release();
+        } catch (IOException ignored) {
+            // 通道关闭会连带释放，忽略
+        }
+        closeQuietly(lockChannel);
+        listeners.clear();
     }
 
     /** 目录内最近活动的会话（按文件修改时间，即最后被创建/写入的）；无会话返回 null。 */
@@ -164,11 +246,14 @@ public final class Session {
     }
 
     /**
-     * 事件日志的只读快照：调用时刻的稳定拷贝——流式追加期间遍历安全
-     * （Web SSE 回放与 agent 追加并发是常态，活视图会在遍历中抛 CME）。
+     * 事件日志的只读快照：调用时刻的稳定拷贝——与 {@link #append} 经同一把锁互斥，
+     * 追加期间的拷贝与遍历都安全（裸 ArrayList 并发拷贝会读到扩容空洞而 NPE，
+     * 活视图遍历会抛 CME；Web SSE 回放与 agent 流式追加并发是常态）。
      */
     public List<SessionEvent> events() {
-        return List.copyOf(events);
+        synchronized (events) {
+            return List.copyOf(events);
+        }
     }
 
     /**
@@ -187,8 +272,25 @@ public final class Session {
         return () -> listeners.remove(listener);
     }
 
-    /** 唯一写入原语：内存追加 + JSONL 同步追加落盘（崩溃最多丢正在写的一条）。 */
+    /**
+     * 唯一写入原语：内存追加 + JSONL 同步追加落盘（崩溃最多丢正在写的一条）。
+     *
+     * @throws IllegalStateException 会话已关闭（close 后写入属调用方错误——锁已释放，
+     *                               继续写会与可能接手的新属主形成无锁并发）
+     */
     public void append(SessionEvent event) {
+        if (closed.get()) {
+            throw new IllegalStateException("会话已关闭，不能再写入: " + id);
+        }
+        int index = persist(event);
+        // 落盘成功后才通知——监听器看到的事件必然已持久化；序号在追加处固定（不重算）
+        for (BiConsumer<Integer, SessionEvent> listener : listeners) {
+            listener.accept(index, event);
+        }
+    }
+
+    /** 落盘 + 内存追加：序号在同步块内与追加一起确定（并发快照读不到半写状态）。 */
+    private int persist(SessionEvent event) {
         try {
             boolean freshFile = !Files.exists(jsonl);
             if (freshFile) {
@@ -199,13 +301,12 @@ public final class Session {
                 writer.write(toJsonLine(event));
                 writer.newLine();
             }
-            events.add(event);
+            synchronized (events) {
+                events.add(event);
+                return events.size() - 1;
+            }
         } catch (IOException e) {
             throw new PluginException("会话事件落盘失败: " + event.type(), e);
-        }
-        // 落盘成功后才通知——监听器看到的事件必然已持久化
-        for (BiConsumer<Integer, SessionEvent> listener : listeners) {
-            listener.accept(events.size() - 1, event);
         }
     }
 

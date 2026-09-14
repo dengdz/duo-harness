@@ -64,9 +64,16 @@ public final class WebPlugin implements Plugin<JsonNode> {
         LlmConfig llm = LlmConfig.load();
         var adapter = new RetryingAdapter(new OpenAiCompatAdapter(llm));
 
-        Session session = Session.latest(DuoHome.resolve().resolveDir("agent-sessions"));
-        if (session == null) {
-            session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
+        Session session;
+        try {
+            session = Session.latest(DuoHome.resolve().resolveDir("agent-sessions"));
+            if (session == null) {
+                session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
+            }
+        } catch (dev.duo.harness.session.SessionLockedException e) {
+            // 单写者检测：会话已被占用（另一入口或其他进程）——启动即失败并点名会话，
+            // 不静默分脑共享同一日志（两个进程各持内存视图、JSONL 交错追加）
+            throw new PluginException("Web 面无法启动：" + e.getMessage(), e);
         }
         // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置
         dev.duo.harness.agent.ContextGovernance governance =
@@ -80,6 +87,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
                     DuoHome.resolve().resolveDir("agent-sessions"));
         } catch (java.io.IOException e) {
+            session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
         }
         // 审计桥包装（ADR-0008 决策 5）：approval/requested、approval/decided 事件落会话

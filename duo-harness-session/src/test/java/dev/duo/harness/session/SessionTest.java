@@ -57,6 +57,8 @@ class SessionTest {
         appendRound(original, "第一问", "第一答");
         appendRound(original, "第二问", "第二答");
 
+        // 单写者语义：会话持有独占锁——同一文件重开需先关闭原属主
+        original.close();
         Session replayed = Session.load(original.jsonl());
 
         assertEquals(original.id(), replayed.id());
@@ -94,6 +96,8 @@ class SessionTest {
         String tricky = "带\"引号\"与\n换行\t的文本";
         original.append(SessionEvent.userMessage(tricky));
 
+        // 单写者语义：会话持有独占锁——同一文件重开需先关闭原属主
+        original.close();
         Session replayed = Session.load(original.jsonl());
 
         assertEquals(tricky, replayed.events().get(0).text(), "特殊字符载荷应原样回放");
@@ -145,6 +149,8 @@ class SessionTest {
         session.append(SessionEvent.userMessage("问"));
         session.append(SessionEvent.assistantMessage("答", new TokenUsage(1200, 340, 1540)));
 
+        // 单写者语义：会话持有独占锁——同一文件重开需先关闭原属主
+        session.close();
         Session reloaded = Session.load(session.jsonl());
         assertEquals(new TokenUsage(1200, 340, 1540), reloaded.events().get(1).usage(),
                 "usage 随 JSONL 完整往返");
@@ -164,6 +170,61 @@ class SessionTest {
     }
 
     @Test
+    void secondInstanceOnSameFileIsRejected() throws IOException {
+        // 单写者检测（工单 M10-03）：同一会话被第二实例打开即报错——两个内存视图
+        // 各写各的会让 JSONL 交错追加、上下文静默分叉
+        Session owner = Session.create(sessionsDir());
+        owner.append(SessionEvent.userMessage("属主写入"));
+
+        SessionLockedException rejected = assertThrows(SessionLockedException.class,
+                () -> Session.load(owner.jsonl()), "同进程第二实例打开同一会话应被拒");
+        assertEquals(owner.id(), rejected.sessionId(), "异常点名被占会话");
+
+        owner.append(SessionEvent.assistantMessage("属主继续写"));
+        assertEquals(2, owner.events().size(), "属主不受他人打开失败影响");
+        owner.close();
+    }
+
+    @Test
+    void latestRejectsOccupiedSession() throws IOException {
+        // 续接路径（CLI 与 Web 启动都经 latest）：会话被占时打开即失败——报错点即用户决策点
+        Session owner = Session.create(sessionsDir());
+        owner.append(SessionEvent.userMessage("占着最新位置"));
+
+        SessionLockedException rejected = assertThrows(SessionLockedException.class,
+                () -> Session.latest(sessionsDir()));
+        assertEquals(owner.id(), rejected.sessionId());
+        owner.close();
+    }
+
+    @Test
+    void closeReleasesLockForReopenAndIsIdempotent() throws IOException {
+        // 释放语义：close 后同一文件可被重新打开（换绑、进程退出的正常路径）；重复 close 无副作用
+        Session first = Session.create(sessionsDir());
+        first.append(SessionEvent.userMessage("一"));
+        Path file = first.jsonl();
+        first.close();
+        first.close();
+
+        Session reopened = Session.load(file);
+        assertEquals(1, reopened.events().size(), "重开后事件完整");
+        reopened.close();
+        assertNotNull(Session.latest(sessionsDir()), "latest 可正常打开（锁已释放）");
+    }
+
+    @Test
+    void appendAfterCloseRejected() throws IOException {
+        // 契约闭环（双轴审查）：关闭后写入属调用方错误——锁已释放，
+        // 继续写会与可能接手的新属主形成无锁并发
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("关闭前"));
+        session.close();
+
+        assertThrows(IllegalStateException.class,
+                () -> session.append(SessionEvent.userMessage("关闭后")));
+    }
+
+    @Test
     void loadRejectsCorruptLine() throws IOException {
         Path file = sessionsDir().resolve("bad.jsonl");
         Files.createDirectories(sessionsDir());
@@ -180,6 +241,8 @@ class SessionTest {
         session.append(SessionEvent.toolCall("call_1", "read_file", "{}", "第一轮思考"));
         session.append(SessionEvent.toolResult("call_1", "read_file", "内容"));
 
+        // 单写者语义：会话持有独占锁——同一文件重开需先关闭原属主
+        session.close();
         Session reloaded = Session.load(session.jsonl());
         assertEquals("第一轮思考", reloaded.events().get(0).reasoning(), "reasoning 随 JSONL 往返");
         assertEquals("第一轮思考", reloaded.deriveMessages().get(0).reasoning(),
@@ -259,6 +322,8 @@ class SessionTest {
         session.append(SessionEvent.approvalRequested("write_file", "{\"path\":\"output.txt\"}"));
         session.append(SessionEvent.approvalDecided("write_file", "allow（回答者: console）"));
 
+        // 单写者语义：会话持有独占锁——同一文件重开需先关闭原属主
+        session.close();
         Session reloaded = Session.load(session.jsonl());
         assertEquals(3, reloaded.events().size(), "审批事件随 JSONL 完整往返");
         assertEquals(SessionEvent.APPROVAL_REQUESTED, reloaded.events().get(1).type());

@@ -542,7 +542,9 @@ const app = (() => {
             body: JSON.stringify({ id: s.id })
           });
           if (!res.ok) {
-            showToast('切换会话失败（HTTP ' + res.status + '）');
+            // 服务端错误文案优先（如"会话已被占用：<id>"）——比状态码更有行动指向
+            const detail = (await res.text().catch(() => '')).trim();
+            showToast(detail || ('切换会话失败（HTTP ' + res.status + '）'));
             return;
           }
           location.reload(); // 重连 SSE 回放所切换的会话

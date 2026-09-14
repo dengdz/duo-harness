@@ -313,6 +313,7 @@ class WebFaceTest {
         // 分脑防御（BUG-20260914-02）：switch 换绑后必须触发会话变更回调重建 agent
         Session other = Session.create(tempDir.resolve("web-sessions"));
         other.append(SessionEvent.userMessage("另一个会话的历史"));
+        other.close(); // 准备完毕即释放锁：模拟"会话文件存在、当前无进程占用"（可被 Web 面打开）
         Session current = Session.create(tempDir.resolve("sessions"));
         start(current, scriptedAgent(current, "ok"));
 
@@ -322,6 +323,39 @@ class WebFaceTest {
         assertEquals(other.id(), face.currentSession().id(), "当前会话已换绑");
         assertTrue(changedSessions.stream().anyMatch(s -> s.id().equals(other.id())),
                 "会话变更回调以换绑会话触发（agent 重建信号）");
+    }
+
+    @Test
+    void sessionSwitchToOccupiedSessionReportsConflict() throws Exception {
+        // 占用冲突（工单 M10-03）：切到被其他实例持有的会话，给出 409 + 点名会话的明确错误
+        Path listed = tempDir.resolve("web-sessions");
+        Session occupied = Session.create(listed);
+        occupied.append(SessionEvent.userMessage("被占会话"));
+        Session current = Session.create(tempDir.resolve("sessions"));
+        start(current, scriptedAgent(current, "ok"));
+
+        HttpResponse<String> response = post("/api/session/switch",
+                "{\"id\": \"" + occupied.id() + "\"}");
+
+        assertEquals(409, response.statusCode(), "占用冲突用 409（与 404 不存在区分）");
+        assertTrue(response.body().contains("已被占用"), response.body());
+        assertTrue(response.body().contains(occupied.id()), "点名被占会话: " + response.body());
+        assertEquals(current.id(), face.currentSession().id(), "冲突时当前会话不变");
+        occupied.close();
+    }
+
+    @Test
+    void sessionSwitchToCurrentSessionIsIdempotent() throws Exception {
+        // 切到当前会话幂等成功（双轴审查修复）：重新 load 自己必撞独占锁，
+        // 而语义上本就无需动作——侧栏点当前项、重复提交切换请求都不该失败
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        HttpResponse<String> response = post("/api/session/switch",
+                "{\"id\": \"" + session.id() + "\"}");
+
+        assertEquals(200, response.statusCode(), "切到当前会话应幂等成功: " + response.body());
+        assertEquals(session.id(), face.currentSession().id(), "当前会话不变");
     }
 
     @Test

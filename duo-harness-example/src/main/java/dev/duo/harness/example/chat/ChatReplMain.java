@@ -63,7 +63,15 @@ public final class ChatReplMain {
                            Path sessionsDir, String systemPrompt) throws Exception {
         out.println("=== duo-harness Chat Demo（M4：多轮对话 + 会话记忆）===");
 
-        Session session = Session.latest(sessionsDir);
+        Session session;
+        try {
+            session = Session.latest(sessionsDir);
+        } catch (dev.duo.harness.session.SessionLockedException e) {
+            // 单写者检测：最新会话被他处占用——明确提示并改为新建会话继续（不静默共享日志）
+            out.println("[提示] " + e.getMessage());
+            out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
+            session = null;
+        }
         boolean resumed = session != null;
         if (session == null) {
             session = Session.create(sessionsDir);
@@ -81,7 +89,9 @@ public final class ChatReplMain {
                 break;
             }
             if (line.strip().equals("/new")) {
+                Session previous = session;
                 session = Session.create(sessionsDir);
+                previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                 out.println("已开新会话 " + session.id());
                 continue;
             }
@@ -91,6 +101,7 @@ public final class ChatReplMain {
             converse(out, adapter, session, systemPrompt, line.strip());
         }
         out.println("=== 对话结束 ===");
+        session.close(); // 退出即释放会话独占锁（他处可续接该会话）
         out.flush();
     }
 
