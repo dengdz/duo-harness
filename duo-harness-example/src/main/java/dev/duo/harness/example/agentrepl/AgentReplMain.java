@@ -18,6 +18,7 @@ import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.AnswersView;
 import dev.duo.harness.tools.InteractionService;
+import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolsService;
 import dev.duo.harness.example.tools.ToolsView;
 
@@ -87,7 +88,7 @@ public final class AgentReplMain {
         ToolsService tools = root.as(AgentToolsView.class).tools();
         InteractionService answers = root.as(AgentAnswersView.class).answers();
         dev.duo.harness.agent.SkillRegistry skills = root.as(AgentSkillsView.class).skills();
-        tools.register(root, new dev.duo.harness.tools.AskUserTool(answers));
+        registerIfAbsent(tools, root, "ask_user", () -> new dev.duo.harness.tools.AskUserTool(answers));
 
         Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
         Session session = Session.latest(sessionsDir);
@@ -115,7 +116,7 @@ public final class AgentReplMain {
                 new dev.duo.harness.agent.ContextGovernance(llm.adapter));
         ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts,
                 governanceHolder.governance);
-        tools.register(root, new dev.duo.harness.agent.ExitPlanModeTool(answers, sessionHolder::current, () -> {
+        registerIfAbsent(tools, root, "exit_plan_mode", () -> new dev.duo.harness.agent.ExitPlanModeTool(answers, sessionHolder::current, () -> {
             plan.active = false;
             if (plan.guidance != null) {
                 try {
@@ -234,6 +235,14 @@ public final class AgentReplMain {
                                         dev.duo.harness.agent.ContextGovernance governance) {
         return new dev.duo.harness.agent.internal.ToolCallingAgent(adapter, tools, session, prompts,
                 dev.duo.harness.agent.internal.ToolCallingAgent.MAX_ITERATIONS, governance);
+    }
+
+    /** 同名已注册则跳过（先到先得）——Web 装配（WebPlugin）先行注册交互工具时让位，防同名重复注册。 */
+    private static void registerIfAbsent(ToolsService tools, Context root, String name,
+                                         java.util.function.Supplier<ToolDefinition> factory) {
+        if (tools.list().stream().noneMatch(definition -> name.equals(definition.name()))) {
+            tools.register(root, factory.get());
+        }
     }
 
     /** 可变引用：/new 时换会话、重建 agent（ToolCallingAgent 持有 final 会话引用）。 */

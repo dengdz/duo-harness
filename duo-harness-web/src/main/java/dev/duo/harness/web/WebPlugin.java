@@ -85,6 +85,14 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 审计桥包装（ADR-0008 决策 5）：approval/requested、approval/decided 事件落会话
         // ——会话监听器推 SSE，页面据此渲染审批卡；会话经 face 延迟解析（/new 换绑后留新会话）
         answers.register(ctx, new AuditingAnswerer(face::currentSession, webAnswerer));
+        // HITL 交互工具补全：ask_user 与计划呈交随 Web 装配注册——纯 Web 部署（无终端）
+        // 下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配在场。会话经 face 延迟解析
+        // （/new、/switch 换绑后取新会话）；Web 面不挂计划指导片段，退出回调无状态可清。
+        // 注册前查重：CLI+Web 双装配共存（demo 场景）时先到先得，避免同名重复注册被拒
+        registerInteractionTool(tools, ctx, "ask_user",
+                () -> new dev.duo.harness.tools.AskUserTool(answers));
+        registerInteractionTool(tools, ctx, "exit_plan_mode",
+                () -> new dev.duo.harness.agent.ExitPlanModeTool(answers, face::currentSession, () -> { }));
         // /new：全新会话；/switch：换绑既有会话——两者换绑后都经会话变更回调重建 agent
         // （ToolCallingAgent 持有 final 会话引用，不重建即分脑）
         face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));
@@ -92,6 +100,14 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ToolCallingAgent.MAX_ITERATIONS, governance)));
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
         return face::stop;
+    }
+
+    /** 同名已注册则跳过（先到先得）——CLI 与 Web 双装配共存时不触发内核重复注册拒绝。 */
+    private static void registerInteractionTool(ToolsService tools, Context ctx,
+                                                String name, java.util.function.Supplier<dev.duo.harness.tools.ToolDefinition> factory) {
+        if (tools.list().stream().noneMatch(definition -> name.equals(definition.name()))) {
+            tools.register(ctx, factory.get());
+        }
     }
 
     /** tools 服务的视图接口（方法名即服务名）。 */

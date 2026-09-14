@@ -48,6 +48,7 @@ plugins:
     config:
       port: 18080   # 避开本机常用端口（8080/8081 被 duoduo 占用）
 
-  # ask_user 提问工具的挂载由 AgentReplMain 装配（构造注入交互服务后注册）
+  # ask_user / exit_plan_mode 交互工具由 WebPlugin 装配链自行注册（纯 Web 部署 HITL 完整）；
+  # CLI 侧（AgentRepl）的等价注册在装配层完成
   # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载
   # （MiniFileSystemServer 指向临时目录）——等价形态见 demo-m2.yml 注释

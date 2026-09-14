@@ -71,8 +71,13 @@ class ToolCatalogTest {
             ToolsService tools = root.as(ToolsView.class).tools();
             InteractionService answers = root.as(AnswersView.class).answers();
             Session session = Session.create(tempDir.resolve("sessions"));
-            tools.register(root, new AskUserTool(answers));
-            tools.register(root, new ExitPlanModeTool(answers, () -> session, () -> { }));
+            // 复刻 AgentReplMain 的查重注册：agent-demo.yml 的 WebPlugin 已注册交互工具时让位
+            if (tools.list().stream().noneMatch(d -> "ask_user".equals(d.name()))) {
+                tools.register(root, new AskUserTool(answers));
+            }
+            if (tools.list().stream().noneMatch(d -> "exit_plan_mode".equals(d.name()))) {
+                tools.register(root, new ExitPlanModeTool(answers, () -> session, () -> { }));
+            }
 
             String doc = Files.readString(catalogPath(), StandardCharsets.UTF_8);
             int checked = 0;

@@ -292,6 +292,69 @@ class WebFaceTest {
                 "会话变更回调以换绑会话触发（agent 重建信号）");
     }
 
+    @Test
+    void sessionSwitchRejectsInvalidSessionIds() throws Exception {
+        // 白名单校验（工单 M10-02）：id 只接受生成形态（日期时间 + 4 位十六进制），
+        // 路径分隔符、穿越串、任意杂串一律 400，不进路径解析
+        Session current = Session.create(tempDir.resolve("sessions"));
+        start(current, scriptedAgent(current, "ok"));
+
+        for (String bad : List.of("../escape", "a/b", "abc", "..", "1/../../etc")) {
+            HttpResponse<String> response = post("/api/session/switch",
+                    "{\"id\": \"" + bad + "\"}");
+            assertEquals(400, response.statusCode(), "非法 id 应拒绝: " + bad);
+        }
+    }
+
+    @Test
+    void sessionSwitchUnknownIdFailsWithoutEchoingInternals() throws Exception {
+        // 合法格式但不存在：404 + 通用描述——异常细节（含文件系统路径）不回显
+        Session current = Session.create(tempDir.resolve("sessions"));
+        start(current, scriptedAgent(current, "ok"));
+
+        HttpResponse<String> response = post("/api/session/switch",
+                "{\"id\": \"20260101-000000-beef\"}");
+        assertEquals(404, response.statusCode());
+        String body = response.body();
+        assertTrue(body.contains("切换失败"), body);
+        assertTrue(!body.contains("Exception") && !body.contains(tempDir.toString()),
+                "错误响应不得回显异常类型或内部路径: " + body);
+    }
+
+    @Test
+    void oversizedRequestBodyRejectedWith413() throws Exception {
+        // 请求体上限（工单 M10-02）：超限拒收，防误粘贴/恶意超大 body 占内存
+        Session current = Session.create(tempDir.resolve("sessions"));
+        start(current, scriptedAgent(current, "ok"));
+
+        String big = "x".repeat(1_000_001);
+        HttpResponse<String> response = post("/api/message", "{\"text\": \"" + big + "\"}");
+        assertEquals(413, response.statusCode(), "超过 1MB 上限应 413");
+    }
+
+    @Test
+    void sessionsJsonListsSessionsWithCurrentMark() throws Exception {
+        // /api/sessions 端点形态（M8 零覆盖补齐）：列表、修改时间字段、current 标记
+        Path listed = tempDir.resolve("web-sessions");
+        Session first = Session.create(listed);
+        first.append(SessionEvent.userMessage("历史"));
+        Session current = Session.create(listed);
+        start(current, scriptedAgent(current, "ok"));
+        face.onNewSession(() -> Session.create(listed));
+
+        JsonNode json = new ObjectMapper().readTree(get("/api/sessions"));
+        assertTrue(json.path("sessions").isArray() && json.path("sessions").size() >= 1, "返回会话数组");
+        JsonNode currentNode = null;
+        for (JsonNode node : json.path("sessions")) {
+            assertTrue(node.has("id") && node.has("lastModifiedMs") && node.has("current"), "字段齐备");
+            if (node.path("current").asBoolean()) {
+                currentNode = node;
+            }
+        }
+        assertTrue(currentNode != null, "恰有 current 标记");
+        assertEquals(current.id(), currentNode.path("id").asText(), "current 指向当前会话");
+    }
+
     /** 单段直答 mock agent（模拟真实 ToolCallingAgent：user 消息入会话 + chunk 交 listener）。 */
     private ChatAgent scriptedAgent(Session session, String reply) {
         return (userText, listener) -> {

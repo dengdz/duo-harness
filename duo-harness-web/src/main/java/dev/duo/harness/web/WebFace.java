@@ -39,6 +39,11 @@ public final class WebFace {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final long HEARTBEAT_INTERVAL_MS = 15_000;
+    /** POST 请求体大小上限（1MB）：防误粘贴/恶意超大 body 占内存，正常对话文本远低于此。 */
+    private static final int MAX_BODY_BYTES = 1_000_000;
+    /** 会话 id 白名单（Session.newId 的生成形态：日期时间 + 4 位十六进制后缀）。 */
+    private static final java.util.regex.Pattern SESSION_ID =
+            java.util.regex.Pattern.compile("\\d{8}-\\d{6}-[0-9a-f]{4}");
 
     private final HttpServer server;
     private final Context ctx;
@@ -236,7 +241,12 @@ public final class WebFace {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            byte[] raw = readBodyLimited(exchange);
+            if (raw == null) {
+                exchange.sendResponseHeaders(413, -1);
+                return;
+            }
+            String body = new String(raw, StandardCharsets.UTF_8);
             String text;
             try {
                 JsonNode node = JSON.readTree(body);
@@ -283,7 +293,11 @@ public final class WebFace {
         });
         // 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）
         server.createContext("/api/session/new", exchange -> {
-            exchange.getRequestBody().readAllBytes(); // POST 请求体必须清空（keep-alive 连接复用正确性）
+            byte[] discarded = readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
+            if (discarded == null) {
+                exchange.sendResponseHeaders(413, -1);
+                return;
+            }
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -291,7 +305,9 @@ public final class WebFace {
             try {
                 newSession();
             } catch (Exception e) {
-                byte[] msg = ("新会话创建失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
+                // 异常细节仅服务端控制台留痕——错误响应不回显内部消息（M10-02 脱敏）
+                System.out.println("[web] 新会话创建失败: " + e);
+                byte[] msg = "新会话创建失败".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
                 exchange.sendResponseHeaders(500, msg.length);
                 try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
@@ -310,16 +326,21 @@ public final class WebFace {
             try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
         });
         // 切换会话：{id} → 加载该会话并换绑（SSE 推送新会话存量回放）；
-        // 会话变更回调重建 agent——不重建即分脑（agent 写旧会话、页面看新会话）
+        // 会话变更回调重建 agent——不重建即分脑（agent 写旧会话、页面看新会话）。
+        // id 按生成形态白名单校验：路径分隔符/穿越串一律 400，不进路径解析
         server.createContext("/api/session/switch", exchange -> {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
+            byte[] raw = readBodyLimited(exchange);
+            if (raw == null) {
+                exchange.sendResponseHeaders(413, -1);
+                return;
+            }
             try {
-                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                String id = JSON.readTree(body).path("id").asText("");
-                if (id.isBlank()) {
+                String id = JSON.readTree(new String(raw, StandardCharsets.UTF_8)).path("id").asText("");
+                if (id.isBlank() || !SESSION_ID.matcher(id).matches()) {
                     exchange.sendResponseHeaders(400, -1);
                     return;
                 }
@@ -331,7 +352,9 @@ public final class WebFace {
                 exchange.sendResponseHeaders(200, ok.length);
                 try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
             } catch (Exception e) {
-                byte[] msg = ("切换失败: " + e.getMessage()).getBytes(StandardCharsets.UTF_8);
+                // 异常细节（含文件系统路径）仅服务端控制台留痕，不回显给响应体（M10-02 脱敏）
+                System.out.println("[web] 会话切换失败: " + e);
+                byte[] msg = "切换失败：会话不存在或不可读".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
                 exchange.sendResponseHeaders(404, msg.length);
                 try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
@@ -347,7 +370,12 @@ public final class WebFace {
                 exchange.sendResponseHeaders(503, -1);
                 return;
             }
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            byte[] raw = readBodyLimited(exchange);
+            if (raw == null) {
+                exchange.sendResponseHeaders(413, -1);
+                return;
+            }
+            String body = new String(raw, StandardCharsets.UTF_8);
             boolean completed;
             try {
                 JsonNode node = JSON.readTree(body);
@@ -464,6 +492,12 @@ public final class WebFace {
     private static String suffixOf(String name) {
         int dot = name.lastIndexOf('.');
         return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** 读取请求体并施加大小上限：超限返回 null（调用方回 413），最多读上限+1 字节防内存放大。 */
+    private static byte[] readBodyLimited(HttpExchange exchange) throws IOException {
+        byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
+        return body.length > MAX_BODY_BYTES ? null : body;
     }
 
     /** 读 classpath 资源；缺失或读失败返回 null（404 语义由调用方定）。 */

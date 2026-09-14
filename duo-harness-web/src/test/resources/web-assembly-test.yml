@@ -1,0 +1,18 @@
+plugins:
+  # 纯 Web 最小装配（工单 M10-02 装配测试）：无终端、无 CLI 装配层——
+  # WebPlugin 装配链应自行补齐 ask_user 与计划呈交工具，HITL 不依赖 CLI 在场
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  - id: prompts
+    name: dev.duo.harness.agent.PromptPlugin
+    config:
+      systemPrompt: "装配测试用 system 提示。"
+
+  - id: answers
+    name: dev.duo.harness.tools.InteractionPlugin
+
+  - id: web
+    name: dev.duo.harness.web.WebPlugin
+    config:
+      port: 0   # 随机端口：不与本机常驻服务/其他测试冲突

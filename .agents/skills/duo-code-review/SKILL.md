@@ -7,6 +7,12 @@ description: 审查 duo-harness 仓库的代码变更、提交或 PR 时使用�
 
 **本技能是指导，不是完整清单。** 先看清楚变更范围（`git diff --stat` / `git show <commit>`），读足够的上下文代码理解设计意图，再逐项检查。优先级排序：正确性 > 生命周期/并发 > 安全 > 破坏既有行为 > 风格。短而实证的审查优于冗长的 nit 清单。
 
+## 审查流水线（两段式，顺序固定）
+
+1. **第一段——OCR 行级审查（先跑）**：`ocr review --audience agent -b "<业务上下文>"` 对 diff 出行级意见；端点大面积失败（403/400/timeout，多为模型过期）时按下方「ocr 执行策略」第 3 条切换**委托模式**（`ocr delegate preview/rule` + 本 agent 行级审查），不得跳过本段。
+2. **第二段——`code-review` 技能双轴（后跑）**：调用 mattpocock `code-review` 技能（Standards/Spec 双轴并行子代理）。fixed point 取该工单改动前的提交（单工单审 `HEAD~1`，批次/里程碑审分支基点或用户指定点）；Spec 轴的 spec 来源 = `.scratch/<feature>/spec.md` 与对应工单文件。
+3. **合并报告**：OCR 行级意见 + Standards/Spec 双轴发现合并为一份报告，blocker 与 suggestion 分级不变；两轴发现不重排不合并（双轴分离的本意）。
+
 ## 事实来源（读原文，不要凭记忆转述）
 
 - `docs/` 与 `README.md`（README 未建，建成后并入）：对外承诺的行为。**文档与代码不一致按 blocker 处理**——文档里的 API 签名、默认值、行为描述对照源码核实，不信转述。
