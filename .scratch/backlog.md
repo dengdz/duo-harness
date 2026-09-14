@@ -4,10 +4,19 @@
 
 ## 上下文治理（M9 衍生）
 
-- [ ] **Web 状态面显示 token 估算**：状态面加"上下文估算：N tokens / 阈值 M"一行，治理可见化（现状只在治理触发时打终端日志，短会话完全不可见）。来源：M9 收官用户反馈；建议随 M10 或 0.4.x patch
+- [x] **Web 状态面显示 token 占用**：状态面加"上下文占用"一行，治理可见化。→ 进 M10（2026-09-14），升格为真实 usage 展示，见 `.scratch/m10-web-hardening/`
 - [ ] **治理阈值 yml 化**：spill/修剪/压缩/窗口四阈值目前是 `ContextGovernance` 常量，改为 WebPlugin/装配 config 可配。来源：M9 spec Out of Scope 有意延后
-- [ ] **provider usage 捕获**：`stream_options: include_usage` 拿真实 token 数替代本地估算（估算 ±10-20% 误差）。来源：M9 grill Q1 裁定的增强项
+- [x] **provider usage 捕获**：`stream_options: include_usage` 拿真实 token 数替代本地估算。→ 进 M10（2026-09-14），治理判定切真实值+估算兜底（ADR-0009），见 `.scratch/m10-web-hardening/`
 - [ ] **/compact 手动压缩命令**：CLI 与 Web 各加一个手动触发入口。来源：DSH 参照（研究材料 45 行）
+
+## Web 呈现域（M10 grill 衍生）
+
+- [ ] **鉴权与局域网暴露**：loopback-only 维持。用户 2026-09-14 裁定"局域网多设备目前不需要"——要给别人用时重启（yml 静态访问令牌 + bind 配置 + "非回环绑定必须配令牌"的 fail-closed 联动，grill 已议定未落盘实施）。
+- [ ] **会话切换无刷新 + 向上分页**：消除 location.reload，历史事件按页加载（DSH 50 条/页参照）——与 M10 增量回放协议是天然一对，前端届时才真正消费游标续传。
+- [ ] **代码语法高亮**：MD 渲染随 M10 落地（vendor marked.js + DOMPurify），highlight.js（约 100KB+）待界面稳定后评估。
+- [ ] **计费口径统计**：cache 命中率、分桶明细——usage 已随 M10 落 assistant/message 日志，按需投影展示。
+- [ ] **工具名协议化渲染**：前端散布 ask_user/exit_plan_mode 硬编码、后端"拒绝"魔法串判定审批语义，改元数据驱动。
+- [ ] **状态面轮询统一**：5s setInterval 与 SSE 双通道并存，统一事件通道或论证保留轮询。
 
 ## 文档与呈现（M8.5 衍生）
 
