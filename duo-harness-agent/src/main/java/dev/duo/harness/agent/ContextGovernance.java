@@ -71,7 +71,9 @@ public final class ContextGovernance {
      */
     public List<Message> govern(List<Message> messages, dev.duo.harness.session.Session session) {
         long tokens = ContextBudget.estimateMessageTokens(messages);
-        List<Message> governed = compact(spillAndPrune(messages, session));
+        List<Message> governed = compact(
+                spillAndPrune(messages, session),
+                (long) (COMPACTION_THRESHOLD_RATIO * CONTEXT_WINDOW_TOKENS));
         long after = ContextBudget.estimateMessageTokens(governed);
         if (after != tokens) {
             System.out.println("[上下文治理] " + messages.size() + " 条消息：估算 "
@@ -157,12 +159,49 @@ public final class ContextGovernance {
         return toolName.replaceAll("[^\\w.-]", "_");
     }
 
-    /** compaction：远端历史折叠（工单 04 实现，当前直通）。 */
-    private List<Message> compact(List<Message> messages) {
-        return messages;
+    /**
+     * compaction：修剪后估算仍超阈值时，远端历史折叠为固定骨架摘要（近端原文保留）。
+     * 切分点前移到 USER 消息边界——近端以 TOOL 消息开头会破坏 provider 的
+     * tool_calls/results 相邻协议。折叠只影响本次请求；LLM 失败原样透出（降级不冒险）。
+     */
+    List<Message> compact(List<Message> messages, long thresholdTokens) {
+        long estimate = ContextBudget.estimateMessageTokens(messages);
+        if (estimate <= thresholdTokens) {
+            return messages;
+        }
+        int keepRecent = Math.max(1, (int) Math.round(messages.size() * KEEP_RECENT_RATIO));
+        int split = messages.size() - keepRecent;
+        if (split < MIN_REMOTE_MESSAGES) {
+            return messages; // 近端之外寥寥数条，无折叠价值
+        }
+        while (split < messages.size() && messages.get(split).role() != Message.Role.USER) {
+            split++; // 切分点推进到 USER 边界（协议安全）
+        }
+        if (split >= messages.size() - 1 || split > messages.size() - keepRecent) {
+            return messages; // 无可用边界或近端越扩越大——放弃折叠
+        }
+        List<Message> remote = messages.subList(0, split);
+        List<Message> recent = new ArrayList<>(messages.subList(split, messages.size()));
+        try {
+            String summary = summarize(remote);
+            if (summary.isBlank()) {
+                return messages;
+            }
+            System.out.println("[上下文治理] 估算 " + estimate + " tokens 超阈值 " + thresholdTokens
+                    + "，远端 " + remote.size() + " 条折叠为摘要（近端保留 " + recent.size() + " 条原文）");
+            List<Message> result = new ArrayList<>();
+            result.add(new Message(Message.Role.USER,
+                    "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n" + summary,
+                    null, null, null));
+            result.addAll(recent);
+            return result;
+        } catch (Exception e) {
+            System.out.println("[上下文治理] 压缩摘要生成失败，本次请求原样透出: " + e.getMessage());
+            return messages;
+        }
     }
 
-    /** compaction 摘要生成：远端消息经 LLM 直答折叠为固定骨架摘要（工单 04 启用）。 */
+    /** compaction 摘要生成：远端消息经 LLM 直答折叠为固定骨架摘要。 */
     String summarize(List<Message> remote) {
         ChatRequest request = new ChatRequest(SUMMARY_SYSTEM, toChatMessages(remote), List.of());
         StringBuilder summary = new StringBuilder();
@@ -170,11 +209,17 @@ public final class ContextGovernance {
         return summary.toString();
     }
 
-    /** 投影 → llm 消息（与 internal.Messages 同映射；摘要调用复用，不依赖 internal）。 */
+    /** 投影 → llm 消息（摘要调用用 USER 角色平铺——只取文本，协议形态无关紧要）。 */
     private static List<ChatMessage> toChatMessages(List<Message> messages) {
         List<ChatMessage> result = new ArrayList<>();
         for (Message message : messages) {
-            result.add(new ChatMessage(ChatMessage.Role.USER, message.content(), null, null));
+            String prefix = switch (message.role()) {
+                case USER -> "用户：";
+                case ASSISTANT -> "助手：";
+                case TOOL -> "工具(" + message.toolCallId() + ")：";
+            };
+            result.add(new ChatMessage(ChatMessage.Role.USER,
+                    prefix + message.content(), null, null));
         }
         return result;
     }
