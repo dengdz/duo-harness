@@ -9,7 +9,7 @@
 02（AgentReplMain 瘦身依赖 REPL 已迁 CliPlugin）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] DuoMain：Boot.from（默认 agent-demo.yml）+ CountDownLatch 保活 + shutdown hook 级联 dispose
@@ -24,3 +24,4 @@ in-progress
 - 审查（委托 OCR + 双轴）修复：DuoMain.run 契约补全（@param/@throws/失败模式——hook dispose 抛错会挂死 main 的真缺陷已修）；spec 红线 3 对账（run(in,out) 措辞）；System.in stub（cli 行读 surefire stdin 会阻塞）。
 - 验证：双开实测——启动后 Web 持 c267、CLI 新建 f6fa 各持锁；`/exit` 后 CLI 锁释放、Web 存活（200）；全量 292 用例绿；日志叙述齐（DuoMain/CLI 提示/会话行）。
 - 待手动验证：用户确认后置 done（REPL 交互与 04 验收件合并验收）。
+- 验收通过（2026-09-15，用户合并验收 M11 三单：CLI 终端交互/新建/退出 idle/Web 存活/锁互拒）。

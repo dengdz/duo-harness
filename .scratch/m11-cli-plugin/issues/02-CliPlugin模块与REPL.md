@@ -9,7 +9,7 @@
 01（使用共享装配器）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] 模块骨架 duo-harness-cli（pom 依赖 core/tools/session/agent/llm）+ CliPlugin（默认构造 System.in/out；注入构造 in/out/sessionsDir 测试 seam）
@@ -26,3 +26,4 @@ in-progress
 - 留档：/技能名的 REPL 级（经 SkillsPlugin 真实发现根）未自动化——SkillsPlugin 发现根固定（cwd/DuoHome），fixture 注入需演进其配置，解析逻辑已有静态用例锁定，REPL 接线为一行调用；归 backlog 视需求。
 - 验证：cli 模块 14/14（REPL 5：基本轮+事件、/new 换绑、占用提示、EOF idle+回答者摘除、审批 y；装配 1；技能 1；ConsoleAnswerer 7）；全量 292 用例绿；docs:build 绿。
 - 待手动验证：用户确认后置 done（REPL 交互可与 03 的双开演示合并验收）。
+- 验收通过（2026-09-15，用户合并验收 M11 三单：CLI 终端交互/新建/退出 idle/Web 存活/锁互拒）。

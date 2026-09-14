@@ -6,7 +6,9 @@
 
 ### Added
 
-- **CLI 呈现位插件**（ADR-0011）：新模块 `duo-harness-cli`——终端 REPL 成为与 WebPlugin 对称的 Boot 插件（yml 一行启停），`/exit` 只结束终端呈现（会话锁释放、回答者摘除，插件树与 Web 面不受影响）；交互行为与既有 CLI 一致
+- **CLI 呈现位插件**（ADR-0011）：新模块 `duo-harness-cli`——终端 REPL 成为与 WebPlugin 对称的 Boot 插件（yml 一行启停，`disabled: true` 可保留配置地关闭），`/exit` 只结束终端呈现（会话锁释放、回答者摘除，插件树与 Web 面不受影响）；交互行为与既有 CLI 一致；纯 CLI / 纯 Web / 双开三种部署形态均成立
+- **通用启动器 `DuoMain`**（ADR-0011）：Boot 装载 + 非守护保活 + shutdown hook 级联 dispose——Ctrl-C 确定性释放全部会话锁；不含业务装配，demo 专属挂载（MCP 沙箱等）经回调注入；`AgentReplMain` 瘦身为兼容壳（启动命令不变）
+- **呈现位共享装配器**（agent 模块 `presenter` 包）：CLI 与 Web 的执行链装配单点（LLM 执行链工厂 `llm.LlmAdapters` / 治理 / ChatAgent / 交互工具查重注册），消除双份装配漂移
 
 ### Changed
 
