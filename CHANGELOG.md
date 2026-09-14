@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.6.0（未发布）
+
+### Changed
+
+- Web 面重试行为对齐配置：`llm.retry` 段现对 Web 面生效（此前仅 CLI 装配读取，Web 用固定默认）——未配置该段时行为不变（缺省值两侧一致）
+
 ## 0.5.0（2026-09-14）
 
 ### Added
