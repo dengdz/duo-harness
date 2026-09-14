@@ -284,8 +284,10 @@ public final class WebFace {
                         }
                     });
                 } catch (Exception e) {
-                    // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史
-                    pushEvent(SessionEvent.errorEvent(String.valueOf(e.getMessage())));
+                    // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
+                    // 帧内只给通用文案——异常细节服务端控制台留痕，不外推（M10-02 脱敏口径）
+                    System.out.println("[web] 消息处理失败: " + e);
+                    pushEvent(SessionEvent.errorEvent("消息处理失败，详情见服务端日志"));
                 } finally {
                     busy.set(false);
                 }
