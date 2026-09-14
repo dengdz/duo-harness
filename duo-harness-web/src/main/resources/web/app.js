@@ -466,10 +466,27 @@ const app = (() => {
     $('#chatHint').textContent = '会话 ' + currentSessionId + ' · /new 开新话题';
   }
 
-  // ---- 状态面：插件快照 + 工具清单 ----
+  // ---- 状态面：上下文占用 + 插件快照 + 工具清单 ----
+  const fmt = (n) => n.toLocaleString('en-US');
+  function renderContext(context) {
+    // 占用与治理判定同源同口径（ADR-0009）：fromProvider=false 是估算兜底，必须标注不冒充实测
+    const line = $('#contextLine');
+    if (!context) {
+      line.textContent = '—';
+      line.classList.remove('near-threshold');
+      return;
+    }
+    const pct = context.windowTokens > 0 ? (context.tokens * 100 / context.windowTokens).toFixed(1) : '0';
+    const source = context.fromProvider ? '实测' : '估算';
+    line.textContent = fmt(context.tokens) + ' / ' + fmt(context.windowTokens)
+        + ' tokens（' + pct + '%，压缩阈值 ' + fmt(context.thresholdTokens) + ' · ' + source + '）';
+    line.classList.toggle('near-threshold', context.tokens >= context.thresholdTokens);
+  }
+
   async function refreshStatus() {
     try {
       const data = await api.status();
+      renderContext(data.context);
       const plugins = $('#plugins tbody');
       plugins.innerHTML = '';
       for (const p of data.plugins) {

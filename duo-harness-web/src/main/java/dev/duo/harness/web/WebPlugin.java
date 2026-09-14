@@ -77,7 +77,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
         try {
-            face = WebFace.start(port, ctx, tools, session, agent, webAnswerer,
+            face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
                     DuoHome.resolve().resolveDir("agent-sessions"));
         } catch (java.io.IOException e) {
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);

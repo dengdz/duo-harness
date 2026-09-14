@@ -221,6 +221,31 @@ class SessionTest {
     }
 
     @Test
+    void deriveMessagesSafeDuringConcurrentAppend() throws Exception {
+        // 读侧投影与追加并发隔离（状态面轮询任意时刻调 deriveMessages，agent 线程
+        // 同时 append——投影必须遍历快照，撞上活跃列表即抛 ConcurrentModificationException）
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("种子"));
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread writer = new Thread(() -> {
+            for (int i = 0; i < 300 && !done.get(); i++) {
+                session.append(SessionEvent.assistantChunk("增量" + i));
+            }
+            done.set(true);
+        });
+        writer.start();
+        try {
+            while (!done.get()) {
+                session.deriveMessages();
+            }
+        } finally {
+            done.set(true);
+            writer.join();
+        }
+        assertEquals(301, session.events().size(), "并发期间追加全部落盘");
+    }
+
+    @Test
     void approvalEventsRoundTripAndSkipProjection() throws IOException {
         // M6 交互事件：审批请求与决定落会话（审计用），JSONL 往返一致、投影跳过
         Session session = Session.create(sessionsDir());

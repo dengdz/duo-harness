@@ -81,7 +81,7 @@ public final class ContextGovernance {
                 : estimate;
         List<Message> governed = compact(
                 spillAndPrune(messages, session),
-                (long) (COMPACTION_THRESHOLD_RATIO * CONTEXT_WINDOW_TOKENS),
+                contextThreshold(),
                 contextTokens, usage != null);
         long after = ContextBudget.estimateMessageTokens(governed);
         if (after != estimate) {
@@ -89,6 +89,23 @@ public final class ContextGovernance {
                     + estimate + " → " + after + " tokens（会话 " + session.id() + "）");
         }
         return governed;
+    }
+
+    /**
+     * 上下文占用查询：与 compaction 判定同源的只读视图（状态面展示与阈值对照消费）。
+     * 投影现算——任意时刻可查，不必等下一次请求构造。
+     */
+    public ContextOccupancy occupancy(dev.duo.harness.session.Session session) {
+        TokenUsage usage = latestUsage(session);
+        long tokens = usage != null
+                ? usage.promptTokens() + usage.completionTokens()
+                : ContextBudget.estimateMessageTokens(session.deriveMessages());
+        return new ContextOccupancy(tokens, contextThreshold(), CONTEXT_WINDOW_TOKENS, usage != null);
+    }
+
+    /** compaction 触发阈值（窗口 × 触发比例）。 */
+    static long contextThreshold() {
+        return (long) (COMPACTION_THRESHOLD_RATIO * CONTEXT_WINDOW_TOKENS);
     }
 
     /** 最近一次带用量的 assistant/message 事件（倒查即得；续接的历史会话同样天然可取）。 */

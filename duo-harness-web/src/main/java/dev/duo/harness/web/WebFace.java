@@ -47,6 +47,8 @@ public final class WebFace {
     private final CopyOnWriteArrayList<OutputStream> sseOutputs = new CopyOnWriteArrayList<>();
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
     private final WebAnswerer webAnswerer;
+    /** 上下文治理（状态面占用查询的同源数据源；null = 无治理装配，状态面省略占用）。 */
+    private volatile dev.duo.harness.agent.ContextGovernance governance;
     /** 会话目录（侧栏列表与切换用）。 */
     private final Path sessionsDir;
     /** 可换会话（/new 等价）：换绑时 SSE 监听器随之迁移。 */
@@ -84,11 +86,13 @@ public final class WebFace {
 
     /**
      * 启动并绑定 127.0.0.1:port（port 0 = 系统随机分配，测试用）。
+     * governance 可为 null（无治理装配时状态面省略上下文占用字段）。
      *
      * @throws IOException 端口绑定失败
      */
     public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
-                                ChatAgent agent, WebAnswerer webAnswerer, Path sessionsDir)
+                                ChatAgent agent, dev.duo.harness.agent.ContextGovernance governance,
+                                WebAnswerer webAnswerer, Path sessionsDir)
             throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
@@ -101,6 +105,7 @@ public final class WebFace {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir);
+        face.governance = governance;
         face.bindSession(session);
         face.agent = agent;
         face.registerEndpoints();
@@ -417,7 +422,7 @@ public final class WebFace {
         return root.toString();
     }
 
-    /** 状态面 JSON：插件快照 + 工具清单。 */
+    /** 状态面 JSON：插件快照 + 工具清单 + 上下文占用（与治理计量同源，无治理时省略）。 */
     private String statusJson() {
         try {
             var root = JSON.createObjectNode();
@@ -428,6 +433,15 @@ public final class WebFace {
             var toolsNode = root.putArray("tools");
             for (var definition : tools.list()) {
                 toolsNode.addObject().put("name", definition.name()).put("description", definition.description());
+            }
+            dev.duo.harness.agent.ContextGovernance current = governance;
+            if (current != null) {
+                var occupancy = current.occupancy(session);
+                root.putObject("context")
+                        .put("tokens", occupancy.tokens())
+                        .put("thresholdTokens", occupancy.thresholdTokens())
+                        .put("windowTokens", occupancy.windowTokens())
+                        .put("fromProvider", occupancy.fromProvider());
             }
             return root.toString();
         } catch (Exception e) {

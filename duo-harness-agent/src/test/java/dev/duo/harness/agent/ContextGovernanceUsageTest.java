@@ -128,4 +128,32 @@ class ContextGovernanceUsageTest {
         assertTrue(result.size() < messages.size(), "无实测数据时估算兜底触发折叠");
         assertEquals(1, adapter.calls, "摘要调用一次");
     }
+
+    @Test
+    void occupancyReportsProviderTokensWithThreshold() throws IOException {
+        // 状态面数据源（工单 M10-07）：与 compaction 判定同源同口径
+        Session session = newSession();
+        session.append(SessionEvent.userMessage("问"));
+        session.append(SessionEvent.assistantMessage("答", new TokenUsage(112_000, 2_000, 114_000)));
+        ContextGovernance governance = new ContextGovernance(new ScriptedAdapter());
+
+        ContextOccupancy occupancy = governance.occupancy(session);
+
+        assertEquals(114_000, occupancy.tokens(), "实测口径：prompt + completion");
+        assertTrue(occupancy.fromProvider(), "实测标记");
+        assertEquals(THRESHOLD, occupancy.thresholdTokens(), "阈值与 compaction 判定同源");
+        assertEquals(ContextGovernance.CONTEXT_WINDOW_TOKENS, occupancy.windowTokens());
+    }
+
+    @Test
+    void occupancyFallsBackToEstimateWithoutUsage() throws IOException {
+        Session session = newSession();
+        session.append(SessionEvent.userMessage("x".repeat(400)));
+        ContextGovernance governance = new ContextGovernance(new ScriptedAdapter());
+
+        ContextOccupancy occupancy = governance.occupancy(session);
+
+        assertEquals(100, occupancy.tokens(), "400 字符 ÷ 4 = 100 tokens（估算兜底）");
+        assertEquals(false, occupancy.fromProvider(), "估算口径标记（展示须标注，不冒充实测）");
+    }
 }

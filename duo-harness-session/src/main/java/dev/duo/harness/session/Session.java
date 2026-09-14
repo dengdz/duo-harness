@@ -210,10 +210,12 @@ public final class Session {
     /**
      * 投影：事件日志 → 对话消息列表（含 Function Calling 形态）。
      * 旧格式工具事件（无 toolCallId，协议关联缺失）跳过——不投影也不崩溃。
+     * 遍历 {@link #events()} 快照而非活跃列表：读侧投影（含 Web 线程的状态面
+     * 轮询）与追加线程并发隔离，不抛 ConcurrentModificationException。
      */
     public List<Message> deriveMessages() {
         List<Message> messages = new ArrayList<>();
-        for (SessionEvent event : events) {
+        for (SessionEvent event : events()) {
             switch (event.type()) {
                 case SessionEvent.USER_MESSAGE ->
                         messages.add(new Message(Message.Role.USER, event.text()));

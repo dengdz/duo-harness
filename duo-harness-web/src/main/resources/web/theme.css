@@ -171,3 +171,9 @@
   .state-ACTIVE { color: var(--ok); }
   .state-PENDING { color: #d97706; }
   .desc { color: var(--text-dim); }
+  .context-line {
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 9px; line-height: 1.5;
+  }
+  .context-line.near-threshold { border-color: var(--danger); background: var(--danger-tint); }

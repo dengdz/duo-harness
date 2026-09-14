@@ -67,6 +67,12 @@ class WebFaceTest {
 
     /** 装配：真实 Context + ToolsPlugin（回声工具进清单）+ 指定会话与 agent；端口 0 = 随机。 */
     private WebFace start(Session session, ChatAgent agent) throws IOException {
+        return start(session, agent, null);
+    }
+
+    /** 装配重载：注入上下文治理（状态面占用查询的同源数据源；null = 无治理）。 */
+    private WebFace start(Session session, ChatAgent agent,
+                          dev.duo.harness.agent.ContextGovernance governance) throws IOException {
         Context ctx = Context.root();
         ctx.plugin(new ToolsPlugin(), null).awaitStartup();
         ToolsService tools = ctx.as(ToolsView.class).tools();
@@ -92,7 +98,7 @@ class WebFaceTest {
                 return "echo";
             }
         });
-        face = WebFace.start(0, ctx, tools, session, agent, null,
+        face = WebFace.start(0, ctx, tools, session, agent, governance, null,
                 tempDir.resolve("web-sessions"));
         // 会话变更接线：/new 与 /switch 换绑后回调（装配层职责，骨架用例记录变更）
         face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
@@ -163,6 +169,46 @@ class WebFaceTest {
         JsonNode json = new ObjectMapper().readTree(body);
         assertEquals("ACTIVE", json.path("plugins").get(0).path("state").asText(), "ToolsPlugin ACTIVE");
         assertTrue(json.path("tools").toString().contains("echo"), "工具清单含 echo");
+    }
+
+    @Test
+    void statusCarriesContextOccupancyWhenGovernancePresent() throws Exception {
+        // 工单 M10-07：/api/status 暴露上下文占用，与治理计量同源同口径
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("问"));
+        session.append(SessionEvent.assistantMessage("答",
+                new dev.duo.harness.session.TokenUsage(1200, 340, 1540)));
+        dev.duo.harness.agent.ContextGovernance governance =
+                new dev.duo.harness.agent.ContextGovernance(new dev.duo.harness.llm.LlmAdapter() {
+                    @Override
+                    public void stream(dev.duo.harness.llm.ChatRequest request,
+                                       java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                        throw new UnsupportedOperationException("占用查询不触 LLM");
+                    }
+
+                    @Override
+                    public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                                  java.util.function.Consumer<String> textSink) {
+                        throw new UnsupportedOperationException("占用查询不触 LLM");
+                    }
+                });
+        start(session, scriptedAgent(session, "ok"), governance);
+
+        JsonNode json = new ObjectMapper().readTree(get("/api/status"));
+        assertEquals(1540, json.path("context").path("tokens").asLong(), "实测口径 prompt+completion");
+        assertTrue(json.path("context").path("fromProvider").asBoolean(), "实测标记");
+        assertEquals(dev.duo.harness.agent.ContextGovernance.CONTEXT_WINDOW_TOKENS,
+                json.path("context").path("windowTokens").asLong(), "窗口常量随行");
+        assertTrue(json.path("context").path("thresholdTokens").asLong() > 0, "阈值随行（前端阈值对照用）");
+    }
+
+    @Test
+    void statusOmitsContextWhenNoGovernance() throws Exception {
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        JsonNode json = new ObjectMapper().readTree(get("/api/status"));
+        assertTrue(json.path("context").isMissingNode(), "无治理装配时 context 字段缺席（向后兼容）");
     }
 
     @Test
