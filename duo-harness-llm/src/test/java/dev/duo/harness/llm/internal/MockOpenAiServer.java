@@ -136,6 +136,17 @@ final class MockOpenAiServer {
         return wrapInChoices(choice);
     }
 
+    /** 构造一条流末 usage 统计载荷（choices 空数组 + 顶层 usage——include_usage 的到达形态）。 */
+    static String usageChunk(long promptTokens, long completionTokens, long totalTokens) {
+        var root = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        root.putArray("choices");
+        root.putObject("usage")
+                .put("prompt_tokens", promptTokens)
+                .put("completion_tokens", completionTokens)
+                .put("total_tokens", totalTokens);
+        return root.toString();
+    }
+
     private static ObjectNode choiceWithDelta() {
         ObjectNode choice = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
         choice.putObject("delta");

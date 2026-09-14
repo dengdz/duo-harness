@@ -5,6 +5,8 @@ import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.session.Message;
+import dev.duo.harness.session.SessionEvent;
+import dev.duo.harness.session.TokenUsage;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -70,16 +72,35 @@ public final class ContextGovernance {
      * @return 治理后的投影（可能原样返回——未触发任何治理时零开销透传）
      */
     public List<Message> govern(List<Message> messages, dev.duo.harness.session.Session session) {
-        long tokens = ContextBudget.estimateMessageTokens(messages);
+        long estimate = ContextBudget.estimateMessageTokens(messages);
+        // 计量口径（ADR-0009）：provider 真实用量优先——最近一次响应的 prompt+completion
+        // 即本轮请求上下文的近似；事件缺失（provider 未报告/首轮）退回本地估算，治理不失效
+        TokenUsage usage = latestUsage(session);
+        long contextTokens = usage != null
+                ? usage.promptTokens() + usage.completionTokens()
+                : estimate;
         List<Message> governed = compact(
                 spillAndPrune(messages, session),
-                (long) (COMPACTION_THRESHOLD_RATIO * CONTEXT_WINDOW_TOKENS));
+                (long) (COMPACTION_THRESHOLD_RATIO * CONTEXT_WINDOW_TOKENS),
+                contextTokens, usage != null);
         long after = ContextBudget.estimateMessageTokens(governed);
-        if (after != tokens) {
+        if (after != estimate) {
             System.out.println("[上下文治理] " + messages.size() + " 条消息：估算 "
-                    + tokens + " → " + after + " tokens（会话 " + session.id() + "）");
+                    + estimate + " → " + after + " tokens（会话 " + session.id() + "）");
         }
         return governed;
+    }
+
+    /** 最近一次带用量的 assistant/message 事件（倒查即得；续接的历史会话同样天然可取）。 */
+    private static TokenUsage latestUsage(dev.duo.harness.session.Session session) {
+        List<SessionEvent> events = session.events();
+        for (int i = events.size() - 1; i >= 0; i--) {
+            SessionEvent event = events.get(i);
+            if (SessionEvent.ASSISTANT_MESSAGE.equals(event.type()) && event.usage() != null) {
+                return event.usage();
+            }
+        }
+        return null;
     }
 
     /** spill + 修剪：工具结果的体量治理——先卸能卸的（spill），再收窄次长的（修剪）。 */
@@ -159,14 +180,22 @@ public final class ContextGovernance {
         return toolName.replaceAll("[^\\w.-]", "_");
     }
 
+    List<Message> compact(List<Message> messages, long thresholdTokens) {
+        return compact(messages, thresholdTokens,
+                ContextBudget.estimateMessageTokens(messages), false);
+    }
+
     /**
-     * compaction：修剪后估算仍超阈值时，远端历史折叠为固定骨架摘要（近端原文保留）。
+     * compaction：修剪后计量仍超阈值时，远端历史折叠为固定骨架摘要（近端原文保留）。
      * 切分点前移到 USER 消息边界——近端以 TOOL 消息开头会破坏 provider 的
      * tool_calls/results 相邻协议。折叠只影响本次请求；LLM 失败原样透出（降级不冒险）。
+     *
+     * @param measuredTokens       计量值：provider 真实用量或本地估算（由 measuredFromProvider 标注口径）
+     * @param measuredFromProvider 计量是否来自 provider 真实用量（日志口径标注）
      */
-    List<Message> compact(List<Message> messages, long thresholdTokens) {
-        long estimate = ContextBudget.estimateMessageTokens(messages);
-        if (estimate <= thresholdTokens) {
+    List<Message> compact(List<Message> messages, long thresholdTokens,
+                          long measuredTokens, boolean measuredFromProvider) {
+        if (measuredTokens <= thresholdTokens) {
             return messages;
         }
         int keepRecent = Math.max(1, (int) Math.round(messages.size() * KEEP_RECENT_RATIO));
@@ -187,7 +216,8 @@ public final class ContextGovernance {
             if (summary.isBlank()) {
                 return messages;
             }
-            System.out.println("[上下文治理] 估算 " + estimate + " tokens 超阈值 " + thresholdTokens
+            System.out.println("[上下文治理] " + (measuredFromProvider ? "实测" : "估算") + " "
+                    + measuredTokens + " tokens 超阈值 " + thresholdTokens
                     + "，远端 " + remote.size() + " 条折叠为摘要（近端保留 " + recent.size() + " 条原文）");
             List<Message> result = new ArrayList<>();
             result.add(new Message(Message.Role.USER,

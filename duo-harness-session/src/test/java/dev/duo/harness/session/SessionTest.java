@@ -139,6 +139,31 @@ class SessionTest {
     }
 
     @Test
+    void usageRoundTripsOnAssistantMessage() throws IOException {
+        // ADR-0009：真实 token 用量作为 assistant/message 可选字段随 JSONL 持久化
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("问"));
+        session.append(SessionEvent.assistantMessage("答", new TokenUsage(1200, 340, 1540)));
+
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(new TokenUsage(1200, 340, 1540), reloaded.events().get(1).usage(),
+                "usage 随 JSONL 完整往返");
+        assertEquals("答", reloaded.events().get(1).text());
+        assertNull(reloaded.events().get(0).usage(), "user 消息不携带 usage");
+    }
+
+    @Test
+    void legacyAssistantMessageWithoutUsageLoadsAsNull() throws IOException {
+        Files.createDirectories(sessionsDir());
+        Path legacy = sessionsDir().resolve("20260101-000000-nousage.jsonl");
+        Files.writeString(legacy, "{\"type\":\"assistant/message\",\"at\":1,\"text\":\"旧回复\"}\n");
+
+        Session replayed = Session.load(legacy);
+        assertNull(replayed.events().get(0).usage(), "旧格式无 usage 字段落 null（向后兼容）");
+        assertEquals(1, replayed.deriveMessages().size(), "旧格式照常投影");
+    }
+
+    @Test
     void loadRejectsCorruptLine() throws IOException {
         Path file = sessionsDir().resolve("bad.jsonl");
         Files.createDirectories(sessionsDir());

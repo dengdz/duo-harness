@@ -244,7 +244,7 @@ public final class Session {
         return LocalDateTime.now().format(ID_TIMESTAMP) + "-" + suffix;
     }
 
-    /** 事件序列化为 JSONL 行（Jackson 统一读写路径；工具事件额外携带 toolCallId/toolName，tool/call 另带 reasoning）。 */
+    /** 事件序列化为 JSONL 行（Jackson 统一读写路径；可选字段按存在写入——assistant/message 另带 usage）。 */
     private static String toJsonLine(SessionEvent event) throws IOException {
         var node = JSON.createObjectNode();
         node.put("type", event.type());
@@ -259,6 +259,12 @@ public final class Session {
         if (event.reasoning() != null) {
             node.put("reasoning", event.reasoning());
         }
+        if (event.usage() != null) {
+            node.putObject("usage")
+                    .put("promptTokens", event.usage().promptTokens())
+                    .put("completionTokens", event.usage().completionTokens())
+                    .put("totalTokens", event.usage().totalTokens());
+        }
         return JSON.writeValueAsString(node);
     }
 
@@ -271,10 +277,16 @@ public final class Session {
             JsonNode idNode = node.get("toolCallId");
             JsonNode nameNode = node.get("toolName");
             JsonNode reasoningNode = node.get("reasoning");
+            JsonNode usageNode = node.get("usage");
+            TokenUsage usage = usageNode == null || !usageNode.isObject() ? null : new TokenUsage(
+                    usageNode.path("promptTokens").asLong(0),
+                    usageNode.path("completionTokens").asLong(0),
+                    usageNode.path("totalTokens").asLong(0));
             return new SessionEvent(type, at, text,
                     idNode == null || idNode.isNull() ? null : idNode.asText(),
                     nameNode == null || nameNode.isNull() ? null : nameNode.asText(),
-                    reasoningNode == null || reasoningNode.isNull() ? null : reasoningNode.asText());
+                    reasoningNode == null || reasoningNode.isNull() ? null : reasoningNode.asText(),
+                    usage);
         } catch (IOException e) {
             throw new PluginException("会话事件解析失败: " + line, e);
         }

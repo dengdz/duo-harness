@@ -4,16 +4,18 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * LLM 一轮调用的聚合结果：完整文本 + 模型发起的工具调用请求列表 + 思考内容。
+ * LLM 一轮调用的聚合结果：完整文本 + 模型发起的工具调用请求列表 + 思考内容 + 用量。
  *
- * <p>流式增量（文本、tool_calls 分片、reasoning_content）由适配器聚合为
+ * <p>流式增量（文本、tool_calls 分片、reasoning_content、流末 usage）由适配器聚合为
  * 完整形态后交付——分片细节（SSE 帧结构、index 对齐）不泄漏给消费方。</p>
  *
  * @param text            完整回复文本（无文本输出时为空串）
  * @param toolCalls       模型发起的工具调用请求（按响应序；空 = 本轮无工具调用）
  * @param reasoningContent 思考模型（thinking mode）的思考过程；非思考模型为 null
+ * @param usage           provider 报告的真实 token 用量；未报告（含 provider 不支持）为 null
  */
-public record LlmTurn(String text, List<ToolCallRequest> toolCalls, String reasoningContent) {
+public record LlmTurn(String text, List<ToolCallRequest> toolCalls, String reasoningContent,
+                      TokenUsage usage) {
 
     /** 构造时校验非空与防御性拷贝——错误前移到构造点。 */
     public LlmTurn {
@@ -25,6 +27,11 @@ public record LlmTurn(String text, List<ToolCallRequest> toolCalls, String reaso
     /** 兼容构造：无思考内容（非思考模型）。 */
     public LlmTurn(String text, List<ToolCallRequest> toolCalls) {
         this(text, toolCalls, null);
+    }
+
+    /** 兼容构造：无用量（provider 未报告 usage）。 */
+    public LlmTurn(String text, List<ToolCallRequest> toolCalls, String reasoningContent) {
+        this(text, toolCalls, reasoningContent, null);
     }
 
     /** 本轮是否发起了工具调用。 */

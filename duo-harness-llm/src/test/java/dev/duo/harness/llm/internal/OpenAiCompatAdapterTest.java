@@ -7,6 +7,7 @@ import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.LlmTurn;
+import dev.duo.harness.llm.TokenUsage;
 import dev.duo.harness.llm.ToolSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -50,6 +52,40 @@ class OpenAiCompatAdapterTest {
         List<String> chunks = collect(adapter(), new ChatRequest("你是助手", List.of(ChatMessage.user("打招呼"))));
 
         assertEquals(List.of("你好", "，世界"), chunks, "按序聚合文本增量；delta.content 为 null 的角色 chunk 跳过");
+    }
+
+    @Test
+    void requestAsksProviderForUsageStats() throws Exception {
+        server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
+
+        collect(adapter(), new ChatRequest("你是助手", List.of(ChatMessage.user("问"))));
+
+        JsonNode body = json.readTree(server.lastRequestBody());
+        assertTrue(body.path("stream_options").path("include_usage").asBoolean(),
+                "请求应带 stream_options.include_usage（ADR-0009：真实值优先，估算只兜底）");
+    }
+
+    @Test
+    void trailingUsageChunkCapturesIntoTurn() throws Exception {
+        server.respondSse(List.of(
+                MockOpenAiServer.deltaChunk("你好"),
+                MockOpenAiServer.usageChunk(120, 34, 154)));
+
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("你是助手", List.of(ChatMessage.user("打招呼"))), s -> { });
+
+        assertEquals(new TokenUsage(120, 34, 154), turn.usage(), "流末 usage 帧捕获进一轮结果");
+        assertEquals("你好", turn.text(), "usage 帧不干扰文本聚合");
+    }
+
+    @Test
+    void usageAbsentLeavesTurnUsageNull() throws Exception {
+        server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
+
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("你是助手", List.of(ChatMessage.user("问"))), s -> { });
+
+        assertNull(turn.usage(), "provider 未报告 usage 时字段缺席（估算兜底的判定依据）");
     }
 
     @Test

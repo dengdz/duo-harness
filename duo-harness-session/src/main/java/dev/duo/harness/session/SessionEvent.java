@@ -18,9 +18,10 @@ import java.util.Objects;
  * @param toolCallId 协议关联 id（仅工具事件携带，其余为 null）
  * @param toolName   工具名（仅工具事件携带，其余为 null）
  * @param reasoning  思考内容（仅 tool/call 携带，其余为 null）
+ * @param usage      真实 token 用量（仅 assistant/message 携带，provider 未报告为 null）
  */
 public record SessionEvent(String type, long at, String text, String toolCallId, String toolName,
-                           String reasoning) {
+                           String reasoning, TokenUsage usage) {
 
     /** 用户消息（每轮用户输入的完整文本）。 */
     public static final String USER_MESSAGE = "user/message";
@@ -57,12 +58,18 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
 
     /** 兼容构造：非工具事件（无关联信息）。 */
     public SessionEvent(String type, long at, String text) {
-        this(type, at, text, null, null, null);
+        this(type, at, text, null, null, null, null);
     }
 
     /** 兼容构造：工具事件（无思考内容）。 */
     public SessionEvent(String type, long at, String text, String toolCallId, String toolName) {
-        this(type, at, text, toolCallId, toolName, null);
+        this(type, at, text, toolCallId, toolName, null, null);
+    }
+
+    /** 兼容构造：工具事件 + 思考内容。 */
+    public SessionEvent(String type, long at, String text, String toolCallId, String toolName,
+                        String reasoning) {
+        this(type, at, text, toolCallId, toolName, reasoning, null);
     }
 
     /** 便捷工厂：当前时刻的用户消息。 */
@@ -75,9 +82,14 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         return new SessionEvent(ASSISTANT_CHUNK, System.currentTimeMillis(), text);
     }
 
-    /** 便捷工厂：当前时刻的助手完整消息。 */
+    /** 便捷工厂：当前时刻的助手完整消息（无用量——provider 未报告或非 agent 链路）。 */
     public static SessionEvent assistantMessage(String text) {
-        return new SessionEvent(ASSISTANT_MESSAGE, System.currentTimeMillis(), text);
+        return assistantMessage(text, null);
+    }
+
+    /** 便捷工厂：助手完整消息 + 真实 token 用量（provider 报告时随事件持久化，ADR-0009）。 */
+    public static SessionEvent assistantMessage(String text, TokenUsage usage) {
+        return new SessionEvent(ASSISTANT_MESSAGE, System.currentTimeMillis(), text, null, null, null, usage);
     }
 
     /** 便捷工厂：工具调用开始（id 关联模型发起的调用；无思考内容）。 */

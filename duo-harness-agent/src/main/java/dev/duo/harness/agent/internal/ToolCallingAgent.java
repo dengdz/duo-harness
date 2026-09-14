@@ -17,6 +17,7 @@ import dev.duo.harness.llm.ToolSpec;
 import dev.duo.harness.session.Message;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
+import dev.duo.harness.session.TokenUsage;
 import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolsService;
 
@@ -111,7 +112,13 @@ public final class ToolCallingAgent implements ChatAgent {
             });
 
             if (!turn.hasToolCalls()) {
-                session.append(SessionEvent.assistantMessage(turn.text()));
+                // provider 真实用量随 assistant/message 落日志（ADR-0009）：llm 域统计
+                // 映射为会话事件词汇——治理与状态展示的取数源，provider 未报告为 null
+                session.append(SessionEvent.assistantMessage(turn.text(),
+                        turn.usage() == null ? null : new TokenUsage(
+                                turn.usage().promptTokens(),
+                                turn.usage().completionTokens(),
+                                turn.usage().totalTokens())));
                 completed = true;
                 break;
             }

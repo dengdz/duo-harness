@@ -12,6 +12,7 @@ import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.llm.LlmTurn;
 import dev.duo.harness.llm.RetryableLlmException;
+import dev.duo.harness.llm.TokenUsage;
 import dev.duo.harness.llm.ToolCallRequest;
 import dev.duo.harness.llm.ToolSpec;
 
@@ -122,6 +123,8 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
         ObjectNode root = JSON.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
+        // 流末 usage 统计帧（ADR-0009）：治理计量与状态展示优先用真实值，估算只兜底
+        root.putObject("stream_options").put("include_usage", true);
         ArrayNode messages = root.putArray("messages");
         messages.addObject().put("role", "system").put("content", request.systemPrompt());
         for (ChatMessage message : request.messages()) {
@@ -188,11 +191,12 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
         }
     }
 
-    /** 聚合一轮流式响应：文本增量累积 + tool_calls 分片按 index 聚合 + 思考内容捕获（含 finish_reason 检出）。 */
+    /** 聚合一轮流式响应：文本增量累积 + tool_calls 分片按 index 聚合 + 思考内容捕获 + 流末 usage 统计。 */
     private LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink) throws IOException {
         StringBuilder text = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
         List<ToolCallRequest> toolCalls = new ArrayList<>();
+        TokenUsage usage = null;
         // 分片聚合容器：index → 分片内容（tool_calls 按到达序递增 index）
         Map<Integer, String> ids = new TreeMap<>();
         Map<Integer, StringBuilder> names = new TreeMap<>();
@@ -208,7 +212,8 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 if (payload.isEmpty() || "[DONE]".equals(payload)) {
                     continue;
                 }
-                JsonNode delta = JSON.readTree(payload).path("choices").path(0).path("delta");
+                JsonNode frame = JSON.readTree(payload);
+                JsonNode delta = frame.path("choices").path(0).path("delta");
                 JsonNode content = delta.path("content");
                 if (!content.isMissingNode() && !content.isNull()) {
                     textSink.accept(content.asText());
@@ -236,6 +241,15 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                         }
                     }
                 }
+                // usage 帧（choices 空数组 + 顶层 usage）：覆盖式取最新——有的 provider
+                // 附在 finish chunk、有的独立成帧，两种形态统一为"最后一次出现为准"
+                JsonNode usageNode = frame.path("usage");
+                if (usageNode.isObject()) {
+                    usage = new TokenUsage(
+                            usageNode.path("prompt_tokens").asLong(0),
+                            usageNode.path("completion_tokens").asLong(0),
+                            usageNode.path("total_tokens").asLong(0));
+                }
             }
         }
 
@@ -246,7 +260,7 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                     arguments.getOrDefault(index, new StringBuilder()).toString()));
         }
         return new LlmTurn(text.toString(), toolCalls,
-                reasoning.length() == 0 ? null : reasoning.toString());
+                reasoning.length() == 0 ? null : reasoning.toString(), usage);
     }
 
     /** 非 200 响应转点名异常：状态码 + provider 错误消息（error.message）或原文。body 读取失败降级为占位文本。

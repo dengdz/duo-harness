@@ -111,6 +111,33 @@ class ToolCallingAgentTest {
     }
 
     @Test
+    void providerUsageLandsOnAssistantMessageEvent() throws IOException {
+        // ADR-0009：provider 真实用量映射为会话事件词汇，随 assistant/message 落日志
+        Session session = newSession();
+        LlmAdapter withUsage = new LlmAdapter() {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                onChunk.accept(new ChatChunk("答"));
+            }
+
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                textSink.accept("答");
+                return new LlmTurn("答", List.of(),
+                        null, new dev.duo.harness.llm.TokenUsage(1200, 340, 1540));
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(withUsage, noTools(), session, "你是助手", 10);
+
+        agent.send("问", AgentListener.NONE);
+
+        SessionEvent reply = session.events().get(1);
+        assertEquals(SessionEvent.ASSISTANT_MESSAGE, reply.type());
+        assertEquals(new dev.duo.harness.session.TokenUsage(1200, 340, 1540), reply.usage(),
+                "llm 域统计映射进会话事件（agent 域转换，供治理与展示消费）");
+    }
+
+    @Test
     void listenerReceivesChunkSequence() throws IOException {
         Session session = newSession();
         List<String> chunks = new ArrayList<>();
