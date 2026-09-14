@@ -5,17 +5,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.PluginException;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.attribute.FileTime;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
-import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -65,13 +65,16 @@ public final class Session {
     /** 已关闭标志（close 幂等）。 */
     private final AtomicBoolean closed =
             new AtomicBoolean(false);
+    /** 本实例的锁注册键（绝对规范化路径；close 时注销）。 */
+    private final Path lockKey;
 
     private Session(String id, Path jsonl, FileChannel lockChannel,
-                    FileLock fileLock) {
+                    FileLock fileLock, Path lockKey) {
         this.id = id;
         this.jsonl = jsonl;
         this.lockChannel = lockChannel;
         this.fileLock = fileLock;
+        this.lockKey = lockKey;
     }
 
     /** 新建会话：生成 id、创建 JSONL 文件并取得独占锁。 */
@@ -98,9 +101,12 @@ public final class Session {
             id = id.substring(0, id.length() - ".jsonl".length());
         }
         Session session = lock(id, jsonl);
-        try (BufferedReader reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
+        try {
+            // 经持锁通道读取全文再按行解析——不另开 fd（POSIX 语义：进程关闭同一文件的
+            // 任意 fd 会释放它在该文件上的全部锁，独占锁会被自己的读取路径放掉）
+            session.lockChannel.position(0);
+            String content = readAll(session.lockChannel);
+            for (String line : content.split("\n", -1)) {
                 if (line.isBlank()) {
                     continue;
                 }
@@ -121,18 +127,33 @@ public final class Session {
      * @throws SessionLockedException 锁已被占用
      * @throws PluginException        文件无法打开（权限、路径等）
      */
+    /**
+     * JVM 内已持锁会话注册表（绝对路径 → 持有标记）。同进程第二实例在**打开 fd 之前**
+     * 即被拒绝——若先 open 再 tryLock，失败路径关闭探测 fd 会触发 POSIX 陷阱：
+     * 进程关闭同一文件的任意 fd，内核会释放该进程在此文件上的**全部**锁（包括
+     * 已成功持锁实例的锁），跨进程独占就此蒸发（M10-03 验收实测踩中）。
+     */
+    private static final java.util.concurrent.ConcurrentMap<Path, Boolean> HELD_LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private static Session lock(String id, Path jsonl) {
+        Path key = jsonl.toAbsolutePath().normalize();
+        if (HELD_LOCKS.containsKey(key)) {
+            throw new SessionLockedException(id, jsonl);
+        }
         FileChannel channel = null;
         try {
             channel = FileChannel.open(jsonl,
                     StandardOpenOption.READ, StandardOpenOption.WRITE);
             FileLock fileLock = channel.tryLock();
             if (fileLock == null) {
-                channel.close();
+                closeQuietly(channel); // 他进程持锁：关自己的探测 fd 无碍（锁在别人名下）
                 throw new SessionLockedException(id, jsonl);
             }
-            return new Session(id, jsonl, channel, fileLock);
+            HELD_LOCKS.put(key, Boolean.TRUE);
+            return new Session(id, jsonl, channel, fileLock, key);
         } catch (OverlappingFileLockException e) {
+            // 注册表已拦同进程重复；此分支仅防外部路径竞态，防御性保留
             closeQuietly(channel);
             throw new SessionLockedException(id, jsonl, e);
         } catch (IOException e) {
@@ -160,6 +181,7 @@ public final class Session {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
+        HELD_LOCKS.remove(lockKey);
         try {
             fileLock.release();
         } catch (IOException ignored) {
@@ -289,25 +311,39 @@ public final class Session {
         }
     }
 
-    /** 落盘 + 内存追加：序号在同步块内与追加一起确定（并发快照读不到半写状态）。 */
+    /**
+     * 落盘 + 内存追加：**经持锁通道写**——不另开 fd。POSIX 语义下进程关闭同一文件
+     * 的任意 fd 会释放其全部锁，若每次 append 走自己的 BufferedWriter，第一条事件
+     * 写完独占锁就被自己放掉（跨进程防护蒸发）。序号在同步块内与追加一起确定。
+     */
     private int persist(SessionEvent event) {
-        try {
-            boolean freshFile = !Files.exists(jsonl);
-            if (freshFile) {
-                Files.createDirectories(jsonl.getParent());
-            }
-            try (BufferedWriter writer = Files.newBufferedWriter(jsonl, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-                writer.write(toJsonLine(event));
-                writer.newLine();
-            }
-            synchronized (events) {
+        synchronized (events) {
+            try {
+                byte[] bytes = (toJsonLine(event) + "\n").getBytes(StandardCharsets.UTF_8);
+                lockChannel.position(lockChannel.size()); // 单写者（锁）保证末尾即追加点
+                ByteBuffer buf = ByteBuffer.wrap(bytes);
+                while (buf.hasRemaining()) {
+                    lockChannel.write(buf);
+                }
+                lockChannel.force(false); // 事件溯源的持久化承诺：落盘后才返回
                 events.add(event);
                 return events.size() - 1;
+            } catch (IOException e) {
+                throw new PluginException("会话事件落盘失败: " + event.type(), e);
             }
-        } catch (IOException e) {
-            throw new PluginException("会话事件落盘失败: " + event.type(), e);
         }
+    }
+
+    /** 读满通道剩余字节（position → EOF）为字符串。 */
+    private static String readAll(FileChannel channel) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        ByteBuffer buf = ByteBuffer.allocate(8_192);
+        while (channel.read(buf) != -1) {
+            buf.flip();
+            out.write(buf.array(), buf.position(), buf.remaining());
+            buf.clear();
+        }
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     /**
