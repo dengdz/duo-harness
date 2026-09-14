@@ -2,6 +2,7 @@ package dev.duo.harness.agent;
 
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -16,6 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * （entered 激活 / exited 退出 / 无事件不激活）。
  */
 class PlanModeTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：PlanModeTest —— 计划模式：激活/退出事件、会话续接恢复（1 用例） ===");
+    }
 
     @TempDir
     Path tempDir;

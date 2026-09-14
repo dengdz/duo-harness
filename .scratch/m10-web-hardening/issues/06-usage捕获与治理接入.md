@@ -9,7 +9,7 @@
 无（可立即开工）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] OpenAI 兼容适配器请求携带 stream_options include_usage，捕获流末 usage chunk（mock LLM 流测试）

@@ -10,6 +10,7 @@ import dev.duo.harness.llm.LlmTurn;
 import dev.duo.harness.llm.TokenUsage;
 import dev.duo.harness.llm.ToolSpec;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -23,6 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** OpenAI 兼容适配器用例：mock SSE 端点下验证流式聚合、请求形态与错误呈现。 */
 class OpenAiCompatAdapterTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：OpenAiCompatAdapterTest —— OpenAI 兼容适配器：流式聚合与请求形态、usage 统计捕获、错误呈现（14 用例） ===");
+    }
 
     private final ObjectMapper json = new ObjectMapper();
     private final MockOpenAiServer server = new MockOpenAiServer();

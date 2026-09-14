@@ -14,6 +14,7 @@ import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
 import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolsService;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -35,6 +36,11 @@ interface ToolsView {
 
 /** ToolCallingAgent 直答路径用例：会话写入、投影请求、回调序列、AgentReply 组装。 */
 class ToolCallingAgentTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：ToolCallingAgentTest —— 工具循环：Function Calling 闭环、历史投影、usage 落事件、迭代上限（10 用例） ===");
+    }
 
     @TempDir
     Path tempDir;

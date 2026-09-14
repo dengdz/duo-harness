@@ -1,6 +1,7 @@
 package dev.duo.harness.session;
 
 import dev.duo.harness.core.api.PluginException;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -20,6 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 投影规则（message 入列 / chunk 不投影）、空会话、latest 选取。
  */
 class SessionTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取（20 用例） ===");
+    }
 
     @TempDir
     Path tempDir;

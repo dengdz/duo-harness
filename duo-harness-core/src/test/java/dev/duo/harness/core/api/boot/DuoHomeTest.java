@@ -1,5 +1,6 @@
 package dev.duo.harness.core.api.boot;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -12,6 +13,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** DuoHome 用例：env 重定向、默认路径、子目录懒创建。 */
 class DuoHomeTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：DuoHomeTest —— Duo home 解析：DUO_HOME 重定向与默认路径、子目录创建（3 用例） ===");
+    }
 
     @Test
     void envOverrideRedirectsRoot(@TempDir Path tempDir) {

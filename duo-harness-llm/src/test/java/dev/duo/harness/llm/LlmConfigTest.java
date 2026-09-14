@@ -3,6 +3,7 @@ package dev.duo.harness.llm;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.duo.harness.core.api.PluginException;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -16,6 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** LlmConfig 用例：文件基线 + env 覆盖优先、缺文件 env 兜底、缺项点名。 */
 class LlmConfigTest {
+
+    @BeforeAll
+    static void 套件叙述() {
+        System.out.println("\n=== 套件：LlmConfigTest —— LLM 配置装载：必填校验、缺省值、错误点名（5 用例） ===");
+    }
 
     private static final Path NO_FILE = Path.of("/nonexistent/config.yml");
 

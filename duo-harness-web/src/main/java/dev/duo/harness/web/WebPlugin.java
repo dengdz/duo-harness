@@ -20,15 +20,19 @@ import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
 import java.util.Set;
 
 /**
- * Web 双面插件（M8）：Boot yml 一行启用本地 Web 服务——静态单页（对话/状态双区）、
- * `/api/status` 状态 JSON、`/api/events` SSE 会话事件流、`/api/message` 对话入口
- * （装配自己的对话执行者，全套 M5-M7 装配：重试适配器 + prompt 注册表 + 会话）。
- * 只绑 127.0.0.1，无鉴权（本地个人工具场景，鉴权 M9+）。
+ * Web 双面插件（M8 起，M10 加固）：Boot yml 一行启用本地 Web 服务——静态单页
+ * （对话/状态双区）、`/api/status` 状态 JSON（含上下文占用）、`/api/events` SSE
+ * 会话事件流（首连快照 / 重连游标增量，ADR-0010）、`/api/message` 对话入口、
+ * `/api/session/*` 会话列换与切换（切换有独占锁语义）。只绑 127.0.0.1，
+ * 无鉴权（本地个人工具场景，鉴权按需再加）。
  *
  * <p>inject tools + prompts + answers：状态面与对话面的三个数据源（标准服务注入
  * 模式）。技能清单 / AGENTS.md 片段由对应插件（SkillsPlugin / AgentsMdPlugin）
- * 注册进 prompts 服务——本插件只做对话执行者装配，不重复注册。LLM 未配置时
- * 插件 FAILED 点名（对话面不可用，状态面仍可看）。</p>
+ * 注册进 prompts 服务——本插件只做对话执行者装配，不重复注册。装配链还负责：
+ * 注册 ask_user 与计划呈交工具（纯 Web 部署的 HITL 完整，与 CLI 装配共存时先到先得）、
+ * 装配 Web answerer 与审计桥、接管会话独占锁（启动遇占用即 FAILED 点名被占会话）。</p>
+ *
+ * <p>LLM 未配置时插件 FAILED 点名（整个 Web 面不可用——LLM 配置先于服务启动装载）。</p>
  *
  * <p>配置（块内字段可省）：</p>
  * <pre>{@code config:

@@ -44,8 +44,9 @@ class WebFaceTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：WebFaceTest —— Web 骨架：起停绑定、静态页、状态 JSON、SSE、"
-                + "对话面（POST 发送→事件入会话→SSE）、/new（5 用例） ===");
+        System.out.println("\n=== 套件：WebFaceTest —— Web 面：静态资源（拆分件/vendor 库/白名单 404）、"
+                + "状态 JSON（含上下文占用）、SSE 游标回放（快照/增量/越界兜底/帧序号）、"
+                + "安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限（25 用例） ===");
     }
 
     interface ToolsView {
