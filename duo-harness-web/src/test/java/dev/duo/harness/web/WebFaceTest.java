@@ -108,11 +108,15 @@ class WebFaceTest {
     }
 
     private String get(String path) throws IOException, InterruptedException {
-        HttpResponse<String> response = client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + path)).GET().build(),
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = fetch(path);
         assertEquals(200, response.statusCode(), path);
         return response.body();
+    }
+
+    private HttpResponse<String> fetch(String path) throws IOException, InterruptedException {
+        return client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + path)).GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     @Test
@@ -121,6 +125,34 @@ class WebFaceTest {
         start(session, scriptedAgent(session, "ok"));
         String body = get("/");
         assertTrue(body.contains("duo-harness"), "静态单页可达");
+    }
+
+    @Test
+    void servesSplitStaticAssets() throws Exception {
+        // 拆分三件（工单 M10-01）：样式与脚本独立文件，经 /web/ 前缀白名单可达
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        HttpResponse<String> css = fetch("/web/theme.css");
+        assertEquals(200, css.statusCode(), "theme.css 可达");
+        assertTrue(css.headers().firstValue("Content-Type").orElse("").contains("text/css"), "css 类型标记");
+        assertTrue(css.body().contains("--brand"), "设计 token 在 theme.css");
+
+        HttpResponse<String> js = fetch("/web/app.js");
+        assertEquals(200, js.statusCode(), "app.js 可达");
+        assertTrue(js.headers().firstValue("Content-Type").orElse("").contains("javascript"), "js 类型标记");
+        assertTrue(js.body().contains("EventSource"), "SSE 逻辑在 app.js");
+    }
+
+    @Test
+    void rejectsUnsafeOrMissingStaticAssets() throws Exception {
+        // /web/ 白名单：单段已知后缀文件名，多段路径与穿越一律 404
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        assertEquals(404, fetch("/web/missing.css").statusCode(), "未知资源 404");
+        assertEquals(404, fetch("/web/../secret.txt").statusCode(), "路径穿越拒绝");
+        assertEquals(404, fetch("/web/sub/x.css").statusCode(), "多段路径拒绝");
     }
 
     @Test

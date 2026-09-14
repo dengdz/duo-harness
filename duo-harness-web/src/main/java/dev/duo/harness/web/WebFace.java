@@ -25,10 +25,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * Web 双面呈现位（M8）：JDK 内置 HttpServer 承载的本地服务——静态单页（双区布局）、
- * `/api/status`（插件快照 + 工具清单 JSON）、`/api/events`（SSE 会话事件流）、
- * `/api/message`（对话入口，虚拟线程异步执行 agent.send）、`/api/session/new`（开新会话）、
- * `/api/answer`（HITL 回答完成，接 M6 交互 seam 的 Web answerer）。
+ * Web 双面呈现位（M8）：JDK 内置 HttpServer 承载的本地服务——静态单页（双区布局，
+ * 样式与脚本经 {@code /web/} 白名单资源服务）、`/api/status`（插件快照 + 工具清单 JSON）、
+ * `/api/events`（SSE 会话事件流）、`/api/message`（对话入口，虚拟线程异步执行 agent.send）、
+ * `/api/session/new`（开新会话）、`/api/answer`（HITL 回答完成，接 M6 交互 seam 的 Web answerer）。
  *
  * <p>只绑定 127.0.0.1（ADR-0007 v3 安全基线，鉴权 M9+）；执行器用虚拟线程
  * （每任务一线程，SSE 长连接不占平台线程，ADR-0002 同源）。SSE 连接带 15s
@@ -195,6 +195,23 @@ public final class WebFace {
             exchange.sendResponseHeaders(200, page.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(page);
+            }
+        });
+        // 静态资源（样式/脚本/vendor 库同路）：/web/ 前缀 + 单段已知后缀文件名白名单——
+        // 多段路径、.. 与未知后缀一律 404，资源缺失也 404（不落回单页，坏引用不伪装成功）
+        server.createContext("/web/", exchange -> {
+            String name = exchange.getRequestURI().getPath().substring("/web/".length());
+            String type = name.isEmpty() || name.contains("/") || name.contains("..")
+                    ? null : STATIC_TYPES.get(suffixOf(name));
+            byte[] body = type == null ? null : readClassResource("/web/" + name);
+            if (body == null) {
+                exchange.sendResponseHeaders(404, -1);
+                return;
+            }
+            exchange.getResponseHeaders().set("Content-Type", type + "; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
             }
         });
         // 状态面 JSON
@@ -419,13 +436,28 @@ public final class WebFace {
     }
 
     private byte[] readClasspage() {
-        try (var in = WebFace.class.getResourceAsStream("/web/index.html")) {
-            if (in == null) {
-                return "<html><body><p>web/index.html 资源缺失</p></body></html>".getBytes(StandardCharsets.UTF_8);
-            }
-            return in.readAllBytes();
+        byte[] page = readClassResource("/web/index.html");
+        return page != null ? page
+                : "<html><body><p>web/index.html 资源缺失</p></body></html>".getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** 静态资源后缀 → Content-Type（白名单外不服务）。 */
+    private static final java.util.Map<String, String> STATIC_TYPES = java.util.Map.of(
+            "html", "text/html",
+            "css", "text/css",
+            "js", "application/javascript");
+
+    private static String suffixOf(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** 读 classpath 资源；缺失或读失败返回 null（404 语义由调用方定）。 */
+    private static byte[] readClassResource(String path) {
+        try (var in = WebFace.class.getResourceAsStream(path)) {
+            return in == null ? null : in.readAllBytes();
         } catch (IOException e) {
-            return "<html><body><p>页面读取失败</p></body></html>".getBytes(StandardCharsets.UTF_8);
+            return null;
         }
     }
 
