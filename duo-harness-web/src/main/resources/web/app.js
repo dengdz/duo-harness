@@ -8,11 +8,21 @@
 // ----- §0 基础：选择器 + 页面错误可见化（呈现位自身可诊断） -----
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+const errText = (err) => (err instanceof Error ? err.message : String(err));
 window.addEventListener('error', (e) => render.assistant('[页面错误] ' + e.message));
 window.addEventListener('unhandledrejection', (e) => {
-  const reason = e.reason instanceof Error ? e.reason.message : String(e.reason);
-  render.assistant('[未处理异常] ' + reason);
+  render.assistant('[未处理异常] ' + errText(e.reason));
 });
+
+// 全局提示（toast）：网络/服务不可用等基础设施错误右下角可见，5s 自动消失；
+// 执行过程错误仍走对话流错误卡——两类错误呈现位分离
+function showToast(text, kind) {
+  const box = document.createElement('div');
+  box.className = 'toast' + (kind === 'info' ? ' info' : '');
+  box.textContent = text;
+  $('#toasts').appendChild(box);
+  setTimeout(() => box.remove(), 5000);
+}
 
 // ----- §1 api：后端端点封装 -----
 const api = {
@@ -348,11 +358,11 @@ const sse = (() => {
   let replayed = true; // 边界帧前为回放：历史 chunk 不渲染（以 assistant/message 为准）
 
   function handle(event) {
-    if (event.type === 'replay/done') { replayed = false; app.afterReplay(); return; }
+    if (event.type === 'replay/done') { replayed = false; app.clearSendBusy(); app.afterReplay(); return; }
     if (event.type === 'assistant/chunk' && replayed) return; // 历史碎片不回放
     if (event.type === 'user/message') render.user(event.text);
     else if (event.type === 'assistant/chunk') render.chunk(event.text);
-    else if (event.type === 'assistant/message') render.finishAssistant(event.text);
+    else if (event.type === 'assistant/message') { app.clearSendBusy(); render.finishAssistant(event.text); }
     else if (event.type === 'tool/call') {
       if (event.toolName === 'ask_user') render.questionCard(event);
       else if (event.toolName === 'exit_plan_mode') render.interactiveCard(event);
@@ -360,7 +370,7 @@ const sse = (() => {
     } else if (event.type === 'tool/result') render.toolResult(event);
     else if (event.type === 'approval/requested') render.interactiveCard(event);
     else if (event.type === 'approval/decided') render.approvalDecided(event);
-    else if (event.type === 'run/error') render.runError(event.text);
+    else if (event.type === 'run/error') { app.clearSendBusy(); render.runError(event.text); }
     app.refreshStatus();
   }
 
@@ -370,6 +380,7 @@ const sse = (() => {
     source.onopen = () => {
       replayed = true;
       render.resetForReplay();
+      app.clearSendBusy(); // 重连期间可能错过了 user/message 解除帧——回放复位兜底
     };
     source.onmessage = (e) => {
       try {
@@ -430,24 +441,59 @@ const app = (() => {
   });
 
   // ---- composer：发送（不本地回显，用户气泡由 SSE user/message 渲染） ----
+  // 发送受理中禁用按钮（"…"），202 后转"思考中…"——保持到本轮处理完成（assistant/message）
+  // 或出错（run/error）才解除：期间服务端单飞 busy，按钮态与之精确对应；断线重连由回放复位兜底
+  function setSendBusy(busy, label) {
+    const btn = $('#send');
+    btn.disabled = busy;
+    btn.textContent = busy ? (label || '…') : '发送';
+  }
+
+  function clearSendBusy() {
+    const btn = $('#send');
+    if (btn.disabled) {
+      btn.disabled = false;
+      btn.textContent = '发送';
+    }
+  }
+
   async function send() {
     const input = $('#input');
     const text = input.value.trim();
-    if (!text) return;
+    if (!text || $('#send').disabled) return; // 受理中/思考中重入忽略（按钮态已可见）
     input.value = '';
+    setSendBusy(true, '…');
     render.showMessages();
-    const res = await api.sendMessage(text);
-    if (res.status === 409) render.assistant('[提示] 已有对话在执行中，请稍候。');
+    try {
+      const res = await api.sendMessage(text);
+      if (res.status === 202) {
+        setSendBusy(true, '思考中…');
+        return;
+      }
+      setSendBusy(false);
+      if (res.status === 409) showToast('已有对话在执行中，请稍候', 'info');
+      else showToast('消息发送失败（HTTP ' + res.status + '）');
+    } catch (err) {
+      setSendBusy(false);
+      showToast('消息发送失败：' + errText(err));
+    }
   }
   $('#send').addEventListener('click', send);
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
   // ---- 新话题：服务端开新会话（SSE 随换绑），本页重连取回放 ----
   $('#newSession').addEventListener('click', async () => {
-    const res = await fetch('/api/session/new', { method: 'POST' });
-    if (!res.ok) return;
-    render.resetToHero();
-    location.reload(); // 重连 SSE 回放全新会话（EmptyHero），侧栏随之刷新
+    try {
+      const res = await fetch('/api/session/new', { method: 'POST' });
+      if (!res.ok) {
+        showToast('新建会话失败（HTTP ' + res.status + '）');
+        return;
+      }
+      render.resetToHero();
+      location.reload(); // 重连 SSE 回放全新会话（EmptyHero），侧栏随之刷新
+    } catch (err) {
+      showToast('新建会话失败：' + errText(err));
+    }
   });
 
   // ---- 侧栏：列出 + 切换 + 当前高亮 ----
@@ -462,7 +508,13 @@ const app = (() => {
   }
 
   async function refreshSessions() {
-    const data = await api.sessions();
+    let data;
+    try {
+      data = await api.sessions();
+    } catch (e) {
+      showToast('会话列表刷新失败：' + errText(e));
+      return;
+    }
     const list = $('#sessionList');
     list.innerHTML = '';
     for (const s of data.sessions) {
@@ -478,11 +530,19 @@ const app = (() => {
       item.append(sid, meta);
       item.addEventListener('click', async () => {
         if (s.current) return;
-        await fetch('/api/session/switch', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: s.id })
-        });
-        location.reload(); // 重连 SSE 回放所切换的会话
+        try {
+          const res = await fetch('/api/session/switch', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: s.id })
+          });
+          if (!res.ok) {
+            showToast('切换会话失败（HTTP ' + res.status + '）');
+            return;
+          }
+          location.reload(); // 重连 SSE 回放所切换的会话
+        } catch (err) {
+          showToast('切换会话失败：' + errText(err));
+        }
       });
       list.appendChild(item);
     }
@@ -491,6 +551,8 @@ const app = (() => {
 
   // ---- 状态面：上下文占用 + 插件快照 + 工具清单 ----
   const fmt = (n) => n.toLocaleString('en-US');
+  // 持续性故障只报一次（5s 轮询不节流会刷屏）；恢复后计数清零、不播报恢复
+  let statusFailures = 0;
   function renderContext(context) {
     // 占用与治理判定同源同口径（ADR-0009）：fromProvider=false 是估算兜底，必须标注不冒充实测
     const line = $('#contextLine');
@@ -509,6 +571,7 @@ const app = (() => {
   async function refreshStatus() {
     try {
       const data = await api.status();
+      statusFailures = 0;
       renderContext(data.context);
       const plugins = $('#plugins tbody');
       plugins.innerHTML = '';
@@ -526,7 +589,10 @@ const app = (() => {
         row.cells[0].textContent = t.name;
         row.cells[1].textContent = t.description;
       }
-    } catch (e) { /* 状态面失败不阻断对话 */ }
+    } catch (e) {
+      statusFailures++;
+      if (statusFailures === 1) showToast('状态刷新失败：' + errText(e));
+    }
   }
 
   // ---- 回放结束：无可见事件 → EmptyHero ----
@@ -541,7 +607,7 @@ const app = (() => {
   refreshSessions();
   setInterval(refreshStatus, 5000);
 
-  return { refreshStatus, refreshSessions, afterReplay };
+  return { refreshStatus, refreshSessions, afterReplay, clearSendBusy };
 })();
 
 sse.connect();
