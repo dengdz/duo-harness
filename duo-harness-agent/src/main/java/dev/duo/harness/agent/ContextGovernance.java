@@ -6,6 +6,9 @@ import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.session.Message;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,6 +44,12 @@ public final class ContextGovernance {
     /** compaction 触发的最小远端消息数：太少没有折叠价值（近端之外寥寥数条）。 */
     static final int MIN_REMOTE_MESSAGES = 4;
 
+    /** spill 预览头长（字符）。 */
+    static final int SPILL_PREVIEW_HEAD = 1_000;
+
+    /** spill 预览尾长（字符）。 */
+    static final int SPILL_PREVIEW_TAIL = 500;
+
     private final LlmAdapter llm;
 
     public ContextGovernance(LlmAdapter llm) {
@@ -65,9 +74,63 @@ public final class ContextGovernance {
         return governed;
     }
 
-    /** spill + 修剪：工具结果的体量治理（工单 02/03 实现，当前直通）。 */
+    /** spill + 修剪：工具结果的体量治理——先卸能卸的（spill），再收窄次长的（修剪，工单 03）。 */
     private List<Message> spillAndPrune(List<Message> messages, dev.duo.harness.session.Session session) {
-        return messages;
+        List<Message> result = messages;
+        for (int i = 0; i < result.size(); i++) {
+            Message message = result.get(i);
+            if (message.role() != Message.Role.TOOL
+                    || message.content() == null
+                    || message.content().length() <= SPILL_THRESHOLD_CHARS) {
+                continue;
+            }
+            String replacement = spill(message, session);
+            if (replacement == null) {
+                continue; // 卸载失败保留原结果（治理永不丢数据）
+            }
+            if (result == messages) {
+                result = new ArrayList<>(messages);
+            }
+            result.set(i, new Message(Message.Role.TOOL, replacement,
+                    message.toolCallId(), null, null));
+        }
+        return result;
+    }
+
+    /** 单条 spill：原文落盘，返回"预览 + 定位符"替换文本；失败返回 null。 */
+    private String spill(Message message, dev.duo.harness.session.Session session) {
+        try {
+            Path spillDir = session.jsonl().getParent()
+                    .resolve(session.id()).resolve("spill");
+            Files.createDirectories(spillDir);
+            int sequence = nextSequence(spillDir);
+            // 投影的 TOOL 消息不带工具名（只携 toolCallId）——文件名以调用 id 标识
+            String callId = message.toolCallId() == null ? "call" : message.toolCallId();
+            Path file = spillDir.resolve(sequence + "-" + sanitize(callId) + ".txt");
+            Files.writeString(file, message.content());
+            String content = message.content();
+            String preview = content.substring(0, SPILL_PREVIEW_HEAD) + "\n…[中间 "
+                    + (content.length() - SPILL_PREVIEW_HEAD - SPILL_PREVIEW_TAIL) + " 字符已卸载]…\n"
+                    + content.substring(content.length() - SPILL_PREVIEW_TAIL);
+            System.out.println("[上下文治理] 工具结果 " + content.length() + " 字符超 "
+                    + SPILL_THRESHOLD_CHARS + "，已卸载 " + file);
+            return preview + "\n[完整原文已落盘: " + file + "，需要更多内容时请向用户询问该文件路径]";
+        } catch (IOException e) {
+            System.out.println("[上下文治理] 卸载失败，保留原结果: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** spill 目录内下一个序号（按现有文件数递增）。 */
+    private int nextSequence(Path spillDir) throws IOException {
+        try (var list = Files.list(spillDir)) {
+            return (int) list.count() + 1;
+        }
+    }
+
+    /** 文件名安全化：工具名只留单词字符。 */
+    private static String sanitize(String toolName) {
+        return toolName.replaceAll("[^\\w.-]", "_");
     }
 
     /** compaction：远端历史折叠（工单 04 实现，当前直通）。 */
