@@ -25,10 +25,14 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -53,6 +57,8 @@ class WebFaceTest {
     Path tempDir;
 
     private WebFace face;
+    /** helper 装配的根上下文（HITL 用例取 answers 服务用）。 */
+    private Context faceCtx;
     private final HttpClient client = HttpClient.newHttpClient();
     private final List<SessionEvent> received = new CopyOnWriteArrayList<>();
     /** 会话变更回调的记录（/new 与 /switch 都应回调——分脑防御，BUG-20260914-02）。 */
@@ -67,13 +73,26 @@ class WebFaceTest {
 
     /** 装配：真实 Context + ToolsPlugin（回声工具进清单）+ 指定会话与 agent；端口 0 = 随机。 */
     private WebFace start(Session session, ChatAgent agent) throws IOException {
-        return start(session, agent, null);
+        return start(session, agent, null, null);
     }
 
     /** 装配重载：注入上下文治理（状态面占用查询的同源数据源；null = 无治理）。 */
     private WebFace start(Session session, ChatAgent agent,
                           dev.duo.harness.agent.ContextGovernance governance) throws IOException {
+        return start(session, agent, governance, null);
+    }
+
+    /**
+     * 装配全参重载：webAnswerer 非空时装配交互 seam 最小集（InteractionPlugin +
+     * web answerer + 审计桥）——HITL 语义用例的供给。
+     */
+    private WebFace start(Session session, ChatAgent agent,
+                          dev.duo.harness.agent.ContextGovernance governance, WebAnswerer webAnswerer) throws IOException {
         Context ctx = Context.root();
+        faceCtx = ctx;
+        if (webAnswerer != null) {
+            ctx.plugin(new dev.duo.harness.tools.InteractionPlugin(), null).awaitStartup();
+        }
         ctx.plugin(new ToolsPlugin(), null).awaitStartup();
         ToolsService tools = ctx.as(ToolsView.class).tools();
         tools.register(ctx, new ToolDefinition() {
@@ -98,12 +117,25 @@ class WebFaceTest {
                 return "echo";
             }
         });
-        face = WebFace.start(0, ctx, tools, session, agent, governance, null,
+        face = WebFace.start(0, ctx, tools, session, agent, governance, webAnswerer,
                 tempDir.resolve("web-sessions"));
+        if (webAnswerer != null) {
+            // 生产同款接线（WebPlugin）：只注册审计装饰器——它委托 web answerer 作答并
+            // 落 approval/requested、approval/decided 审计事件（回答者链首个非空胜出，
+            // 直注册 webAnswerer 会让装饰器永不执行、审批卡事件缺失）
+            ctx.as(AnswersView.class).answers().register(ctx,
+                    new dev.duo.harness.agent.AuditingAnswerer(face::currentSession, webAnswerer));
+        }
         // 会话变更接线：/new 与 /switch 换绑后回调（装配层职责，骨架用例记录变更）
         face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
         face.onSessionChanged(changed -> changedSessions.add(changed));
         return face;
+    }
+
+    /** answers 服务的视图接口（方法名即服务名 "answers"）。 */
+    interface AnswersView {
+
+        dev.duo.harness.tools.InteractionService answers();
     }
 
     private HttpResponse<String> post(String path, String jsonBody) throws IOException, InterruptedException {
@@ -353,6 +385,96 @@ class WebFaceTest {
         }
         assertTrue(currentNode != null, "恰有 current 标记");
         assertEquals(current.id(), currentNode.path("id").asText(), "current 指向当前会话");
+    }
+
+    /**
+     * HITL 语义用例装配：经装配好的交互 seam（生产同款接线）在虚拟线程发起一条
+     * 审批请求，阻塞等待作答；返回时可保证 answerer 已进入待答态。
+     */
+    private Thread askApproval(WebAnswerer webAnswerer,
+                               AtomicReference<dev.duo.harness.tools.InteractionAnswer> got,
+                               CountDownLatch done) throws InterruptedException {
+        dev.duo.harness.tools.InteractionService answers = faceCtx.as(AnswersView.class).answers();
+        Thread thread = Thread.ofVirtual().start(() -> {
+            got.set(answers.ask(dev.duo.harness.tools.InteractionRequest.approval("write_file", "{}")));
+            done.countDown();
+        });
+        while (webAnswerer.currentPending() == null) {
+            Thread.sleep(20);
+        }
+        return thread;
+    }
+
+    @Test
+    void allClientsGoneFailsClosedAfterGracePeriod() throws Exception {
+        // fail-closed 语义钉死（工单 M10-04）：全部连接离场 → 宽限后仍无人 → 悬空审批拒绝；
+        // 宽限期内不得立即拒绝（去抖保护刷新窗口）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        WebAnswerer webAnswerer = new WebAnswerer(60_000);
+        start(session, scriptedAgent(session, "ok"), null, webAnswerer);
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> got = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        askApproval(webAnswerer, got, done);
+
+        // 摘除死连接（写失败后的摘除时点）→ 列表空 → 进入宽限
+        face.removeClient(new java.io.ByteArrayOutputStream());
+        Thread.sleep(500);
+        assertTrue(webAnswerer.currentPending() != null, "宽限期内不得立即拒绝");
+        assertTrue(done.await(WebFace.FAIL_CLOSED_GRACE_MS + 1_500, TimeUnit.MILLISECONDS),
+                "宽限到期后完成");
+        assertFalse(got.get().approved(), "仍无连接 → 悬空审批按拒绝处理");
+        assertEquals(dev.duo.harness.tools.InteractionAnswer.SOURCE_FAIL_CLOSED, got.get().source());
+    }
+
+    @Test
+    void refreshReconnectWithinGraceKeepsApprovalAnswerable() throws Exception {
+        // 刷新"断旧立新"：旧连接摘除开启宽限 → 新连接窗口内入列 → 审批保持可答不被误杀，
+        // 且新连接回放含 approval/requested（页面据此重建审批卡）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        WebAnswerer webAnswerer = new WebAnswerer(60_000);
+        start(session, scriptedAgent(session, "ok"), null, webAnswerer);
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> got = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        askApproval(webAnswerer, got, done);
+
+        // 旧连接摘除 → 宽限窗口开启；刷新后的新连接窗口内入列
+        face.removeClient(new java.io.ByteArrayOutputStream());
+        HttpResponse<java.io.InputStream> reconnect = client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + "/api/events")).GET().build(),
+                HttpResponse.BodyHandlers.ofInputStream());
+        try (var body = reconnect.body()) {
+            for (int i = 0; i < 50 && face.sseConnections() == 0; i++) {
+                Thread.sleep(20);
+            }
+            assertEquals(1, face.sseConnections(), "新连接已入列");
+            Thread.sleep(WebFace.FAIL_CLOSED_GRACE_MS + 500);
+            assertTrue(webAnswerer.currentPending() != null, "宽限到期仍有连接 → 不误杀");
+            assertTrue(webAnswerer.complete(true, List.of()), "审批仍可作答");
+            assertTrue(done.await(2, TimeUnit.SECONDS));
+            assertTrue(got.get().approved());
+            // 回放契约：新连接首屏流含审批请求事件（前端据此重建审批卡，工单 checklist 第 3 条）。
+            // SSE 长连接不结束——读线程逐块累积已到达字节，主线程限时取回后关流打断
+            AtomicReference<String> replay = new AtomicReference<>("");
+            Thread reader = Thread.ofVirtual().start(() -> {
+                byte[] chunk = new byte[1_024];
+                StringBuilder collected = new StringBuilder();
+                try {
+                    int read;
+                    while ((read = body.read(chunk)) != -1) {
+                        collected.append(new String(chunk, 0, read, StandardCharsets.UTF_8));
+                        replay.set(collected.toString());
+                    }
+                } catch (Exception e) {
+                    // 关流打断：已累积字节保留在 reference 中
+                }
+            });
+            Thread.sleep(800);
+            body.close();
+            reader.interrupt();
+            assertTrue(replay.get().contains("approval/requested"),
+                    "新连接回放应含 approval/requested（审批卡数据源）: "
+                            + replay.get().substring(0, Math.min(300, replay.get().length())));
+        }
     }
 
     /** 单段直答 mock agent（模拟真实 ToolCallingAgent：user 消息入会话 + chunk 交 listener）。 */

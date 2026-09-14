@@ -22,6 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -33,7 +34,8 @@ import java.util.function.Consumer;
  * <p>只绑定 127.0.0.1（ADR-0007 v3 安全基线，鉴权 M9+）；执行器用虚拟线程
  * （每任务一线程，SSE 长连接不占平台线程，ADR-0002 同源）。SSE 连接带 15s
  * 心跳帧保活（写失败即摘除死连接，兼防代理静默断连）；事件经会话监听器广播；
- * 全部客户端断开时悬空交互 fail-closed（经 {@link WebAnswerer}，ADR-0008 延伸）。</p>
+ * 全部客户端断开且宽限期内无新连接入列时悬空交互 fail-closed（经 {@link WebAnswerer}，
+ * ADR-0008 / ADR-0010 延伸——判定语义是"是否仍有人能看见该审批"，刷新断旧立新不误杀）。</p>
  */
 public final class WebFace {
 
@@ -44,7 +46,11 @@ public final class WebFace {
     /** 会话 id 白名单（Session.newId 的生成形态：日期时间 + 4 位十六进制后缀）。 */
     private static final java.util.regex.Pattern SESSION_ID =
             java.util.regex.Pattern.compile("\\d{8}-\\d{6}-[0-9a-f]{4}");
-
+    /**
+     * fail-closed 去抖宽限（毫秒）：摘除死连接后列表暂空不立即拒——浏览器刷新的
+     * "断旧立新"窗口里新连接可能尚未入列，立即拒会误杀仍有人能答的审批。
+     */
+    static final long FAIL_CLOSED_GRACE_MS = 2_000;
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
@@ -78,6 +84,10 @@ public final class WebFace {
      * 页面显示新会话，BUG-20260914-02）。
      */
     private volatile Consumer<Session> sessionChangedCallback = changed -> { };
+
+    /** fail-closed 去抖复查任务（同一时刻至多一个；窗口内新摘除会重置窗口）。 */
+    private final AtomicReference<java.util.concurrent.ScheduledFuture<?>> failClosedCheck =
+            new AtomicReference<>();
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
                     WebAnswerer webAnswerer, Path sessionsDir) {
@@ -187,11 +197,29 @@ public final class WebFace {
     }
 
     /**
-     * 摘除死连接；全部客户端离场时悬空交互立即 fail-closed
-     * （人不在环 = 不批准，ADR-0008 语义延伸，工单 05）。
+     * 摘除死连接；全部客户端离场时悬空交互按"无人能答"拒绝（ADR-0008 语义延伸）。
+     * 拒绝经 {@link #scheduleFailClosedCheck()} 去抖：立即判空会误杀刷新场景
+     * （断旧立新窗口里新连接尚未入列）。包级可见供测试确定性驱动摘除时点——
+     * 传入的流即使不在连接列表中也生效：判定只看"摘除后列表是否为空"。
      */
-    private void removeClient(OutputStream out) {
+    void removeClient(OutputStream out) {
         sseOutputs.remove(out);
+        if (webAnswerer != null && sseOutputs.isEmpty()) {
+            scheduleFailClosedCheck();
+        }
+    }
+
+    /** 调度去抖复查：宽限后仍无任何连接才 fail-closed；窗口内新摘除重置窗口。 */
+    private void scheduleFailClosedCheck() {
+        java.util.concurrent.ScheduledFuture<?> prior = failClosedCheck.getAndSet(
+                heartbeat.schedule(this::failClosedIfNoClient, FAIL_CLOSED_GRACE_MS, TimeUnit.MILLISECONDS));
+        if (prior != null) {
+            prior.cancel(false);
+        }
+    }
+
+    /** 宽限期到：仍无任何客户端在场才判定"无人能答"。 */
+    private void failClosedIfNoClient() {
         if (webAnswerer != null && sseOutputs.isEmpty()) {
             webAnswerer.failClosedAll();
         }

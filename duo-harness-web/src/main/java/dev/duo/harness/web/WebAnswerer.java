@@ -17,10 +17,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code POST /api/answer} 完成等待中的请求。
  *
  * <p>阻塞语义：{@code answer()} 在虚拟线程上等待 CompletableFuture（工具链本就
- * 运行在虚拟线程，阻塞不占平台线程，ADR-0002 同源）。**断连 fail-closed**：
- * 页面 SSE 断开时 {@link #failClosedAll()} 立即以拒绝完成全部悬空请求——
- * 人不在环 = 不批准（ADR-0008 语义延伸到 Web 呈现位）。重复回答 / 无待答
- * 请求为幂等拒绝。</p>
+ * 运行在虚拟线程，阻塞不占平台线程，ADR-0002 同源）。**无人能答即拒**：
+ * {@link #failClosedAll()} 以拒绝完成全部悬空请求（人不在环 = 不批准，ADR-0008）；
+ * 调用时机由 {@link WebFace} 判定——全部连接离场且宽限期内无新连接才触发，
+ * 刷新断旧立新不误杀（ADR-0010）。重复回答 / 无待答请求为幂等拒绝。</p>
  */
 public final class WebAnswerer implements Answerer {
 
