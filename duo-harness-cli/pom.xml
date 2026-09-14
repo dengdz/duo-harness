@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.duo</groupId>
+    <artifactId>duo-harness</artifactId>
+    <version>0.5.0</version>
+  </parent>
+
+  <artifactId>duo-harness-cli</artifactId>
+  <description>CLI 呈现位插件（ADR-0011）：终端 REPL + ConsoleAnswerer——与 WebPlugin 对称的 Boot 插件</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-tools</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-agent</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-llm</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+  </dependencies>
+</project>

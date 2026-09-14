@@ -1,4 +1,4 @@
-package dev.duo.harness.example.agentrepl;
+package dev.duo.harness.cli;
 
 import dev.duo.harness.tools.InteractionAnswer;
 import dev.duo.harness.tools.InteractionRequest;

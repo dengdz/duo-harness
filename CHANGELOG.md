@@ -4,6 +4,10 @@
 
 ## 0.6.0（未发布）
 
+### Added
+
+- **CLI 呈现位插件**（ADR-0011）：新模块 `duo-harness-cli`——终端 REPL 成为与 WebPlugin 对称的 Boot 插件（yml 一行启停），`/exit` 只结束终端呈现（会话锁释放、回答者摘除，插件树与 Web 面不受影响）；交互行为与既有 CLI 一致
+
 ### Changed
 
 - Web 面重试行为对齐配置：`llm.retry` 段现对 Web 面生效（此前仅 CLI 装配读取，Web 用固定默认）——未配置该段时行为不变（缺省值两侧一致）

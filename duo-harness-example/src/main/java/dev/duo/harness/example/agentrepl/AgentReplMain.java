@@ -1,5 +1,6 @@
 package dev.duo.harness.example.agentrepl;
 
+import dev.duo.harness.cli.ConsoleAnswerer;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.agent.AgentListener;

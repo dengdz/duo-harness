@@ -1,0 +1,22 @@
+plugins:
+  # 纯 CLI 最小装配（M11-02 装配测试）：CliPlugin 自行装配执行链并注册交互工具，
+  # 无终端装配层——HITL 与 Web 装配（web-assembly-test.yml）对称
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  - id: prompts
+    name: dev.duo.harness.agent.PromptPlugin
+    config:
+      systemPrompt: "装配测试用 system 提示。"
+
+  - id: answers
+    name: dev.duo.harness.tools.InteractionPlugin
+
+  - id: skills
+    name: dev.duo.harness.agent.SkillsPlugin
+    config:
+      disabled: []
+
+  - id: cli
+    name: dev.duo.harness.cli.CliPlugin
+    config: {}
