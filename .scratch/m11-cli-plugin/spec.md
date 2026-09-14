@@ -76,3 +76,4 @@ WebPlugin 切换到共享装配器（装配逻辑单点化），行为零回归�
 - 已知限制沿袭（非本票引入，留档）：交互工具查重注册下先到方的会话绑定生效（多入口 plan-mode 状态归属按先注册方）；纯 CLI 装配测试依赖本机 `~/.duo/config.yml`（先例披露）。
 - 规格缺口提示（对齐 ADR-0011 决策 2 措辞）：**F5 刷新仍是全量快照**（ADR-0010 决策 2）；"刷新增量"已裁定走 backlog 的尾部窗口分页范式，不在本里程碑。
 - 理解关卡：M3-M10 欠账须在 `/implement` 开工前清零（用户已知情，流程闸门）。
+- 实施对账（2026-09-15，工单 03）：`run(in, out)` 测试入口未在 AgentReplMain 保留——REPL 测试入口已由 CliPlugin 注入构造承担（注入 in/out/sessionsDir/mock LLM 能力超集），spec 此句按实现演进对账；demo 专属装配（MCP 挂载+演示片段）经 `DuoMain.run` 的 ContextConsumer 回调注入，AgentReplMain 兼容壳保留该回调委托。

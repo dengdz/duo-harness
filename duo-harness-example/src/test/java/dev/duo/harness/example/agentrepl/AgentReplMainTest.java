@@ -145,30 +145,11 @@ class AgentReplMainTest {
     }
 
     @Test
-    void skillInvocationPrefixInjectsInstructions(@TempDir Path fixture) throws IOException {
-        // 工单 03：/技能名 前缀直调——指令全文前缀注入（用户直调路）
-        Files.createDirectories(fixture.resolve("release-notes"));
-        Files.writeString(fixture.resolve("release-notes").resolve("SKILL.md"),
-                "---\nname: release-notes\ndescription: 生成发布说明\n---\n请按仓库规范撰写发布说明。");
-        dev.duo.harness.agent.SkillRegistry registry =
-                dev.duo.harness.agent.SkillRegistry.scan(List.of(fixture), java.util.Set.of());
-
-        // 命中：指令全文 + 用户输入
-        assertEquals("请按仓库规范撰写发布说明。\n\n用户输入：0.3.0",
-                AgentReplMain.resolveSkillInvocation("/release-notes 0.3.0", registry));
-        // 命中：无其余输入 → 仅指令全文
-        assertEquals("请按仓库规范撰写发布说明。",
-                AgentReplMain.resolveSkillInvocation("/release-notes", registry));
-        // 未知名 → null（REPL 提示未知命令）
-        assertNull(AgentReplMain.resolveSkillInvocation("/不存在", registry));
-        // 非斜杠输入原样透传
-        assertEquals("普通问题", AgentReplMain.resolveSkillInvocation("普通问题", registry));
-    }
-
-    @Test
     void agentDemoYmlBootsCleanly() throws Exception {
         // 防回归：run() 需要 ~/.duo/config.yml 的真实 key，测试覆盖不到 yml 装载——
-        // BUG（工单05 验收发现）：repeat-reminder 行缺 config 块，Boot 严格绑定整树点名失败
+        // BUG（工单05 验收发现）：repeat-reminder 行缺 config 块，Boot 严格绑定整树点名失败。
+        // cli 行（M11）读 System.in——置空流让 REPL 立即转 idle（不阻塞测试）
+        System.setIn(new java.io.ByteArrayInputStream(new byte[0]));
         Path yml = Path.of(AgentReplMain.class.getResource("/agent-demo.yml").toURI());
         Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
         root.dispose();

@@ -1,42 +1,16 @@
 package dev.duo.harness.example.agentrepl;
 
-import dev.duo.harness.cli.ConsoleAnswerer;
-import dev.duo.harness.core.api.PluginException;
-import dev.duo.harness.core.api.boot.Boot;
-import dev.duo.harness.agent.AgentListener;
-import dev.duo.harness.agent.AuditingAnswerer;
-import dev.duo.harness.agent.ChatAgent;
-import dev.duo.harness.agent.PlanMode;
 import dev.duo.harness.agent.PromptFragment;
-import dev.duo.harness.agent.Skill;
 import dev.duo.harness.agent.PromptRegistry;
 import dev.duo.harness.core.api.Context;
-import dev.duo.harness.core.api.Disposable;
-import dev.duo.harness.core.api.boot.DuoHome;
-import dev.duo.harness.llm.LlmConfig;
-import dev.duo.harness.llm.RetryingAdapter;
-import dev.duo.harness.llm.internal.OpenAiCompatAdapter;
-import dev.duo.harness.session.Session;
-import dev.duo.harness.tools.AnswersView;
-import dev.duo.harness.tools.InteractionService;
-import dev.duo.harness.tools.ToolDefinition;
-import dev.duo.harness.tools.ToolsService;
-import dev.duo.harness.example.tools.ToolsView;
+import dev.duo.harness.example.DuoMain;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintStream;
 import java.nio.file.Path;
-import java.util.List;
 
 /**
- * M6 agent 演示入口：REPL 循环——LLM 自主调用工具（Function Calling 经
- * 工具域三段管线与治理链）；HITL 交互（写操作终端 y/n 审批、ask_user 提问）、
- * 重试与重复调用提醒。ADR-0008 的 CLI 呈现位。
- *
- * <p>前置：{@code ~/.duo/config.yml} 配置 llm 段（retry 子段可选）。Boot 装载
- * 工具域 + 交互服务 + 交互审批 + 写保护 + ask_user + prompt 演示片段；MCP files
- * 连接以编程挂载（MiniFileSystemServer 指向临时目录）。</p>
+ * Agent 演示入口（兼容壳，ADR-0011）：CLI 呈现已插件化（`CliPlugin`，
+ * duo-harness-cli 模块）——本类只剩演示专属装配（MCP files 沙箱连接与演示
+ * 提示片段），经 {@link DuoMain} 的挂载回调注入。启动命令与终端交互不变。
  *
  * <p>运行：{@code mvn -pl duo-harness-example -am package exec:java
  * -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain}</p>
@@ -47,31 +21,12 @@ public final class AgentReplMain {
     }
 
     public static void main(String[] args) throws Exception {
-        run(new BufferedReader(new InputStreamReader(System.in)), System.out);
+        Path yml = Path.of(AgentReplMain.class.getResource("/agent-demo.yml").toURI());
+        DuoMain.run(new String[]{yml.toString()}, AgentReplMain::mountDemoExtras);
     }
 
-    /** 可测入口（冒烟测试经它注入脚本输入与 mock LLM）。 */
-    public static void run(BufferedReader in, PrintStream out) throws Exception {
-        LlmConfig config;
-        try {
-            config = LlmConfig.load();
-        } catch (PluginException e) {
-            out.println("LLM 未配置：");
-            out.println("  " + e.getMessage());
-            out.println("示例（~/.duo/config.yml）：");
-            out.println("  llm:");
-            out.println("    baseUrl: https://api.deepseek.com");
-            out.println("    apiKey: <你的 key>");
-            out.println("    model: deepseek-chat");
-            out.flush();
-            return;
-        }
-
-        Path yml = Path.of(AgentReplMain.class.getResource("/agent-demo.yml").toURI());
-        Context root = Boot.from(yml);
-
-        // MCP files 连接：编程挂载（等价 yml 行：serverName=files，
-        // command=java，args=[-cp, <classpath>, MiniFileSystemServer, <rootDir>]）
+    /** 演示专属装配：MCP files 连接（临时沙箱 + notes.txt）与演示提示片段——插在树启动后、首条输入前。 */
+    private static void mountDemoExtras(Context root) throws Exception {
         Path rootDir = java.nio.file.Files.createTempDirectory("duo-agent-demo");
         java.nio.file.Files.writeString(rootDir.resolve("notes.txt"), "agent 演示的文件内容");
         var mcpConfig = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
@@ -86,254 +41,13 @@ public final class AgentReplMain {
                 .add(rootDir.toString());
         root.plugin(new dev.duo.harness.mcp.McpClientPlugin(), mcpConfig).awaitStartup();
 
-        ToolsService tools = root.as(AgentToolsView.class).tools();
-        InteractionService answers = root.as(AgentAnswersView.class).answers();
-        dev.duo.harness.agent.SkillRegistry skills = root.as(AgentSkillsView.class).skills();
-        registerIfAbsent(tools, root, "ask_user", () -> new dev.duo.harness.tools.AskUserTool(answers));
-
-        Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
-        Session session;
-        try {
-            session = Session.latest(sessionsDir);
-            if (session == null) {
-                session = Session.create(sessionsDir);
-            }
-        } catch (dev.duo.harness.session.SessionLockedException e) {
-            // 单写者检测：最新会话已被占用（本进程的 Web 面，或其他进程）——明确提示并
-            // 改为新建会话继续：绝不静默共享同一日志（两个属主各持内存视图、JSONL 交错追加）
-            out.println("[提示] " + e.getMessage());
-            out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
-            session = Session.create(sessionsDir);
-        }
-        out.println("会话 " + session.id() + "（工具循环上下文）。/exit 退出，/new 开新话题。");
-        out.flush();
-
-        PromptRegistry prompts = root.as(AgentPromptsView.class).prompts();
+        PromptRegistry prompts = root.as(DemoPromptsView.class).prompts();
         prompts.register(root, new PromptFragment("demo:platform", "执行文件操作前先确认目标路径。"));
-
-        PlanHolder plan = new PlanHolder();
-        plan.active = PlanMode.isActive(session);
-        if (plan.active) {
-            plan.guidance = prompts.register(root, new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
-            out.println("（续接会话：当前处于计划模式，/plan off 可退出）");
-        }
-        LlmAdapterHolder llm = new LlmAdapterHolder(new RetryingAdapter(new OpenAiCompatAdapter(config),
-                config.retryMaxAttempts(), config.retryInitialBackoffMs()));
-        SessionHolder sessionHolder = new SessionHolder(session);
-        // CLI 回答者（审批 y/n、提问呈现）+ 审计桥（审批事件落会话）——ADR-0008 呈现位
-        answers.register(root, new AuditingAnswerer(sessionHolder::current, new ConsoleAnswerer(in, out)));
-        GovernanceHolder governanceHolder = new GovernanceHolder(
-                new dev.duo.harness.agent.ContextGovernance(llm.adapter));
-        ChatAgent agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts,
-                governanceHolder.governance);
-        registerIfAbsent(tools, root, "exit_plan_mode", () -> new dev.duo.harness.agent.ExitPlanModeTool(answers, sessionHolder::current, () -> {
-            plan.active = false;
-            if (plan.guidance != null) {
-                try {
-                    plan.guidance.dispose();
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-                plan.guidance = null;
-            }
-        }));
-
-        while (true) {
-            out.print("你> ");
-            out.flush();
-            String line = in.readLine();
-            if (line == null || line.strip().equals("/exit")) {
-                break;
-            }
-            if (line.isBlank()) {
-                continue;
-            }
-            if (line.strip().equals("/new")) {
-                Session previous = sessionHolder.session;
-                sessionHolder.session = Session.create(sessionsDir);
-                agent = buildAgent(llm.adapter, tools, sessionHolder.session, prompts,
-                        governanceHolder.governance);
-                previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
-                plan.active = false;
-                if (plan.guidance != null) {
-                    plan.guidance.dispose();
-                    plan.guidance = null;
-                }
-                out.println("新会话 " + sessionHolder.session.id() + "。");
-                out.flush();
-                continue;
-            }
-            String userText;
-            if (line.strip().equals("/plan") || line.strip().startsWith("/plan ")) {
-                String rest = line.strip().length() > 5 ? line.strip().substring(5).strip() : "";
-                if (rest.equals("off")) {
-                    if (plan.active) {
-                        sessionHolder.current().append(PlanMode.exitedEvent());
-                        if (plan.guidance != null) {
-                            plan.guidance.dispose();
-                            plan.guidance = null;
-                        }
-                        plan.active = false;
-                        out.println("已退出计划模式。");
-                    } else {
-                        out.println("当前不在计划模式。");
-                    }
-                    out.flush();
-                    continue;
-                }
-                if (plan.active) {
-                    out.println("已在计划模式中。");
-                    out.flush();
-                } else {
-                    sessionHolder.current().append(PlanMode.enteredEvent());
-                    plan.active = true;
-                    plan.guidance = prompts.register(root,
-                            new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
-                    out.println("已进入计划模式（先探索与设计，完成后调 exit_plan_mode 呈交计划；/plan off 退出）。");
-                    out.flush();
-                }
-                if (rest.isEmpty()) {
-                    continue;
-                }
-                // /plan 携带任务描述：已进入计划模式，按普通输入推进
-                userText = rest;
-            } else {
-                userText = resolveSkillInvocation(line.strip(), skills);
-                if (userText == null) {
-                    List<String> available = skills.all().stream().map(Skill::name).toList();
-                    out.println("未知命令: " + line.strip().split("\\s+", 2)[0]
-                            + (available.isEmpty() ? "" : "（可用技能: " + String.join(", ", available) + "）"));
-                    out.flush();
-                    continue;
-                }
-            }
-            try {
-                var reply = agent.send(userText, new AgentListener() {
-                    @Override
-                    public void onChunk(String text) {
-                        out.print(text);
-                        out.flush();
-                    }
-
-                    @Override
-                    public void onToolCall(String toolName, String argumentsJson) {
-                        out.println();
-                        out.println("  [调工具] " + toolName + " " + argumentsJson);
-                        out.flush();
-                    }
-
-                    @Override
-                    public void onToolResult(String toolName, String resultText, boolean isError) {
-                        out.println("  [工具" + (isError ? "错误] " : "结果] ") + resultText);
-                        out.flush();
-                    }
-                });
-                if (!reply.completed()) {
-                    out.println("  [异常终止] " + reply.finalText());
-                }
-            } catch (PluginException e) {
-                out.println("  [错误] " + e.getMessage());
-            }
-            out.println();
-            out.flush();
-        }
-        out.println("=== 对话结束 ===");
-        out.flush();
-        sessionHolder.current().close(); // 退出即释放会话独占锁（他处可续接该会话）
-        root.dispose();
-    }
-
-    private static ChatAgent buildAgent(dev.duo.harness.llm.LlmAdapter adapter, ToolsService tools,
-                                        Session session, PromptRegistry prompts,
-                                        dev.duo.harness.agent.ContextGovernance governance) {
-        return new dev.duo.harness.agent.internal.ToolCallingAgent(adapter, tools, session, prompts,
-                dev.duo.harness.agent.internal.ToolCallingAgent.MAX_ITERATIONS, governance);
-    }
-
-    /** 同名已注册则跳过（先到先得）——Web 装配（WebPlugin）先行注册交互工具时让位，防同名重复注册。 */
-    private static void registerIfAbsent(ToolsService tools, Context root, String name,
-                                         java.util.function.Supplier<ToolDefinition> factory) {
-        if (tools.list().stream().noneMatch(definition -> name.equals(definition.name()))) {
-            tools.register(root, factory.get());
-        }
-    }
-
-    /** 可变引用：/new 时换会话、重建 agent（ToolCallingAgent 持有 final 会话引用）。 */
-    private static final class SessionHolder {
-        Session session;
-
-        SessionHolder(Session session) {
-            this.session = session;
-        }
-
-        Session current() {
-            return session;
-        }
-    }
-
-    /** 计划模式装配态：激活标志 + 指导片段的注销器（批准/退出时摘除）。 */
-    private static final class PlanHolder {
-        boolean active;
-        Disposable guidance;
-    }
-
-    /** 可变引用：上下文治理随适配器仅构建一次，/new 重建 agent 时复用（M9）。 */
-    private static final class GovernanceHolder {
-        final dev.duo.harness.agent.ContextGovernance governance;
-
-        GovernanceHolder(dev.duo.harness.agent.ContextGovernance governance) {
-            this.governance = governance;
-        }
-    }
-
-    /** 可变引用：适配器仅构建一次，/new 重建 agent 时复用。 */
-    private static final class LlmAdapterHolder {
-        final dev.duo.harness.llm.LlmAdapter adapter;
-
-        LlmAdapterHolder(dev.duo.harness.llm.LlmAdapter adapter) {
-            this.adapter = adapter;
-        }
-    }
-
-    /** tools 服务的视图接口（方法名即服务名）。 */
-    interface AgentToolsView {
-
-        ToolsService tools();
-    }
-
-    /** 交互服务的视图接口（方法名即服务名 "answers"）。 */
-    interface AgentAnswersView {
-
-        InteractionService answers();
     }
 
     /** prompt 注册表的视图接口（方法名即服务名 "prompts"）。 */
-    interface AgentPromptsView {
+    interface DemoPromptsView {
 
         PromptRegistry prompts();
-    }
-
-    /** 技能注册表的视图接口（方法名即服务名 "skills"）。 */
-    interface AgentSkillsView {
-
-        dev.duo.harness.agent.SkillRegistry skills();
-    }
-
-    /**
-     * 技能直调识别（用户直调路，M7 三路触发之三）：`/技能名 [其余输入]` →
-     * 技能指令全文前缀注入（"指令\n\n用户输入：其余"）；未匹配技能名返回 null
-     * （内置命令 /exit /new 由调用方先行处理，优先于技能名）。
-     */
-    static String resolveSkillInvocation(String line, dev.duo.harness.agent.SkillRegistry skills) {
-        if (!line.startsWith("/")) {
-            return line;
-        }
-        String[] parts = line.split("\\s+", 2);
-        dev.duo.harness.agent.Skill skill = skills.find(parts[0].substring(1));
-        if (skill == null) {
-            return null;
-        }
-        String rest = parts.length > 1 ? parts[1].strip() : "";
-        return rest.isBlank() ? skill.content() : skill.content() + "\n\n用户输入：" + rest;
     }
 }
