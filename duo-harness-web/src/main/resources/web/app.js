@@ -88,15 +88,38 @@ const render = (() => {
     scroll();
   }
 
+  /**
+   * Markdown 渲染体（模型回复专用）：marked 解析 → DOMPurify 消毒，顺序不可换——
+   * 消毒必须作用于解析后的 HTML。系统/错误消息不走此路（保持 textContent）。
+   * vendor 库缺失时降级纯文本：渲染增强不可用不阻断对话。
+   */
+  function renderMarkdown(text) {
+    const body = document.createElement('div');
+    body.className = 'md-body';
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      body.textContent = text;
+      return body;
+    }
+    body.innerHTML = DOMPurify.sanitize(marked.parse(text));
+    return body;
+  }
+
   function finishAssistant(text) {
     showMessages();
+    // 流式期间保持纯文本追加（半截 markdown 渲染会闪烁），assistant/message 收口时整段渲染；
+    // 历史回放无对应 chunk 流，同样走此分支
+    let bubble;
     if (streamingBubble) {
-      streamingBubble.textContent = text;
-      streamingBubble.classList.remove('streaming');
+      bubble = streamingBubble;
+      bubble.classList.remove('streaming');
+      bubble.textContent = '';
       streamingBubble = null;
     } else {
-      assistant(text);
+      bubble = document.createElement('div');
+      bubble.className = 'msg assistant';
+      messages.appendChild(bubble);
     }
+    bubble.appendChild(renderMarkdown(text));
     scroll();
   }
 

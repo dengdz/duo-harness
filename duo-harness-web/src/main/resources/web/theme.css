@@ -58,6 +58,34 @@
     padding: 8px 14px; border-radius: var(--radius); text-align: left; max-width: 80%;
   }
   .msg.assistant { max-width: 92%; }
+  /* ===== §样式层 · Markdown 渲染体（模型回复收口后整段渲染） ===== */
+  .md-body { line-height: 1.65; }
+  .md-body p { margin: 0 0 8px; }
+  .md-body p:last-child { margin-bottom: 0; }
+  .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { margin: 12px 0 6px; line-height: 1.4; }
+  .md-body h1 { font-size: 1.3em; }
+  .md-body h2 { font-size: 1.2em; }
+  .md-body h3 { font-size: 1.1em; }
+  .md-body h4, .md-body h5, .md-body h6 { font-size: 1.05em; }
+  .md-body ul, .md-body ol { margin: 0 0 8px; padding-left: 22px; }
+  .md-body li { margin: 2px 0; }
+  .md-body code {
+    font-family: var(--mono); font-size: 12px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+  }
+  .md-body pre {
+    font-family: var(--mono); font-size: 12px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    overflow-x: auto; margin: 0 0 8px; white-space: pre;
+  }
+  .md-body pre code { background: none; border: none; padding: 0; }
+  .md-body blockquote {
+    border-left: 3px solid var(--brand); margin: 0 0 8px;
+    padding: 2px 10px; color: var(--text-dim);
+  }
+  .md-body a { color: var(--brand-strong); }
+  .md-body table { border-collapse: collapse; margin: 0 0 8px; display: block; max-width: 100%; overflow-x: auto; }
+  .md-body th, .md-body td { border: 1px solid var(--border); padding: 4px 8px; }
   .streaming::after {
     content: "▍"; color: var(--brand); animation: blink 1s infinite;
   }

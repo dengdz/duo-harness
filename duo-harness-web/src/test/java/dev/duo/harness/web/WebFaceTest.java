@@ -151,6 +151,21 @@ class WebFaceTest {
     }
 
     @Test
+    void servesVendoredMarkdownLibraries() throws Exception {
+        // Markdown 渲染依赖（工单 M10-08）：vendor 单文件入库，运行时零外联；消毒库与渲染库同在
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        HttpResponse<String> marked = fetch("/web/marked.min.js");
+        assertEquals(200, marked.statusCode(), "marked.min.js 可达");
+        assertTrue(marked.body().contains("marked v"), "渲染库内容在场");
+
+        HttpResponse<String> purify = fetch("/web/purify.min.js");
+        assertEquals(200, purify.statusCode(), "purify.min.js 可达");
+        assertTrue(purify.body().contains("DOMPurify"), "消毒库内容在场");
+    }
+
+    @Test
     void rejectsUnsafeOrMissingStaticAssets() throws Exception {
         // /web/ 白名单：单段已知后缀文件名，多段路径与穿越一律 404
         Session session = Session.create(tempDir.resolve("sessions"));
