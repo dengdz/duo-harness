@@ -48,7 +48,8 @@ class WebFaceTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：WebFaceTest —— Web 面：静态资源（拆分件/vendor 库/白名单 404）、"
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
-                + "安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限（27 用例） ===");
+                + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
+                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限（32 用例，含标题字段） ===");
     }
 
     interface ToolsView {
@@ -424,6 +425,41 @@ class WebFaceTest {
         assertEquals(current.id(), currentNode.path("id").asText(), "current 指向当前会话");
     }
 
+    @Test
+    void sessionsJsonCarriesOccupiedField() throws Exception {
+        // 占用标注（工单 M13-05）：每行携 occupied；当前会话（本进程持锁）标 true——
+        // 标注只提供预期，点击语义不变
+        Path listed = tempDir.resolve("web-sessions");
+        Session first = Session.create(listed);
+        first.append(SessionEvent.userMessage("历史"));
+        first.append(SessionEvent.title("历史会话标题"));
+        first.close(); // 空闲态夹具：探测应报 occupied=false（工单 M13-05 两态断言）
+        Session current = Session.create(listed);
+        start(current, scriptedAgent(current, "ok"));
+
+        JsonNode json = new ObjectMapper().readTree(get("/api/sessions"));
+        boolean freeSeen = false;
+        boolean currentOccupied = false;
+        String firstTitle = null;
+        for (JsonNode node : json.path("sessions")) {
+            assertTrue(node.has("occupied"), "每行携 occupied 字段");
+            assertTrue(node.has("title"), "每行携 title 字段（工单 M13-06）");
+            if (node.path("occupied").asBoolean()) {
+                if (node.path("id").asText().equals(current.id())) {
+                    currentOccupied = true;
+                }
+            } else if (node.path("id").asText().equals(first.id())) {
+                freeSeen = true;
+            }
+            if ("历史会话标题".equals(node.path("title").asText())) {
+                firstTitle = node.path("title").asText();
+            }
+        }
+        assertTrue(currentOccupied, "当前会话（本进程持锁）= true");
+        assertTrue(freeSeen, "已关闭会话 = false（占用/空闲两态）");
+        assertEquals("历史会话标题", firstTitle, "侧栏行带会话标题");
+    }
+
     /**
      * HITL 语义用例装配：经装配好的交互 seam（生产同款接线）在虚拟线程发起一条
      * 审批请求，阻塞等待作答；返回时可保证 answerer 已进入待答态。
@@ -702,6 +738,78 @@ class WebFaceTest {
             assertTrue(stream.contains("id: 0\n"), "实时帧带序号: " + stream);
             assertTrue(stream.contains("实时消息"), "实时帧内容在场: " + stream);
         }
+    }
+
+    @Test
+    void pageEndpointWindowAndHasMore() throws Exception {
+        // 分页端点（工单 M13-02）：before 之前的尾页事件 + 窗口头——窗口数学与 tail-snapshot 同源
+        Session session = Session.create(tempDir.resolve("sessions"));
+        for (int i = 0; i < 30; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        start(session, scriptedAgent(session, "ok"));
+
+        com.fasterxml.jackson.databind.JsonNode page = new ObjectMapper().readTree(
+                get("/api/session/page?before=60"));
+
+        org.junit.jupiter.api.Assertions.assertEquals(10, page.get("startEvent").asInt(), "窗口起点");
+        org.junit.jupiter.api.Assertions.assertEquals(50, page.get("events").size(), "每页 50 条事件");
+        org.junit.jupiter.api.Assertions.assertTrue(page.get("hasMore").asBoolean(), "仍有更早历史");
+        org.junit.jupiter.api.Assertions.assertEquals(10, page.get("earlierCount").asInt(), "更早计数");
+        org.junit.jupiter.api.Assertions.assertEquals("问5", page.get("events").get(0).get("text").asText(),
+                "窗口首条消息与 SSE 尾部快照同源");
+    }
+
+    @Test
+    void pageEndpointHasMoreFlipsAtLogHead() throws Exception {
+        // hasMore 翻转：before 落在窗口起点 → 一页取尽、更早清零
+        Session session = Session.create(tempDir.resolve("sessions"));
+        for (int i = 0; i < 30; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        start(session, scriptedAgent(session, "ok"));
+
+        com.fasterxml.jackson.databind.JsonNode page = new ObjectMapper().readTree(
+                get("/api/session/page?before=10"));
+
+        org.junit.jupiter.api.Assertions.assertEquals(0, page.get("startEvent").asInt(), "不足一页 → 从 0 起");
+        org.junit.jupiter.api.Assertions.assertEquals(10, page.get("events").size());
+        org.junit.jupiter.api.Assertions.assertFalse(page.get("hasMore").asBoolean(), "日志头之前无更早");
+        org.junit.jupiter.api.Assertions.assertEquals(0, page.get("earlierCount").asInt());
+    }
+
+    @Test
+    void pageEndpointRejectsBadOrOutOfRangeBefore() throws Exception {
+                Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        assertEquals(400, fetch("/api/session/page?before=abc").statusCode(), "非数字 before");
+        assertEquals(400, fetch("/api/session/page?before=1").statusCode(), "越界 before（空会话上界为 0）");
+        assertEquals(400, fetch("/api/session/page").statusCode(), "缺 before 参数");
+    }
+
+    @Test
+    void pageEndpointPaginationCoversLogWithoutGaps() throws Exception {
+        // 分页连续性：首页 [10,60) + 次页 [0,10) 拼回全量，无缺口无重叠（缺口修复语义）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        for (int i = 0; i < 30; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        start(session, scriptedAgent(session, "ok"));
+
+        com.fasterxml.jackson.databind.JsonNode first = new ObjectMapper().readTree(get("/api/session/page?before=60"));
+        com.fasterxml.jackson.databind.JsonNode second = new ObjectMapper().readTree(
+                get("/api/session/page?before=" + first.get("startEvent").asInt()));
+
+        org.junit.jupiter.api.Assertions.assertEquals(60,
+                first.get("events").size() + second.get("events").size(), "两页拼回全量 60 条");
+        org.junit.jupiter.api.Assertions.assertEquals("问0", second.get("events").get(0).get("text").asText(),
+                "次页首条 = 日志头");
+        org.junit.jupiter.api.Assertions.assertEquals("答4", second.get("events").get(9).get("text").asText(),
+                "次页末条与首页首条无缝相接");
     }
 
     @Test

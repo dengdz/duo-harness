@@ -24,7 +24,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留（27 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影（32 用例） ===");
     }
 
     @TempDir
@@ -188,6 +188,85 @@ class SessionTest {
     void tailWindowRejectsNonPositiveLimit() {
         Session session = Session.create(sessionsDir());
         assertThrows(IllegalArgumentException.class, () -> session.tailWindow(0));
+    }
+
+    @Test
+    void titleEventRoundTripsWithLatestWins() throws IOException {
+        // title 事件（工单 M13-06）：latest-wins 投影、重放保持、不进对话消息投影
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("第一问"));
+        session.append(SessionEvent.title("初版标题"));
+        session.append(SessionEvent.title("定稿标题"));
+
+        assertEquals("定稿标题", session.title(), "latest-wins 取最新");
+
+        session.close();
+        Session replayed = Session.load(session.jsonl());
+        assertEquals("定稿标题", replayed.title(), "重放读取一致");
+        assertTrue(replayed.deriveMessages().stream().noneMatch(m -> "定稿标题".equals(m.content())),
+                "标题不进对话消息投影");
+        replayed.close();
+    }
+
+    @Test
+    void isOccupiedReflectsHoldAndReleaseWithoutDisturbingLock() throws IOException {
+        // 占用探测（工单 M13-05）：本进程持有 = true、关闭释放后 = false；探测不扰动既有锁
+        Session session = Session.create(sessionsDir());
+
+        assertTrue(Session.isOccupied(session.jsonl()), "本进程持有 → 占用");
+        session.close();
+        assertTrue(!Session.isOccupied(session.jsonl()), "关闭释放 → 未占用");
+        assertTrue(!Session.isOccupied(sessionsDir().resolve("不存在.jsonl")), "文件不存在按未占用");
+
+        Session reopened = Session.load(session.jsonl());
+        assertEquals(session.id(), reopened.id(), "探测未扰动锁：同文件可重新持锁");
+        reopened.close();
+    }
+
+    @Test
+    void windowBeforeAtLogEndEqualsTailWindow() {
+        // 分页窗口是 tailWindow 的右边界参数化形态：右边界取日志末尾时两者全等
+        Session session = Session.create(sessionsDir());
+        for (int i = 0; i < 10; i++) {
+            appendRound(session, "问" + i, "答" + i);
+        }
+        session.append(SessionEvent.toolCall("call-1", "fs_read", "{}"));
+        session.append(SessionEvent.toolResult("call-1", "fs_read", "文件内容"));
+
+        Session.TailWindow atEnd = session.windowBefore(session.events().size(), 50);
+        Session.TailWindow tail = session.tailWindow(50);
+
+        assertEquals(tail.startEvent(), atEnd.startEvent(), "右边界 = 事件数时与 tailWindow 等价");
+        assertEquals(tail.earlierMessages(), atEnd.earlierMessages(), "更早计数一致");
+    }
+
+    @Test
+    void windowBeforeTruncatedTakesTrailingMessagesOfRange() {
+        // 截断分页：右边界之前的区间取尾 50 条消息，起点收在该区间首条消息的事件下标
+        Session session = Session.create(sessionsDir());
+        for (int i = 0; i < 30; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+
+        Session.TailWindow truncated = session.windowBefore(60, 50);
+
+        assertEquals(10, truncated.startEvent(), "区间 [0,60) 共 60 条取尾 50：起点 = 第 10 条消息（问5）");
+        assertEquals(10, truncated.earlierMessages(), "更早计数按区间内投影消息统计");
+
+        Session.TailWindow full = session.windowBefore(50, 50);
+
+        assertEquals(0, full.startEvent(), "区间内消息恰不超上限 → 全量");
+        assertEquals(0, full.earlierMessages());
+    }
+
+    @Test
+    void windowBeforeRejectsOutOfRangeEnd() {
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("问"));
+
+        assertThrows(IllegalArgumentException.class, () -> session.windowBefore(-1, 50));
+        assertThrows(IllegalArgumentException.class, () -> session.windowBefore(2, 50));
     }
 
     @Test

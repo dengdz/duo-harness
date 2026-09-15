@@ -28,6 +28,11 @@ function showToast(text, kind) {
 const api = {
   async status() { return (await fetch('/api/status')).json(); },
   async sessions() { return (await fetch('/api/sessions')).json(); },
+  async page(before) {
+    const res = await fetch('/api/session/page?before=' + before);
+    if (!res.ok) throw new Error('分页请求失败（HTTP ' + res.status + '）');
+    return res.json();
+  },
   async sendMessage(text) {
     return fetch('/api/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -355,49 +360,101 @@ const render = (() => {
     streamingBubble = null;
   }
 
+  /**
+   * 事件 → 纯渲染（无网络/状态副作用）：SSE handle 与分页前置渲染共用的单源分发。
+   * 回放期 chunk 照常渲染（BUG-20260915-03）：碎片流入 streamingBubble、assistant/message
+   * 收口整段覆盖——进行中轮次刷新不空窗，且不复发 0913-04 碎片化（防碎片化不以丢弃为手段）。
+   */
+  function dispatch(ev) {
+    if (ev.type === 'user/message') user(ev.text);
+    else if (ev.type === 'assistant/chunk') chunk(ev.text);
+    else if (ev.type === 'assistant/message') finishAssistant(ev.text);
+    else if (ev.type === 'tool/call') {
+      if (ev.toolName === 'ask_user') questionCard(ev);
+      else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev);
+      else toolCall(ev);
+    } else if (ev.type === 'tool/result') toolResult(ev);
+    else if (ev.type === 'approval/requested') interactiveCard(ev);
+    else if (ev.type === 'approval/decided') approvalDecided(ev);
+    else if (ev.type === 'run/error') runError(ev.text);
+  }
+
+  /**
+   * 前置渲染更早历史（工单 02）：现有内容整体搬移 → 更早事件按日志序渲染 → 接回，
+   * DOM 节点引用不动（工具卡 Map 与冻结态审批卡全部保持有效）；渲染前记录滚动
+   * 高度锚点，渲染后补偿 scrollTop——顶部加内容视窗不跳屏。
+   */
+  function prependEvents(events) {
+    const prevHeight = messages.scrollHeight;
+    const prevTop = messages.scrollTop;
+    const rest = document.createDocumentFragment();
+    while (messages.firstChild) rest.appendChild(messages.firstChild);
+    for (const ev of events) dispatch(ev);
+    messages.appendChild(rest);
+    messages.scrollTop = messages.scrollHeight - prevHeight + prevTop;
+  }
+
   return {
     user, assistant, chunk, finishAssistant, toolCall, toolResult,
     interactiveCard, questionCard, approvalDecided, resolveCard,
-    resetToHero, resetForReplay, showMessages
+    resetToHero, resetForReplay, showMessages, dispatch, prependEvents
   };
 })();
 
-// ----- §3 sse：EventSource 生命周期 + 回放边界帧（replay/start / replay/done） -----
+// ----- §3 sse：EventSource 生命周期 + 回放边界帧（replay/start / replay/done）+ 加载锚点 -----
 const sse = (() => {
+  // 已加载最早期事件的日志序号（分页 before 锚点，工单 02）：带 id 帧取最小值；
+  // 整窗替换（tail-snapshot 头帧）后重置重记
+  let oldestLoaded = null;
+  let replaying = true; // 头帧与 done 帧之间为回放：状态面刷新合并到 done 一次（防逐帧 fetch 风暴）
+
   function handle(event) {
     if (event.type === 'replay/start') {
       // 尾部窗口快照（首连/刷新/切换，ADR-0013）→ 整窗替换并记录窗口头（分页/无刷新切换消费）；
       // 增量（断线补齐）→ 保留页面已有内容（ADR-0010）
       if (event.mode === 'tail-snapshot') {
         render.resetForReplay();
+        oldestLoaded = null;
         app.setTailWindow({ hasMore: !!event.hasMore, earlierCount: event.earlierCount || 0 });
       }
+      replaying = true;
       app.clearSendBusy();
       return;
     }
-    if (event.type === 'replay/done') { app.clearSendBusy(); app.afterReplay(); return; }
-    // 回放期 chunk 照常渲染（BUG-20260915-03）：碎片流入 streamingBubble，assistant/message
-    // 收口时整段覆盖——进行中轮次刷新后已输出部分不再空窗，实时 chunk 无缝续接同一气泡
-    if (event.type === 'user/message') render.user(event.text);
-    else if (event.type === 'assistant/chunk') { render.chunk(event.text); return; } // 碎片不触发状态面刷新（回放可达千帧，5s 轮询兜底）
-    else if (event.type === 'assistant/message') { app.clearSendBusy(); render.finishAssistant(event.text); }
-    else if (event.type === 'tool/call') {
-      if (event.toolName === 'ask_user') render.questionCard(event);
-      else if (event.toolName === 'exit_plan_mode') render.interactiveCard(event);
-      else render.toolCall(event);
-    } else if (event.type === 'tool/result') render.toolResult(event);
-    else if (event.type === 'approval/requested') render.interactiveCard(event);
-    else if (event.type === 'approval/decided') render.approvalDecided(event);
-    else if (event.type === 'run/error') { app.clearSendBusy(); render.runError(event.text); }
-    app.refreshStatus();
+    if (event.type === 'replay/done') {
+      replaying = false;
+      app.clearSendBusy();
+      app.afterReplay();
+      app.refreshStatus(); // 回放期的逐帧刷新合并到此刻一次
+      return;
+    }
+    if (event.type === 'session/title') { document.title = event.text; return; } // 标题实时生成（工单 06）：只更新标签页
+    // 渲染单源（render.dispatch）；chunk 逐帧仅渲染——一次回复可达数百帧，状态面
+    // 刷新交给 5s 轮询，其余事件帧后刷新一次
+    render.dispatch(event);
+    if (event.type === 'assistant/message' || event.type === 'run/error') app.clearSendBusy();
+    if (event.type !== 'assistant/chunk') app.refreshStatus();
+  }
+
+  let source = null;
+
+  /** 主动断开（切换/新建无刷新换绑前调用，工单 03）：EventSource.close 后浏览器不再自动重连。 */
+  function disconnect() {
+    if (source) {
+      source.close();
+      source = null;
+    }
   }
 
   function connect() {
-    const source = new EventSource('/api/events');
+    disconnect(); // 重连路径幂等：先清旧连接再建（首连时为空操作）
+    source = new EventSource('/api/events');
     source.onopen = () => {
       app.clearSendBusy(); // 断线期间可能错过解除帧——连接建立即复位
     };
     source.onmessage = (e) => {
+      const id = parseInt(e.lastEventId, 10);
+      if (!Number.isNaN(id) && (oldestLoaded === null || id < oldestLoaded)) oldestLoaded = id;
       try {
         handle(JSON.parse(e.data));
       } catch (err) {
@@ -410,7 +467,9 @@ const sse = (() => {
     };
   }
 
-  return { connect };
+  function setOldest(value) { oldestLoaded = value; }
+
+  return { connect, disconnect, oldest: () => oldestLoaded, setOldest };
 })();
 
 // ----- §4 app：装配（composer / 侧栏 / 状态面 / 事件委托） -----
@@ -496,17 +555,21 @@ const app = (() => {
   $('#send').addEventListener('click', send);
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
-  // ---- 新话题：服务端开新会话（SSE 随换绑），本页重连取回放 ----
+  // ---- 新话题：无刷新换绑（工单 03）——断 SSE → POST new → 空态反馈 → 重连收新会话尾部快照 ----
   $('#newSession').addEventListener('click', async () => {
+    sse.disconnect();
     try {
       const res = await fetch('/api/session/new', { method: 'POST' });
       if (!res.ok) {
         showToast('新建会话失败（HTTP ' + res.status + '）');
+        sse.connect(); // 换绑未发生：恢复当前会话的事件流
         return;
       }
-      render.resetToHero();
-      location.reload(); // 重连 SSE 回放全新会话（EmptyHero），侧栏随之刷新
+      render.resetToHero(); // 立即空态反馈；回放完成后 afterReplay 幂等兜底
+      $('#input').value = '';
+      sse.connect();
     } catch (err) {
+      sse.connect();
       showToast('新建会话失败：' + errText(err));
     }
   });
@@ -534,17 +597,19 @@ const app = (() => {
     list.innerHTML = '';
     for (const s of data.sessions) {
       const item = document.createElement('div');
-      item.className = 'sidebar-item' + (s.current ? ' active' : '');
+      item.className = 'sidebar-item' + (s.current ? ' active' : '') + (s.occupied ? ' occupied' : '');
       if (s.current) currentSessionId = s.id;
       const sid = document.createElement('div');
       sid.className = 'sid';
-      sid.textContent = s.id;
+      sid.textContent = s.title || s.id; // 标题优先（工单 06），无标题回退 id
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.textContent = (s.current ? '当前 · ' : '') + relativeTime(s.lastModifiedMs);
+      // 占用标注（工单 05）：灰显 + "使用中"角标——只提供预期，点击仍可尝试（撞锁报错保留）
+      meta.textContent = (s.current ? '当前 · ' : '') + (s.occupied ? '使用中 · ' : '') + relativeTime(s.lastModifiedMs);
       item.append(sid, meta);
       item.addEventListener('click', async () => {
         if (s.current) return;
+        sse.disconnect(); // 无刷新切换（工单 03）：断流期间旧会话不再推帧
         try {
           const res = await fetch('/api/session/switch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -554,14 +619,18 @@ const app = (() => {
             // 服务端错误文案优先（如"会话已被占用：<id>"）——比状态码更有行动指向
             const detail = (await res.text().catch(() => '')).trim();
             showToast(detail || ('切换会话失败（HTTP ' + res.status + '）'));
+            sse.connect(); // 换绑未发生：恢复原会话事件流（快照整窗重放，内容一致）
             return;
           }
-          location.reload(); // 重连 SSE 回放所切换的会话
+          $('#input').value = ''; // 切换清空输入框：未发送的字符属于原会话语境，不跨会话携带
+          sse.connect(); // 重连收新会话尾部快照 → 整窗替换；侧栏高亮随 afterReplay 刷新
         } catch (err) {
+          sse.connect();
           showToast('切换会话失败：' + errText(err));
         }
       });
       list.appendChild(item);
+      if (s.current) document.title = s.title || s.id; // 标签页标题跟随当前会话（工单 06）
     }
     $('#chatHint').textContent = '会话 ' + currentSessionId + ' · /new 开新话题';
   }
@@ -612,9 +681,45 @@ const app = (() => {
     }
   }
 
-  // ---- 尾部窗口状态（ADR-0013）：快照头帧写入；历史分页与无刷新切换（工单 02/03）消费 ----
+  // ---- 尾部窗口与分页状态（ADR-0013）：快照头帧写入；分页加载与无刷新切换（工单 02/03）消费 ----
   let tailWindow = null;
-  function setTailWindow(window) { tailWindow = window; }
+  // 整窗代次：快照头帧递增——in-flight 的分页响应按代次校验，跨窗迟到即丢弃（防旧会话内容前置到新窗）
+  let windowEpoch = 0;
+  let loadingEarlier = false;
+
+  function setTailWindow(window) {
+    tailWindow = window;
+    windowEpoch++;
+    const more = $('#historyMore');
+    if (more) {
+      more.hidden = !window || !window.hasMore;
+      more.textContent = window && window.hasMore ? '更早还有 ' + window.earlierCount + ' 条 · 向上滚动加载' : '';
+    }
+  }
+
+  async function loadEarlier() {
+    if (loadingEarlier || !tailWindow || !tailWindow.hasMore) return;
+    const before = sse.oldest();
+    if (before === null || before <= 0) {
+      setTailWindow({ hasMore: false, earlierCount: 0 }); // 已到日志头：占位消失
+      return;
+    }
+    loadingEarlier = true;
+    const epoch = windowEpoch;
+    try {
+      const data = await api.page(before);
+      if (epoch !== windowEpoch) return; // 加载期间窗口被整窗替换：结果过期丢弃
+      render.prependEvents(data.events);
+      sse.setOldest(data.startEvent); // 锚点推进到新窗首事件：下次翻页取上一页而非重复本页
+      setTailWindow({ hasMore: data.hasMore, earlierCount: data.earlierCount });
+    } catch (err) {
+      showToast('更早历史加载失败：' + errText(err));
+    } finally {
+      loadingEarlier = false;
+      // 更早内容不足一屏时视窗仍在顶部，而滚动事件不再到来——补一发触发直至占位耗尽
+      if (!$('#messages').hidden && $('#messages').scrollTop < 120) loadEarlier();
+    }
+  }
 
   // ---- 回放结束：无可见事件 → EmptyHero ----
   function afterReplay() {
@@ -627,6 +732,11 @@ const app = (() => {
   refreshStatus();
   refreshSessions();
   setInterval(refreshStatus, 5000);
+
+  // 滚动到顶加载更早历史（工单 02）：loading 标志防重入，加载后由 finally 补发直至占位耗尽
+  $('#messages').addEventListener('scroll', () => {
+    if ($('#messages').scrollTop < 120) loadEarlier();
+  });
 
   return { refreshStatus, refreshSessions, afterReplay, clearSendBusy, setTailWindow, tailWindow: () => tailWindow };
 })();

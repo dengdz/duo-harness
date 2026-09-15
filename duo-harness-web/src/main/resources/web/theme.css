@@ -216,3 +216,9 @@
     border-radius: 8px; padding: 7px 9px; line-height: 1.5;
   }
   .context-line.near-threshold { border-color: var(--danger); background: var(--danger-tint); }
+
+  /* ===== §样式层 · 历史分页占位（工单 02） ===== */
+  #historyMore { text-align: center; font-size: 12px; color: var(--text-dim); padding: 8px 0 2px; user-select: none; }
+
+  .sidebar-item.occupied { opacity: 0.55; }
+  .sidebar-item.occupied.active { opacity: 1; }

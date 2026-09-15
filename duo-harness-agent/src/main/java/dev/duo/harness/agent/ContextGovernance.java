@@ -21,8 +21,9 @@ import java.util.List;
  * 什么"**——入参出参都是投影消息，JSONL 日志永远完整，回放与审计语义不动摇。
  *
  * <p>顺序即协同（DSH 经验）：spill 先卸能卸的 → pruner 收窄次长的 → 计量判断 →
- * 仍超预算才触发 compaction——修剪前置可能让压缩不必发生。阈值集中为本类常量
- * （四个数字先行，yml 化延后）。summary 生成复用 {@link LlmAdapter} 直答形态。</p>
+ * 仍超预算才触发 compaction——修剪前置可能让压缩不必发生。六个行为阈值经
+ * {@link Tuning} 注入（web/cli 装配的 yml {@code governance} 段），字段缺省
+ * 回退本类常量——不配置即缺省行为。summary 生成复用 {@link LlmAdapter} 直答形态。</p>
  *
  * <p>线程约定：实例非线程安全——随 agent 循环串行使用。</p>
  */
@@ -58,10 +59,48 @@ public final class ContextGovernance {
     /** 修剪保留尾长（字符）。 */
     static final int PRUNE_TAIL_CHARS = 1_000;
 
+    /**
+     * 治理阈值集（yml {@code governance} 段的绑定形态）：null 组件回退对应类常量缺省
+     * ——段缺席或字段省略即缺省行为，装配零漂移。字段语义与常量一一对应。
+     *
+     * @param spillThresholdChars      spill 触发阈值（字符，正）
+     * @param pruneThresholdChars      修剪触发阈值（字符，正）
+     * @param compactionThresholdRatio compaction 触发比例（(0,1]）
+     * @param contextWindowTokens      模型上下文窗口（token，正）
+     * @param keepRecentRatio          compaction 保留近端比例（[0,1)）
+     * @param minRemoteMessages        compaction 触发的最小远端消息数（正）
+     */
+    public record Tuning(Integer spillThresholdChars, Integer pruneThresholdChars,
+                         Double compactionThresholdRatio, Long contextWindowTokens,
+                         Double keepRecentRatio, Integer minRemoteMessages) {
+    }
+
     private final LlmAdapter llm;
+    private final int spillThresholdChars;
+    private final int pruneThresholdChars;
+    private final double compactionThresholdRatio;
+    private final long contextWindowTokens;
+    private final double keepRecentRatio;
+    private final int minRemoteMessages;
 
     public ContextGovernance(LlmAdapter llm) {
+        this(llm, null);
+    }
+
+    public ContextGovernance(LlmAdapter llm, Tuning tuning) {
         this.llm = llm;
+        this.spillThresholdChars = tuning == null || tuning.spillThresholdChars() == null
+                ? SPILL_THRESHOLD_CHARS : tuning.spillThresholdChars();
+        this.pruneThresholdChars = tuning == null || tuning.pruneThresholdChars() == null
+                ? PRUNE_THRESHOLD_CHARS : tuning.pruneThresholdChars();
+        this.compactionThresholdRatio = tuning == null || tuning.compactionThresholdRatio() == null
+                ? COMPACTION_THRESHOLD_RATIO : tuning.compactionThresholdRatio();
+        this.contextWindowTokens = tuning == null || tuning.contextWindowTokens() == null
+                ? CONTEXT_WINDOW_TOKENS : tuning.contextWindowTokens();
+        this.keepRecentRatio = tuning == null || tuning.keepRecentRatio() == null
+                ? KEEP_RECENT_RATIO : tuning.keepRecentRatio();
+        this.minRemoteMessages = tuning == null || tuning.minRemoteMessages() == null
+                ? MIN_REMOTE_MESSAGES : tuning.minRemoteMessages();
     }
 
     /**
@@ -100,12 +139,22 @@ public final class ContextGovernance {
         long tokens = usage != null
                 ? usage.promptTokens() + usage.completionTokens()
                 : ContextBudget.estimateMessageTokens(session.deriveMessages());
-        return new ContextOccupancy(tokens, contextThreshold(), CONTEXT_WINDOW_TOKENS, usage != null);
+        return new ContextOccupancy(tokens, contextThreshold(), contextWindowTokens, usage != null);
     }
 
-    /** compaction 触发阈值（窗口 × 触发比例）。 */
-    static long contextThreshold() {
-        return (long) (COMPACTION_THRESHOLD_RATIO * CONTEXT_WINDOW_TOKENS);
+    /** compaction 触发阈值（窗口 × 触发比例；窗口/比例均取生效调优值）。 */
+    long contextThreshold() {
+        return (long) (compactionThresholdRatio * contextWindowTokens);
+    }
+
+    /** 压缩触发阈值（生效调优观测，仅装配断言用——状态面经 {@link #occupancy} 读取，不经此方法）。 */
+    public long occupancyThresholdTokens() {
+        return contextThreshold();
+    }
+
+    /** 生效上下文窗口（生效调优观测，仅装配断言用——状态面经 {@link #occupancy} 读取，不经此方法）。 */
+    public long occupancyWindowTokens() {
+        return contextWindowTokens;
     }
 
     /** 最近一次带用量的 assistant/message 事件（倒查即得；续接的历史会话同样天然可取）。 */
@@ -130,7 +179,7 @@ public final class ContextGovernance {
                 continue;
             }
             int length = message.content().length();
-            if (length > SPILL_THRESHOLD_CHARS) {
+            if (length > spillThresholdChars) {
                 String replacement = spill(message, session);
                 if (replacement == null) {
                     continue; // 卸载失败保留原结果（治理永不丢数据）
@@ -140,7 +189,7 @@ public final class ContextGovernance {
                 }
                 result.set(i, new Message(Message.Role.TOOL, replacement,
                         message.toolCallId(), null, null));
-            } else if (length > PRUNE_THRESHOLD_CHARS) {
+            } else if (length > pruneThresholdChars) {
                 if (result == messages) {
                     result = new ArrayList<>(messages);
                 }
@@ -155,7 +204,7 @@ public final class ContextGovernance {
     private String prune(String content) {
         int middle = content.length() - PRUNE_HEAD_CHARS - PRUNE_TAIL_CHARS;
         System.out.println("[上下文治理] 工具结果 " + content.length() + " 字符超 "
-                + PRUNE_THRESHOLD_CHARS + "，修剪中段 " + middle + " 字符");
+                + pruneThresholdChars + "，修剪中段 " + middle + " 字符");
         return content.substring(0, PRUNE_HEAD_CHARS)
                 + "\n…[已修剪中段 " + middle + " 字符，完整原文在会话日志中]…\n"
                 + content.substring(content.length() - PRUNE_TAIL_CHARS);
@@ -177,7 +226,7 @@ public final class ContextGovernance {
                     + (content.length() - SPILL_PREVIEW_HEAD - SPILL_PREVIEW_TAIL) + " 字符已卸载]…\n"
                     + content.substring(content.length() - SPILL_PREVIEW_TAIL);
             System.out.println("[上下文治理] 工具结果 " + content.length() + " 字符超 "
-                    + SPILL_THRESHOLD_CHARS + "，已卸载 " + file);
+                    + spillThresholdChars + "，已卸载 " + file);
             return preview + "\n[完整原文已落盘: " + file + "，需要更多内容时请向用户询问该文件路径]";
         } catch (IOException e) {
             System.out.println("[上下文治理] 卸载失败，保留原结果: " + e.getMessage());
@@ -215,9 +264,9 @@ public final class ContextGovernance {
         if (measuredTokens <= thresholdTokens) {
             return messages;
         }
-        int keepRecent = Math.max(1, (int) Math.round(messages.size() * KEEP_RECENT_RATIO));
+        int keepRecent = Math.max(1, (int) Math.round(messages.size() * keepRecentRatio));
         int split = messages.size() - keepRecent;
-        if (split < MIN_REMOTE_MESSAGES) {
+        if (split < minRemoteMessages) {
             return messages; // 近端之外寥寥数条，无折叠价值
         }
         while (split < messages.size() && messages.get(split).role() != Message.Role.USER) {

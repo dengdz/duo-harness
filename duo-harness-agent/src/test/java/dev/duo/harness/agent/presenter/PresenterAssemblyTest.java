@@ -39,7 +39,7 @@ class PresenterAssemblyTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：PresenterAssemblyTest —— 呈现位共享装配器：执行链装配、"
-                + "交互工具查重注册、LLM 配置失败点名（3 用例） ===");
+                + "交互工具查重注册、LLM 配置失败点名、governance 段解析与生效（6 用例） ===");
     }
 
     interface ToolsView {
@@ -124,5 +124,66 @@ class PresenterAssemblyTest {
         assertThrows(PluginException.class,
                 () -> PresenterAssembly.llmAdapter(dev.duo.harness.llm.LlmConfig.load(
                         tempDir.resolve("不存在的config.yml"), java.util.Map.of())));
+    }
+
+    // ===== governance 段解析（工单 M13-04）：缺席回退 / 严格绑定 / 越界点名 =====
+
+    private com.fasterxml.jackson.databind.JsonNode config(String json) throws IOException {
+        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+    }
+
+    @Test
+    void missingGovernanceSectionYieldsNullTuning() throws IOException {
+        // 段缺席/为 null → null Tuning → 治理器用缺省常量（0.7.0 行为零漂移）
+        assertEquals(null, PresenterAssembly.parseGovernance(null), "config 缺失");
+        assertEquals(null, PresenterAssembly.parseGovernance(config("{\"port\":8080}")), "无 governance 段");
+        assertEquals(null, PresenterAssembly.parseGovernance(config("{\"governance\":null}")), "段为 null");
+    }
+
+    @Test
+    void governanceSectionBindsToTuningWithStrictValidation() throws IOException {
+        ContextGovernance.Tuning tuning = PresenterAssembly.parseGovernance(config("""
+                {"governance": {"spillThresholdChars": 1000, "pruneThresholdChars": 500,
+                  "compactionThresholdRatio": 0.5, "contextWindowTokens": 32000,
+                  "keepRecentRatio": 0.1, "minRemoteMessages": 2}}"""));
+
+        assertEquals(1000, tuning.spillThresholdChars());
+        assertEquals(500, tuning.pruneThresholdChars());
+        assertEquals(0.5, tuning.compactionThresholdRatio());
+        assertEquals(32000L, tuning.contextWindowTokens());
+        assertEquals(0.1, tuning.keepRecentRatio());
+        assertEquals(2, tuning.minRemoteMessages());
+
+        ContextGovernance.Tuning partial = PresenterAssembly.parseGovernance(
+                config("{\"governance\": {\"contextWindowTokens\": 64000}}"));
+
+        assertEquals(64000L, partial.contextWindowTokens(), "配置字段生效");
+        assertEquals(null, partial.spillThresholdChars(), "省略字段保持 null → 治理器回退常量");
+
+        PluginException unknown = assertThrows(PluginException.class,
+                () -> PresenterAssembly.parseGovernance(
+                        config("{\"governance\": {\"spillThreshold\": 1000}}")),
+                "字段名拼错必须点名拒绝，不静默忽略");
+        assertTrue(unknown.getMessage().contains("spillThreshold"), "异常点名字段");
+        assertThrows(PluginException.class, () -> PresenterAssembly.parseGovernance(
+                        config("{\"governance\": {\"spillThresholdChars\": \"很多\"}}")),
+                "类型错点名拒绝");
+        assertThrows(PluginException.class, () -> PresenterAssembly.parseGovernance(
+                config("{\"governance\": {\"spillThresholdChars\": 0}}")), "阈值须为正");
+        assertThrows(PluginException.class, () -> PresenterAssembly.parseGovernance(
+                config("{\"governance\": {\"compactionThresholdRatio\": 1.5}}")), "比例须在 (0,1]");
+        assertThrows(PluginException.class, () -> PresenterAssembly.parseGovernance(
+                config("{\"governance\": {\"keepRecentRatio\": 1}}")), "保留比须在 [0,1)");
+    }
+
+    @Test
+    void governanceTuningInjectsEffectiveThresholds() {
+        // 装配消费断言：Tuning 注入治理器后阈值生效——压缩触发阈值 = 窗口 × 比例（occupancy 可观测）
+        ContextGovernance governance = PresenterAssembly.governance(
+                scriptedAdapter("占位"),
+                new ContextGovernance.Tuning(null, null, 0.5, 32000L, null, null));
+
+        assertEquals(16000L, governance.occupancyThresholdTokens(), "压缩阈值 = 32000 × 0.5");
+        assertEquals(32000L, governance.occupancyWindowTokens(), "状态面窗口取生效配置");
     }
 }

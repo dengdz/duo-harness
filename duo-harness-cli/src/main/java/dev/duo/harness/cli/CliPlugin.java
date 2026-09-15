@@ -5,6 +5,7 @@ import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.ContextGovernance;
+import dev.duo.harness.agent.SessionTitles;
 import dev.duo.harness.agent.PlanMode;
 import dev.duo.harness.agent.PromptFragment;
 import dev.duo.harness.agent.PromptRegistry;
@@ -121,8 +122,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
             session = Session.create(sessionsDir);
         }
 
-        // 执行链与 HITL 供给（呈现位共享装配器）：治理、agent、回答者（审计桥包装）、交互工具
-        ContextGovernance governance = PresenterAssembly.governance(llm);
+        // 执行链与 HITL 供给（呈现位共享装配器）：治理（governance 段可省——缺省常量）、
+        // agent、回答者（审计桥包装）、交互工具
+        ContextGovernance governance = PresenterAssembly.governance(
+                llm, PresenterAssembly.parseGovernance(config));
+        // 会话标题生成（精简版，工单 M13-06）：首条消息后异步一次，/new 换绑的新会话同源触发
+        SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts, governance);
         answererRegistration = answers.register(ctx,
@@ -174,6 +179,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     Session previous = holder.session;
                     holder.session = Session.create(sessionsDir);
                     agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts, governance);
+                    SessionTitles.attach(holder.session, llm);
                     previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                     plan.active = false;
                     disposeGuidance(plan);

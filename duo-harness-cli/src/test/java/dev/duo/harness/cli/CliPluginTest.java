@@ -179,9 +179,19 @@ class CliPluginTest {
             assertTrue(out.contains("=== 对话结束 ==="), out);
 
             Session latest = Session.latest(dir); // idle 已释放锁，latest 可正常打开
-            assertEquals(2, latest.events().size(), "user/message + assistant/message");
+            // 标题生成（工单 M13-06）为 title 事件多落一条——异步落盘，轮询等待（竞态避免）
+            long titleDeadline = System.currentTimeMillis() + 5_000;
+            while (latest.events().size() < 3 && System.currentTimeMillis() < titleDeadline) {
+                Thread.sleep(50);
+                latest.close();
+                latest = Session.latest(dir);
+            }
+            assertEquals(3, latest.events().size(), "user/message + assistant/message + session/title");
             assertEquals("问好", latest.events().get(0).text());
-            assertEquals(SessionEvent.ASSISTANT_MESSAGE, latest.events().get(1).type());
+            // 标题生成异步——title 与 assistant/message 落日志顺序不保证，按类型集合断言
+            var types = latest.events().stream().map(SessionEvent::type).sorted().toList();
+            assertEquals(List.of(SessionEvent.ASSISTANT_MESSAGE, SessionEvent.TITLE, SessionEvent.USER_MESSAGE),
+                    types, "三类事件齐备");
             latest.close();
         } finally {
             fx.dispose();
@@ -227,7 +237,7 @@ class CliPluginTest {
                     "idle 后无人应答即拒");
 
             Session latest = Session.latest(dir); // 锁已释放可重开
-            assertEquals(2, latest.events().size());
+            assertEquals(3, latest.events().size(), "user/message + assistant/message + session/title（工单 M13-06）");
             latest.close();
         } finally {
             fx.dispose();

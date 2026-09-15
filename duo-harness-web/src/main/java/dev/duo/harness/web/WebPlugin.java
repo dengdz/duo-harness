@@ -3,6 +3,7 @@ package dev.duo.harness.web;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.PromptRegistry;
+import dev.duo.harness.agent.SessionTitles;
 import dev.duo.harness.agent.presenter.PresenterAssembly;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
@@ -11,6 +12,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.ContextGovernance;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
@@ -78,9 +80,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
             // 不静默分脑共享同一日志（两个进程各持内存视图、JSONL 交错追加）
             throw new PluginException("Web 面无法启动：" + e.getMessage(), e);
         }
-        // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置
-        dev.duo.harness.agent.ContextGovernance governance =
-                PresenterAssembly.governance(adapter);
+        // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置；governance 段
+        // 可省（缺省常量，0.7.0 行为），配置错误（未知字段/类型/越界）启动即 FAILED 点名
+        ContextGovernance.Tuning governanceTuning = PresenterAssembly.parseGovernance(config);
+        ContextGovernance governance = PresenterAssembly.governance(adapter, governanceTuning);
         ChatAgent agent = PresenterAssembly.chatAgent(
                 adapter, tools, session, prompts, governance);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
@@ -104,9 +107,16 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // /new：全新会话；/switch：换绑既有会话——两者换绑后都经会话变更回调重建 agent
         // （ToolCallingAgent 持有 final 会话引用，不重建即分脑）
         face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));
-        face.onSessionChanged(fresh -> face.setAgent(
-                PresenterAssembly.chatAgent(
-                        adapter, tools, fresh, prompts, governance)));
+        // 会话变更回调是单回调槽（覆盖式 setter，非多播）——全部换绑动作必须合并在这一次
+        // 注册里。教训（BUG-20260916-01）：第二处注册会覆盖"换绑重建 agent"，切回分脑
+        //（agent 写已 close 的旧会话，发消息必报错）。标题生成（工单 M13-06）随换绑同源
+        // attach，双开时与 CLI 共享静态去重表
+        face.onSessionChanged(fresh -> {
+            face.setAgent(PresenterAssembly.chatAgent(
+                    adapter, tools, fresh, prompts, governance));
+            SessionTitles.attach(fresh, adapter);
+        });
+        SessionTitles.attach(session, adapter);
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
         return face::stop;
     }

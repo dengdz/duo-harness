@@ -47,6 +47,9 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 运行错误（M8；text = 错误消息。直推帧不落会话——projection 跳过；类型保留供 SSE 通道复用）。 */
     public static final String RUN_ERROR = "run/error";
 
+    /** 会话标题（M13；text = 标题文本。投影 latest-wins 经 {@code Session.title()} 读取，不进对话消息）。 */
+    public static final String TITLE = "session/title";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");
@@ -120,5 +123,10 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"）。 */
     public static SessionEvent approvalDecided(String toolName, String decisionText) {
         return new SessionEvent(APPROVAL_DECIDED, System.currentTimeMillis(), decisionText, null, toolName, null);
+    }
+
+    /** 便捷工厂：会话标题（生成器一次写入；重写即投影 latest-wins 自然覆盖）。 */
+    public static SessionEvent title(String text) {
+        return new SessionEvent(TITLE, System.currentTimeMillis(), text);
     }
 }

@@ -498,6 +498,42 @@ public final class WebFace {
             exchange.sendResponseHeaders(200, resp.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
         });
+        // 历史分页（ADR-0013）：before（事件序号）之前的尾页事件——响应携 startEvent（窗口首事件
+        // 下标，前端更新加载锚点）、events、hasMore、earlierCount；服务端每次全量投影定消息边界
+        server.createContext("/api/session/page", exchange -> {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            int before;
+            try {
+                before = Integer.parseInt(queryParam(exchange, "before"));
+            } catch (NumberFormatException e) {
+                exchange.sendResponseHeaders(400, -1);
+                return;
+            }
+            Session bound = session;
+            List<SessionEvent> events = bound.events();
+            if (before < 0 || before > events.size()) {
+                exchange.sendResponseHeaders(400, -1);
+                return;
+            }
+            Session.TailWindow window = bound.windowBefore(before, TAIL_WINDOW_MESSAGES); // 首屏/每页同值（ADR-0013）
+            var root = JSON.createObjectNode()
+                    .put("startEvent", window.startEvent())
+                    .put("hasMore", window.earlierMessages() > 0)
+                    .put("earlierCount", window.earlierMessages());
+            var arr = root.putArray("events");
+            for (int i = window.startEvent(); i < before; i++) {
+                arr.add(JSON.valueToTree(events.get(i)));
+            }
+            byte[] body = root.toString().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
         // SSE 会话事件流：连接帧 + 回放（尾部快照/增量）+ 实时广播（断开摘除输出流）。
         // 首连（无 Last-Event-ID）发尾部窗口快照（ADR-0013）；断线重连带游标只补其后事件（ADR-0010）
         server.createContext("/api/events", exchange -> {
@@ -583,15 +619,18 @@ public final class WebFace {
         }
     }
 
-    /** 侧栏 JSON：会话列表（修改时间倒序，current 标记当前会话）。 */
+    /** 侧栏 JSON：会话列表（修改时间倒序，current 标记当前会话，occupied 占用探测、title 标题——工单 M13-05/06）。 */
     private String sessionsJson() {
         var root = JSON.createObjectNode();
         var arr = root.putArray("sessions");
         String currentId = session.id();
         for (Session.SessionSummary summary : Session.list(sessionsDir)) {
+            Path jsonl = sessionsDir.resolve(summary.id() + ".jsonl");
             var node = arr.addObject()
                     .put("id", summary.id())
-                    .put("lastModifiedMs", summary.lastModifiedMs());
+                    .put("lastModifiedMs", summary.lastModifiedMs())
+                    .put("occupied", Session.isOccupied(jsonl))
+                    .put("title", Session.titleOf(jsonl));
             node.put("current", summary.id().equals(currentId));
         }
         return root.toString();
@@ -645,6 +684,21 @@ public final class WebFace {
     private static byte[] readBodyLimited(HttpExchange exchange) throws IOException {
         byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
         return body.length > MAX_BODY_BYTES ? null : body;
+    }
+
+    /** 取查询参数原值（缺参返回空串，由调用方解析并决定成败——不做 URL 解码，参数集仅限简单值）。 */
+    private static String queryParam(HttpExchange exchange, String name) {
+        String query = exchange.getRequestURI().getQuery();
+        if (query == null) {
+            return "";
+        }
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0 && name.equals(pair.substring(0, eq))) {
+                return pair.substring(eq + 1);
+            }
+        }
+        return "";
     }
 
     /** 读 classpath 资源；缺失或读失败返回 null（404 语义由调用方定）。 */

@@ -136,29 +136,38 @@ public final class Session {
     private static final java.util.concurrent.ConcurrentMap<Path, Boolean> HELD_LOCKS =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 注册表检查 → open → tryLock → put 全程的进程内串行闸（与 {@link #isOccupied} 共享）：
+     * tryLock 成功到 put 之间的间隙若并发探测线程 open+close 同文件 fd，POSIX 陷阱会把
+     * 刚拿到的锁一并蒸发——低概率、后果是独占保护失效，故以串行化根除（M13-05 审查发现）。
+     */
+    private static final Object LOCK_GATE = new Object();
+
     private static Session lock(String id, Path jsonl) {
         Path key = jsonl.toAbsolutePath().normalize();
-        if (HELD_LOCKS.containsKey(key)) {
-            throw new SessionLockedException(id, jsonl);
-        }
-        FileChannel channel = null;
-        try {
-            channel = FileChannel.open(jsonl,
-                    StandardOpenOption.READ, StandardOpenOption.WRITE);
-            FileLock fileLock = channel.tryLock();
-            if (fileLock == null) {
-                closeQuietly(channel); // 他进程持锁：关自己的探测 fd 无碍（锁在别人名下）
+        synchronized (LOCK_GATE) {
+            if (HELD_LOCKS.containsKey(key)) {
                 throw new SessionLockedException(id, jsonl);
             }
-            HELD_LOCKS.put(key, Boolean.TRUE);
-            return new Session(id, jsonl, channel, fileLock, key);
-        } catch (OverlappingFileLockException e) {
-            // 注册表已拦同进程重复；此分支仅防外部路径竞态，防御性保留
-            closeQuietly(channel);
-            throw new SessionLockedException(id, jsonl, e);
-        } catch (IOException e) {
-            closeQuietly(channel);
-            throw new PluginException("会话文件打开失败: " + jsonl, e);
+            FileChannel channel = null;
+            try {
+                channel = FileChannel.open(jsonl,
+                        StandardOpenOption.READ, StandardOpenOption.WRITE);
+                FileLock fileLock = channel.tryLock();
+                if (fileLock == null) {
+                    closeQuietly(channel); // 他进程持锁：关自己的探测 fd 无碍（锁在别人名下）
+                    throw new SessionLockedException(id, jsonl);
+                }
+                HELD_LOCKS.put(key, Boolean.TRUE);
+                return new Session(id, jsonl, channel, fileLock, key);
+            } catch (OverlappingFileLockException e) {
+                // 注册表已拦同进程重复；此分支仅防外部路径竞态，防御性保留
+                closeQuietly(channel);
+                throw new SessionLockedException(id, jsonl, e);
+            } catch (IOException e) {
+                closeQuietly(channel);
+                throw new PluginException("会话文件打开失败: " + jsonl, e);
+            }
         }
     }
 
@@ -168,6 +177,34 @@ public final class Session {
                 channel.close();
             } catch (IOException ignored) {
                 // 打开失败路径上的清理，忽略
+            }
+        }
+    }
+
+    /**
+     * 占用探测（工单 M13-05，只读）：会话是否已被持有——本进程查持锁注册表即得，
+     * 他进程经真实 {@code tryLock} 失败判定（探测锁随探测通道关闭而释放）。**不重复
+     * open 本进程已持锁的会话**：探测 fd 的关闭会触发 POSIX 释放陷阱（关闭同文件
+     * 任意 fd 释放本进程全部锁），注册表短路同时保证了这一点。文件打不开（不存在、
+     * 权限等）按未占用返回——标注只提供预期，占用与否的最终裁决仍是换绑时的独占锁。
+     */
+    public static boolean isOccupied(Path jsonl) {
+        Path key = jsonl.toAbsolutePath().normalize();
+        synchronized (LOCK_GATE) {
+            if (HELD_LOCKS.containsKey(key)) {
+                return true;
+            }
+            FileChannel channel = null;
+            try {
+                channel = FileChannel.open(jsonl, StandardOpenOption.READ, StandardOpenOption.WRITE);
+                FileLock probe = channel.tryLock();
+                return probe == null;
+            } catch (OverlappingFileLockException e) {
+                return true; // 注册表已拦同进程重复；此为外部竞态兜底
+            } catch (IOException e) {
+                return false;
+            } finally {
+                closeQuietly(channel);
             }
         }
     }
@@ -395,30 +432,59 @@ public final class Session {
      * @throws IllegalArgumentException maxMessages 非正
      */
     public TailWindow tailWindow(int maxMessages) {
+        List<SessionEvent> snapshot = events();
+        return messageWindow(snapshot, snapshot.size(), maxMessages);
+    }
+
+    /**
+     * 分页窗口（ADR-0013 / 工单 M13-02）：事件区间 {@code [0, endExclusive)} 内最后
+     * {@code maxMessages} 条投影消息的事件区间起点与更早计数——与 {@link #tailWindow}
+     * 同一套边界语义（消息边界对齐、tool/result 回折、未截断保留前导非投影事件），
+     * 仅右边界参数化：分页以"当前窗口首事件序号"为右边界向前逐页取窗。
+     *
+     * @param endExclusive 右边界（事件下标上界，可取事件数；越界属调用方错误）
+     * @param maxMessages  窗口内投影消息上限（须为正）
+     * @return 语义同 {@link #tailWindow}
+     * @throws IllegalArgumentException maxMessages 非正，或 endExclusive 越出 [0, 事件数]
+     */
+    public TailWindow windowBefore(int endExclusive, int maxMessages) {
+        List<SessionEvent> snapshot = events();
+        if (endExclusive < 0 || endExclusive > snapshot.size()) {
+            throw new IllegalArgumentException("endExclusive 越出 [0, " + snapshot.size() + "]: " + endExclusive);
+        }
+        return messageWindow(snapshot, endExclusive, maxMessages);
+    }
+
+    /**
+     * 消息锚定窗口的统一计算：区间 [0, endExclusive) 内最后 {@code maxMessages} 条
+     * 投影消息的首事件下标（tool/result 回折同 id 调用）与之前的投影消息数。
+     * 未截断（区间内消息不超上限）时起点固定 0——全量窗口不裁前导非投影事件
+     * （悬空审批卡等是刷新后重建卡片的数据源）。三趟 O(n) 遍历，全量投影的
+     * 毫秒级成本为 spec 明示接受（O(n) 优化留 M14）。
+     */
+    private static TailWindow messageWindow(List<SessionEvent> snapshot, int endExclusive, int maxMessages) {
         if (maxMessages <= 0) {
             throw new IllegalArgumentException("maxMessages 必须为正: " + maxMessages);
         }
-        List<SessionEvent> snapshot = events();
         int total = 0;
-        for (SessionEvent event : snapshot) {
-            if (projectsToMessage(event)) {
+        for (int i = 0; i < endExclusive; i++) {
+            if (projectsToMessage(snapshot.get(i))) {
                 total++;
             }
         }
         int tailStart = Math.max(0, total - maxMessages);
         if (tailStart == 0) {
-            // 未截断 → 全量窗口：起点固定 0，前导非投影事件（悬空审批卡等）不下丢
             return new TailWindow(0, 0);
         }
-        int start = snapshot.size();
+        int start = endExclusive;
         int seen = 0;
-        for (int i = 0; i < snapshot.size(); i++) {
+        for (int i = 0; i < endExclusive; i++) {
             if (projectsToMessage(snapshot.get(i)) && seen++ == tailStart) {
                 start = i;
                 break;
             }
         }
-        if (start < snapshot.size()) {
+        if (start < endExclusive) {
             SessionEvent first = snapshot.get(start);
             if (SessionEvent.TOOL_RESULT.equals(first.type())) {
                 for (int j = start - 1; j >= 0; j--) {
@@ -442,6 +508,48 @@ public final class Session {
 
     /** 尾部窗口映射结果（ADR-0013）：事件起点 + 起点之前的投影消息数。 */
     public record TailWindow(int startEvent, int earlierMessages) { }
+
+    /**
+     * 会话标题（latest-wins）：最新 {@code session/title} 事件的文本；无标题事件
+     * 返回 null（调用方回退 id 呈现）。标题生成器（工单 M13-06）一次写入，重写由
+     * latest-wins 自然覆盖——当前产品形态不重生成、不可改名。
+     */
+    public String title() {
+        List<SessionEvent> snapshot = events();
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            if (SessionEvent.TITLE.equals(snapshot.get(i).type())) {
+                return snapshot.get(i).text();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 静态标题读取（侧栏列表用）：不持锁打开 JSONL 逐行找最新 title 事件——
+     * 与 load 的严格解析不同，损坏行跳过不抛（标注是锦上添花，不因脏行失败）。
+     * 文件缺失/不可读返回 null。
+     */
+    public static String titleOf(Path jsonl) {
+        if (!Files.isRegularFile(jsonl)) {
+            return null;
+        }
+        try {
+            List<String> lines = Files.readAllLines(jsonl);
+            for (int i = lines.size() - 1; i >= 0; i--) {
+                try {
+                    JsonNode node = JSON.readTree(lines.get(i));
+                    if (SessionEvent.TITLE.equals(node.path("type").asText())) {
+                        return node.path("text").asText();
+                    }
+                } catch (IOException ignored) {
+                    // 单行损坏跳过（探测语义宽松）
+                }
+            }
+            return null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
 
     /** 新会话 id：启动时间 + 4 位十六进制随机后缀（补零保证同秒内字典序与生成序一致）。 */
     private static String newId() {
