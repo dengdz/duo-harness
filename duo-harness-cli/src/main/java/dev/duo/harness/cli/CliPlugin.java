@@ -21,6 +21,7 @@ import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -87,6 +88,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
+                WorkspacePolicy.SERVICE_NAME,
                 InteractionService.SERVICE_NAME, SkillRegistry.SERVICE_NAME);
     }
 
@@ -101,6 +103,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         PromptRegistry prompts = ctx.as(CliPromptsView.class).prompts();
         InteractionService answers = ctx.as(CliAnswersView.class).answers();
         SkillRegistry skills = ctx.as(CliSkillsView.class).skills();
+        WorkspacePolicy workspacePolicy = ctx.as(CliWorkspaceView.class).workspace();
 
         LlmAdapter llm = llmOverride != null ? llmOverride : loadLlm();
         Path sessionsDir = sessionsDir();
@@ -140,7 +143,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         out.flush();
 
         replThread = Thread.ofVirtual().name("cli-repl").start(() ->
-                replLoop(ctx, llm, tools, prompts, governance, skills, holder, plan, agent));
+                replLoop(ctx, llm, tools, prompts, governance, skills, holder, plan, agent, workspacePolicy));
         return this::stop;
     }
 
@@ -153,7 +156,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** REPL 主循环（交互沿 AgentReplMain 既有形态）：读行 → 命令分发 → agent 执行。 */
     private void replLoop(Context ctx, LlmAdapter llm, ToolsService tools, PromptRegistry prompts,
                           ContextGovernance governance, SkillRegistry skills,
-                          SessionHolder holder, PlanHolder plan, ChatAgent agent) {
+                          SessionHolder holder, PlanHolder plan, ChatAgent agent,
+                          WorkspacePolicy workspacePolicy) {
         Path sessionsDir = sessionsDir();
         try {
             while (!stopped.get()) {
@@ -178,7 +182,23 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     continue;
                 }
                 String userText;
-                if (line.strip().equals("/plan") || line.strip().startsWith("/plan ")) {
+                if (line.strip().equals("/permission") || line.strip().startsWith("/permission ")) {
+                    String rest = line.strip().length() > 11 ? line.strip().substring(11).strip() : "";
+                    if (rest.isEmpty()) {
+                        out.println("当前预设: " + workspacePolicy.mode().configName()
+                                + "（可选: read-only / workspace-write / danger-full-access）");
+                    } else {
+                        try {
+                            workspacePolicy.setMode(WorkspacePolicy.Mode.parse(rest));
+                            out.println("已切换: " + workspacePolicy.mode().configName());
+                        } catch (IllegalArgumentException e) {
+                            out.println(e.getMessage());
+                        }
+                    }
+                    out.flush();
+                    continue;
+                }
+            if (line.strip().equals("/plan") || line.strip().startsWith("/plan ")) {
                     userText = handlePlanCommand(ctx, prompts, holder, plan,
                             line.strip().length() > 5 ? line.strip().substring(5).strip() : "");
                     if (userText == null) {
@@ -382,5 +402,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliSkillsView {
 
         SkillRegistry skills();
+    }
+
+    /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */
+    interface CliWorkspaceView {
+
+        WorkspacePolicy workspace();
     }
 }

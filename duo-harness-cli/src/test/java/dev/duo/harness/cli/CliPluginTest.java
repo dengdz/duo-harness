@@ -41,7 +41,7 @@ class CliPluginTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、/new 换绑、"
-                + "/exit idle 锁释放、占用提示（3 用例） ===");
+                + "/exit idle 锁释放、占用提示、/permission 档位、工具叙述行通用形态（7 用例） ===");
     }
 
     interface ToolsView {
@@ -71,7 +71,15 @@ class CliPluginTest {
             root.plugin(new InteractionPlugin(), null).awaitStartup();
             root.plugin(new SkillsPlugin(), JsonNodeFactory.instance.objectNode()
                     .putArray("disabled")).awaitStartup();
-            root.plugin(new dev.duo.harness.tools.InteractiveApprovalPlugin(), null).awaitStartup();
+            // fs 工具族先挂：提供 workspace 服务——WorkspaceApprovalPlugin 与 CliPlugin
+            // 都依赖它，编程挂载缺依赖会永久挂起（awaitStartup 无超时）；workspace 根锚定测试临时目录
+            root.plugin(new dev.duo.harness.tools.fs.FsToolsPlugin(),
+                    JsonNodeFactory.instance.objectNode()
+                            .put("mode", "read-only")
+                            .put("root", sessionsDir.toAbsolutePath().getParent().toString()))
+                    .awaitStartup();
+            // 档位审批：ask 落回答者（本 fixture 为终端 y/n）；依赖 workspace（上一步已挂）
+            root.plugin(new dev.duo.harness.tools.fs.WorkspaceApprovalPlugin(), null).awaitStartup();
             registerGuardedWriteTool();
             BufferedReader in = new BufferedReader(new InputStreamReader(
                     new ByteArrayInputStream(scriptedInput.getBytes(StandardCharsets.UTF_8)),
@@ -259,6 +267,63 @@ class CliPluginTest {
             String out = fx.output();
             assertTrue(out.contains("[待审批] 工具 guarded_write"), "审批呈现: " + out);
             assertTrue(out.contains("[工具结果] written"), "审批放行后工具执行: " + out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void permissionCommandShowsAndSwitchesPreset() throws Exception {
+        // /permission（M12-02）：无参查看当前档位；带参切换——切的是 fs 插件发布的
+        // 同一 WorkspacePolicy 实例（fixture 以 read-only 起步）
+        Path dir = tempDir.resolve("f");
+        Fixture fx = new Fixture(dir, "/permission\n/permission workspace-write\n/exit\n", fixedReply("答"));
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("当前预设: read-only"), out);
+            assertTrue(out.contains("已切换: workspace-write"), out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void bashToolRendersThroughGenericToolLines() throws Exception {
+        // 呈现零特化回归（M12-03）：bash 走与其他工具同一条叙述/结果行通路——
+        // 终端不认识工具名，行文由通用 onToolCall/onToolResult 产出（无 bash 分支）；
+        // 本 fixture 为 read-only 档 → 先经终端审批，y 放行后才执行
+        Path dir = tempDir.resolve("g");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                           java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest(
+                                    "call_1", "bash", "{\"command\":\"echo 呈现回归\"}")));
+                }
+                textSink.accept("完成");
+                return new dev.duo.harness.llm.LlmTurn("完成", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, "跑个命令\ny\n/exit\n", llm);
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("[待审批] 工具 bash"), "read-only 档 bash 经终端审批: " + out);
+            assertTrue(out.contains("[调工具] bash {\"command\":\"echo 呈现回归\"}"),
+                    "通用叙述行原样含工具名与参数: " + out);
+            assertTrue(out.contains("[工具结果] 呈现回归"), "通用结果行回填命令输出: " + out);
         } finally {
             fx.dispose();
         }

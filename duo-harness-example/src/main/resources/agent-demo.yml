@@ -3,6 +3,13 @@ plugins:
   - id: tools
     name: dev.duo.harness.tools.ToolsPlugin
 
+  # fs 工具族六件（ADR-0012）：read/write/edit/glob/grep/bash——workspace 约束
+  # + 三档权限预设；发布 "workspace" 服务（CLI /permission 查看与切换预设）
+  - id: fs-tools
+    name: dev.duo.harness.tools.fs.FsToolsPlugin
+    config:
+      mode: workspace-write   # read-only / workspace-write / danger-full-access
+
   # prompt 注册表：systemPrompt 为最前用户指令片段（M7 起经插件发布为 "prompts" 服务）
   - id: prompts
     name: dev.duo.harness.agent.PromptPlugin
@@ -22,18 +29,16 @@ plugins:
     config:
       disabled: []
 
-  # 交互服务：回答者注册表（console answerer 由 AgentReplMain 在装配层注册）
+  # 交互服务：回答者注册表（console / web answerer 随呈现位插件注册）
   - id: answers
     name: dev.duo.harness.tools.InteractionPlugin
 
-  # 交互审批：写操作被声明"需审批"后由终端 y/n 逐次作答（fail-closed，无永久放行）
-  # ——与 ApprovalPlugin（always-deny / auto-approve）二选一挂载
+  # 档位审批（ADR-0012）：workspace-write 档区内写放行、越界/read-only 档 ask——
+  # ask 交回答者瀑布（web 行在前 → 卡片优先呈现；纯 CLI 装配为终端 y/n）
+  # ——与 ApprovalPlugin（always-deny / auto-approve）、InteractiveApprovalPlugin
+  # （无档位全 ask）三选一挂载
   - id: approval
-    name: dev.duo.harness.tools.InteractiveApprovalPlugin
-
-  # 写保护治理插件：对 write_file 声明 ask + guard 拦截涉密文件读取
-  - id: write-protector
-    name: dev.duo.harness.example.mcpfs.WriteProtectorPlugin
+    name: dev.duo.harness.tools.fs.WorkspaceApprovalPlugin
 
   # 重复调用提醒：同一工具相同参数连续重复达阈值（3/5/8）时在结果尾部附加提醒
   # （内核约定：声明 config 类型即须提供 config 块——块内字段可省，省略即默认阈值）
@@ -54,6 +59,7 @@ plugins:
     name: dev.duo.harness.cli.CliPlugin
     config: {}
 
-  # ask_user / exit_plan_mode 交互工具由两个呈现位插件各自查重注册（先到先得）；
-  # MCP 连接行由 AgentReplMain 在运行时以等价配置编程挂载
-  # （MiniFileSystemServer 指向临时目录）——等价形态见 demo-m2.yml 注释
+  # ask_user / exit_plan_mode 交互工具由两个呈现位插件各自查重注册（先到先得）。
+  # agent demo 装配仅本机工具族（消除双写工具选型噪音）；MCP 机制演示在
+  # demo-m2.yml（DemoMain 的 M2 段，mcpfs 模块保留）——想挂自己的 MCP 服务器，
+  # 等价 yml 形态见插件配置参考

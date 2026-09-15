@@ -2,6 +2,20 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.7.0（2026-09-15）
+
+### Added
+
+- **本机 fs 工具族六件**（M12，ADR-0012）：新插件 `tools.fs.FsToolsPlugin`（yml 一行装配）——`read`（三帽窗口 + 精确总行数 + 自描述续读 footer + 二进制拒读）、`write`（原子替换）、`edit`（LF 归一匹配域 + 四态结构化失败 + `replace_all`）、`glob` / `grep`（Java 自实现，跳 VCS 目录，截断回收）、`bash`（每次调用全新进程、工作目录固定 workspace 根、env 硬化、stdin 接空设备、超时 clamp 缺省 120s 上限 600s 并终止进程树、每流 100K 字符护栏超限报省略量、非零退出以 `[exit code: N]` 进正常结果而非错误）。agent 从 MCP 沙箱演示级文件能力升级为 workspace 约束的真实项目操作能力
+- **三档权限预设**（M12，ADR-0012）：`read-only` / `workspace-write`（默认）/ `danger-full-access`——路径感知的审批裁决：区内写放行、越界写与 bash 及 read-only 档写一律 ask（档位闸门 `WorkspaceGatePolicy` 前置短路，ask 委托既有审批管线）；CLI 新增 `/permission [档位]` 运行时查看与切档（重启回 yml `mode` 缺省）
+- **读前写闸门**：`write` / `edit` 覆盖已有文件须本会话先用 `read` 读取（未读拒绝并提示先读，新建豁免）——不盲改未见过的文件
+- **档位审批插件 `WorkspaceApprovalPlugin`**：与 `ApprovalPlugin`（always-deny / auto-approve）、`InteractiveApprovalPlugin`（无档位全 ask）三选一的审批策略，ask 落既有回答者瀑布（Web 卡片 / 终端 y/n）
+
+### Changed
+
+- agent demo（agent-demo.yml）移除 MCP files 沙箱挂载与写保护演示行——本机 fs 工具族取代，模型工具清单不再有 `mcp__files__*` 双写选型噪音；`AgentReplMain` 收敛为纯启动入口（无编程挂载段，启动命令不变）；MCP 机制演示保留在 DemoMain 的 M2 段（`demo-m2.yml`，mcpfs 模块保留）
+- Web 状态面工具清单标题改"工具（本机 + MCP 远端）"；运行Demo / 组装你的第一个 agent / 插件配置参考 / 工具目录 / limitations 文档对齐 M12 装配
+
 ## 0.6.0（2026-09-15）
 
 ### Added

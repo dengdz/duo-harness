@@ -10,7 +10,7 @@ agent 的文件能力只有 MCP 沙箱演示级 files 工具（临时目录、�
 
 ## Solution
 
-`tools` 模块新增 `fs` 子包：`FsToolsPlugin`（Boot 插件）发布 `WorkspacePolicy` 服务并注册六个 DSH 短名工具——`read`（三帽窗口 + 精确总行数 + 自描述续读 footer + 二进制拒读）、`write`（原子替换 + 读前写闸门）、`edit`（LF 归一匹配域 + 三态结构化失败 + `replace_all`）、`glob` / `grep`（Java 自实现，跳 VCS 目录，截断回收）、`bash`（全新进程 + env 硬化 + 超时 clamp + 输出截断 + 非零退出 marker）。`WorkspacePolicy` 承载三档权限预设（read-only / workspace-write 默认 / danger-full-access）与路径包含性判定（canonicalize + 前缀比较——策略检查非内核边界，威胁模型显式声明）；REPL 内置 `/permission [档位]` 命令切运行时态（重启回 yml 缺省）。`agent-demo.yml` 移除 MCP files 行（本机工具取代，消除双写工具选型噪音；mcpfs 模块与 MCP 集成代码保留）。
+`tools` 模块新增 `fs` 子包：`FsToolsPlugin`（Boot 插件）发布 `WorkspacePolicy` 服务并注册六个 DSH 短名工具——`read`（三帽窗口 + 精确总行数 + 自描述续读 footer + 二进制拒读）、`write`（原子替换 + 读前写闸门）、`edit`（LF 归一匹配域 + 四态结构化失败 + `replace_all`）、`glob` / `grep`（Java 自实现，跳 VCS 目录，截断回收）、`bash`（全新进程 + env 硬化 + 超时 clamp + 输出截断 + 非零退出 marker）。`WorkspacePolicy` 承载三档权限预设（read-only / workspace-write 默认 / danger-full-access）与路径包含性判定（canonicalize + 前缀比较——策略检查非内核边界，威胁模型显式声明）；REPL 内置 `/permission [档位]` 命令切运行时态（重启回 yml 缺省）。`agent-demo.yml` 移除 MCP files 行（本机工具取代，消除双写工具选型噪音；mcpfs 模块与 MCP 集成代码保留）。
 
 ## User Stories
 

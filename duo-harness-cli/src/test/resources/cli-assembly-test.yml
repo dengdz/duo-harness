@@ -17,6 +17,12 @@ plugins:
     config:
       disabled: []
 
+  # fs 工具族：CliPlugin 声明 workspace 服务依赖（/permission 命令），须有提供方
+  - id: fs-tools
+    name: dev.duo.harness.tools.fs.FsToolsPlugin
+    config:
+      mode: read-only
+
   - id: cli
     name: dev.duo.harness.cli.CliPlugin
     config: {}

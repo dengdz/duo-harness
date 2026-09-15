@@ -48,23 +48,26 @@ mvn -pl duo-harness-example -am package exec:java \
 
 `你> ` 提问，回答流式打印；多轮对话有上下文记忆，重启自动继续最近会话，`/new` 开新话题，`/exit` 退出。会话 JSONL 落 `~/.duo/sessions`，可回放。
 
-## 工具循环 REPL（M5 + M6）
+## 工具循环 REPL（M5 + M6，M12 起本机工具族）
 
 ```bash
 mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
 ```
 
-LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）：启动挂载 MCP files 连接（迷你 filesystem server，指向临时目录），标志性场景：
+LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含本机 fs 工具族六件（read / write / edit / glob / grep / bash，workspace 绑定 = 启动进程的当前目录）与三档权限预设（默认 workspace-write，终端 `/permission [档位]` 查看与切换）。标志性场景：
 
 | 输入 | 预期 |
 |---|---|
-| `读一下 notes.txt` | `[调工具] mcp__files__read_file` → `[工具结果]` 真实文件内容 → 模型总结回答 |
-| `帮我写一个 output.txt，内容是测试` | `[调工具] mcp__files__write_file` → `[待审批]` 终端呈现工具与参数，输入 `y` 放行（文件真实写入）或 `n` 拒绝（模型解释原因）——决定落会话审计 |
+| `读一下 pom.xml 的前 30 行` | `[调工具] read` → `[工具结果]` 带行号窗口（大文件带续读提示）→ 模型总结回答 |
+| `新建 hello.txt，内容是测试` | `[调工具] write` → workspace 内写**免审批**直接 `Created file`（区内写档位放行） |
+| `往 /tmp/duo-escape.txt 写点东西` | 越界写 → `[待审批]`（双面装配落 Web 卡片；纯 CLI 装配为终端 y/n）——批准落盘 / 拒绝模型解释，决定落会话审计 |
+| `用 bash 跑 ls` | `[调工具] bash` → 非 danger 档**一律 ask**（bash 写范围不受 workspace 约束）→ 放行后输出 + `[exit code: 0]`（非零退出也是结果不是错误） |
+| `/permission read-only` 后再让它写 | 写与 bash 全部 ask——切档即时生效（重启回 yml 缺省） |
 | 需要补充信息的任务 | `[提问]` 模型经 ask_user 向你提问（选项序号或自由文本）→ 回答后模型继续 |
 | 连续重复同一调用 | 第 3 次起 `[提醒]` 附加于工具结果，逐级加码 |
 
-交互安全语义（ADR-0008）：审批 one-shot、无"永久放行"；你不回答（Ctrl+C / EOF）一律按拒绝处理。`/new` 开新话题，`/exit` 退出；会话 JSONL 落 `~/.duo/agent-sessions`。LLM 调用自带重试（网络故障与 429/5xx 指数退避，参数见 config.yml `llm.retry` 段）。
+交互安全语义（ADR-0008 / ADR-0012）：审批 one-shot、无"永久放行"；你不回答（Ctrl+C / EOF）一律按拒绝处理。`/new` 开新话题，`/exit` 退出；会话 JSONL 落 `~/.duo/agent-sessions`。LLM 调用自带重试（网络故障与 429/5xx 指数退避，参数见 config.yml `llm.retry` 段）。
 
 ## Web 双面（M8）
 

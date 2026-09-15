@@ -145,12 +145,14 @@ class AgentReplMainTest {
     }
 
     @Test
-    void agentDemoYmlBootsCleanly() throws Exception {
-        // 防回归：run() 需要 ~/.duo/config.yml 的真实 key，测试覆盖不到 yml 装载——
-        // BUG（工单05 验收发现）：repeat-reminder 行缺 config 块，Boot 严格绑定整树点名失败。
-        // cli 行（M11）读 System.in——置空流让 REPL 立即转 idle（不阻塞测试）
+    void agentDemoYmlBootsCleanly(@TempDir Path tempDir) throws Exception {
+        // 防回归：Boot 需装载全量装配——BUG（工单05 验收发现）：repeat-reminder 行
+        // 缺 config 块，Boot 严格绑定整树点名失败。
+        // cli 行（M11）读 System.in——置空流让 REPL 立即转 idle（不阻塞测试）；
+        // 随机端口副本避免与本机在跑的 demo 实例抢 18080（BUG-20260915-02）
         System.setIn(new java.io.ByteArrayInputStream(new byte[0]));
-        Path yml = Path.of(AgentReplMain.class.getResource("/agent-demo.yml").toURI());
+        Path yml = dev.duo.harness.example.support.DemoYml
+                .ephemeralPortCopy(tempDir, "/agent-demo.yml");
         Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
         root.dispose();
     }

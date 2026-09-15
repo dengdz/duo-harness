@@ -90,6 +90,15 @@
           <configuration>
             <!-- 用例内含子进程（MCP 夹具）：卡死要以失败+线程转储呈现，而不是无限挂起 -->
             <forkedProcessTimeoutInSeconds>240</forkedProcessTimeoutInSeconds>
+            <environmentVariables>
+              <!-- 测试隔离：fork JVM 的 DuoHome 指向本模块构建目录——不触碰真实
+                   ~/.duo（用户数据与在跑实例的会话独占锁）；LLM 三项以假值兜底，
+                   装配测试只需"配置可得"，不会真实发请求 -->
+              <DUO_HOME>${project.build.directory}/test-duo-home</DUO_HOME>
+              <DUO_LLM_BASE_URL>http://127.0.0.1:9/v1</DUO_LLM_BASE_URL>
+              <DUO_LLM_API_KEY>test-key</DUO_LLM_API_KEY>
+              <DUO_LLM_MODEL>test-model</DUO_LLM_MODEL>
+            </environmentVariables>
           </configuration>
         </plugin>
         <plugin>
