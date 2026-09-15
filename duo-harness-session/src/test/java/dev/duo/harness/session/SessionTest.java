@@ -24,7 +24,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取（20 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留（27 用例） ===");
     }
 
     @TempDir
@@ -94,6 +94,100 @@ class SessionTest {
 
         assertTrue(session.deriveMessages().isEmpty(), "空会话投影应为空列表");
         assertTrue(session.events().isEmpty());
+    }
+
+    @Test
+    void tailWindowCoversWholeLogWhenUnderLimit() {
+        Session session = Session.create(sessionsDir());
+        appendRound(session, "第一问", "第一答");
+        appendRound(session, "第二问", "第二答");
+
+        Session.TailWindow window = session.tailWindow(50);
+
+        assertEquals(0, window.startEvent(), "不足上限时窗口覆盖全量日志");
+        assertEquals(0, window.earlierMessages(), "无更早消息");
+    }
+
+    @Test
+    void tailWindowStartsAtBoundaryMessageSkippingChunks() {
+        // 边界收在消息上：chunk 占事件下标但不投影——窗口起点是尾 50 条消息中首条的事件下标
+        Session session = Session.create(sessionsDir());
+        for (int i = 0; i < 30; i++) {
+            appendRound(session, "问" + i, "答" + i); // 每轮 4 事件（user + 2 chunk + assistant）投影 2 条消息
+        }
+
+        Session.TailWindow window = session.tailWindow(50);
+
+        // 60 条消息取尾 50：第 10 条消息（0 基）= 第 6 轮 user，事件下标 5×4 = 20
+        assertEquals(20, window.startEvent(), "起点越过 chunk 落在边界消息上");
+        assertEquals(10, window.earlierMessages(), "更早计数按投影消息统计");
+        assertEquals("问5", session.deriveMessages().get(10).content(), "边界消息确为窗口首条");
+    }
+
+    @Test
+    void tailWindowFoldsToolResultBackToItsCall() {
+        // tool/result 开场即无源之果（前端按 toolCallId 回填调用卡）——回折把同 id 调用一并纳入窗口
+        Session session = Session.create(sessionsDir());
+        for (int i = 0; i < 10; i++) {
+            appendRound(session, "问" + i, "答" + i);                            // 消息 0-19（事件 0-39）
+        }
+        session.append(SessionEvent.toolCall("call-1", "fs_read", "{}"));        // 消息 20（事件 40）
+        session.append(SessionEvent.toolResult("call-1", "fs_read", "文件内容")); // 消息 21（事件 41）
+        for (int i = 0; i < 24; i++) {
+            appendRound(session, "后问" + i, "后答" + i);                         // 消息 22-69
+        }
+        session.append(SessionEvent.userMessage("压轴一问"));                     // 消息 70 → 共 71 条
+
+        Session.TailWindow window = session.tailWindow(50);
+
+        // 71 条取尾 50：边界恰落在 tool/result（消息 21）→ 回折到同 id tool/call（事件 40）
+        assertEquals(40, window.startEvent(), "窗口起点回折到同 id 的 tool/call");
+        assertEquals(20, window.earlierMessages(), "更早计数按回折后的起点统计");
+    }
+
+    @Test
+    void tailWindowKeepsOrphanToolResultAtOwnBoundary() {
+        // 无同 id 调用可回折（异构日志）：结果自身即窗口起点，不回折也不崩溃
+        Session session = Session.create(sessionsDir());
+        for (int i = 0; i < 36; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        session.append(SessionEvent.toolResult("ghost", "fs_read", "孤儿结果"));
+
+        Session.TailWindow window = session.tailWindow(1);
+
+        assertEquals(72, window.startEvent(), "无调用可回折：孤儿结果自身即起点");
+        assertEquals(72, window.earlierMessages(), "全部 36 轮 72 条消息都在孤儿之前");
+    }
+
+    @Test
+    void tailWindowKeepsLeadingNonProjectingEventsWhenUntruncated() {
+        // 未截断窗口从 0 起：前导非投影事件（悬空审批卡）不得被裁——它们是刷新后重建卡片的数据源
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.approvalRequested("fs_write", "参数摘要"));
+        session.append(SessionEvent.userMessage("第一问"));
+
+        Session.TailWindow window = session.tailWindow(50);
+
+        assertEquals(0, window.startEvent(), "未截断不裁前导事件");
+        assertEquals(0, window.earlierMessages(), "未截断时窗口之前无消息");
+    }
+
+    @Test
+    void tailWindowOnEmptySessionYieldsEmptyWindow() {
+        Session session = Session.create(sessionsDir());
+
+        Session.TailWindow window = session.tailWindow(50);
+
+        assertEquals(0, window.startEvent(), "空会话窗口区间为空");
+        assertEquals(0, window.earlierMessages(), "空会话无更早消息");
+    }
+
+    @Test
+    void tailWindowRejectsNonPositiveLimit() {
+        Session session = Session.create(sessionsDir());
+        assertThrows(IllegalArgumentException.class, () -> session.tailWindow(0));
     }
 
     @Test

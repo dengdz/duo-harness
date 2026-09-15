@@ -55,7 +55,16 @@ const render = (() => {
   let lastOpenToolName = null;
   let streamingBubble = null;
 
-  const scroll = () => { messages.scrollTop = messages.scrollHeight; };
+  // 滚动合并到动画帧：回放/流式可瞬间到达数百帧 chunk，逐帧强制 reflow 会卡顿
+  let scrollQueued = false;
+  const scroll = () => {
+    if (scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      scrollQueued = false;
+      messages.scrollTop = messages.scrollHeight;
+    });
+  };
 
   function showMessages() {
     if (hero.style.display !== 'none') {
@@ -353,22 +362,24 @@ const render = (() => {
   };
 })();
 
-// ----- §3 sse：EventSource 生命周期 + 回放/实时边界（replay/done） -----
+// ----- §3 sse：EventSource 生命周期 + 回放边界帧（replay/start / replay/done） -----
 const sse = (() => {
-  let replayed = true; // 边界帧前为回放：历史 chunk 不渲染（以 assistant/message 为准）
-
   function handle(event) {
     if (event.type === 'replay/start') {
-      // 快照（首连 / 游标越界兜底）→ 清空重建；增量（断线补齐）→ 保留页面已有内容（ADR-0010）
-      if (event.mode === 'snapshot') render.resetForReplay();
-      replayed = true;
+      // 尾部窗口快照（首连/刷新/切换，ADR-0013）→ 整窗替换并记录窗口头（分页/无刷新切换消费）；
+      // 增量（断线补齐）→ 保留页面已有内容（ADR-0010）
+      if (event.mode === 'tail-snapshot') {
+        render.resetForReplay();
+        app.setTailWindow({ hasMore: !!event.hasMore, earlierCount: event.earlierCount || 0 });
+      }
       app.clearSendBusy();
       return;
     }
-    if (event.type === 'replay/done') { replayed = false; app.clearSendBusy(); app.afterReplay(); return; }
-    if (event.type === 'assistant/chunk' && replayed) return; // 历史碎片不回放
+    if (event.type === 'replay/done') { app.clearSendBusy(); app.afterReplay(); return; }
+    // 回放期 chunk 照常渲染（BUG-20260915-03）：碎片流入 streamingBubble，assistant/message
+    // 收口时整段覆盖——进行中轮次刷新后已输出部分不再空窗，实时 chunk 无缝续接同一气泡
     if (event.type === 'user/message') render.user(event.text);
-    else if (event.type === 'assistant/chunk') render.chunk(event.text);
+    else if (event.type === 'assistant/chunk') { render.chunk(event.text); return; } // 碎片不触发状态面刷新（回放可达千帧，5s 轮询兜底）
     else if (event.type === 'assistant/message') { app.clearSendBusy(); render.finishAssistant(event.text); }
     else if (event.type === 'tool/call') {
       if (event.toolName === 'ask_user') render.questionCard(event);
@@ -383,9 +394,7 @@ const sse = (() => {
 
   function connect() {
     const source = new EventSource('/api/events');
-    // 回放门由 replay/start 帧驱动（快照/增量分路）；连接建立到该帧之间按回放语义处理
     source.onopen = () => {
-      replayed = true;
       app.clearSendBusy(); // 断线期间可能错过解除帧——连接建立即复位
     };
     source.onmessage = (e) => {
@@ -401,7 +410,7 @@ const sse = (() => {
     };
   }
 
-  return { connect, isReplaying: () => replayed };
+  return { connect };
 })();
 
 // ----- §4 app：装配（composer / 侧栏 / 状态面 / 事件委托） -----
@@ -603,6 +612,10 @@ const app = (() => {
     }
   }
 
+  // ---- 尾部窗口状态（ADR-0013）：快照头帧写入；历史分页与无刷新切换（工单 02/03）消费 ----
+  let tailWindow = null;
+  function setTailWindow(window) { tailWindow = window; }
+
   // ---- 回放结束：无可见事件 → EmptyHero ----
   function afterReplay() {
     if (!$('#messages').children.length) {
@@ -615,7 +628,7 @@ const app = (() => {
   refreshSessions();
   setInterval(refreshStatus, 5000);
 
-  return { refreshStatus, refreshSessions, afterReplay, clearSendBusy };
+  return { refreshStatus, refreshSessions, afterReplay, clearSendBusy, setTailWindow, tailWindow: () => tailWindow };
 })();
 
 sse.connect();

@@ -53,6 +53,8 @@ public final class WebFace {
     static final long FAIL_CLOSED_GRACE_MS = 2_000;
     /** SSE 游标请求头（浏览器重连自动携带，值为最后收到的 id）。 */
     private static final String LAST_EVENT_ID_HEADER = "Last-Event-ID";
+    /** 首屏尾部窗口的消息数（ADR-0013：常量起步不进 yml，页长配置化为已知限制）。 */
+    static final int TAIL_WINDOW_MESSAGES = 50;
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
@@ -496,8 +498,8 @@ public final class WebFace {
             exchange.sendResponseHeaders(200, resp.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
         });
-        // SSE 会话事件流：连接帧 + 快照/增量回放 + 实时广播（断开摘除输出流）。
-        // 首连（无 Last-Event-ID）全量快照；断线重连带游标只补其后事件（ADR-0010）
+        // SSE 会话事件流：连接帧 + 回放（尾部快照/增量）+ 实时广播（断开摘除输出流）。
+        // 首连（无 Last-Event-ID）发尾部窗口快照（ADR-0013）；断线重连带游标只补其后事件（ADR-0010）
         server.createContext("/api/events", exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -507,16 +509,20 @@ public final class WebFace {
             try {
                 // 连接帧是 SSE 注释（冒号行），不是 data 帧——前端 JSON.parse 不消费它
                 client.send(": connected\n\n");
-                // 回放窗口：replay/start 告知模式（前端据此决定是否清空重建）→ 事件帧（带
-                // 日志序号 id）→ replay/done 边界帧（前端以此刻区分回放 chunk 与实时 chunk）
+                // 回放窗口：replay/start 告知模式与窗口头（前端据此整窗替换或保留存量）→ 事件帧（带
+                // 日志序号 id）→ replay/done 边界帧（前端回放结束钩子：EmptyHero 判定与侧栏刷新）
                 String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
-                List<SessionEvent> events = session.events(); // 一次快照：events() 每次整体拷贝
-                ReplayWindow window = resolveReplayWindow(cursor, events);
+                Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
+                List<SessionEvent> events = bound.events(); // 一次快照：events() 每次整体拷贝
+                ReplayWindow window = resolveReplayWindow(cursor, events, bound);
                 // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
-                System.out.println("[web] SSE 连接：模式=" + (window.snapshot() ? "snapshot" : "incremental")
+                System.out.println("[web] SSE 连接：模式=" + window.mode()
                         + "，游标=" + cursor + "，事件数=" + events.size());
-                client.send(dataFrame("{\"type\":\"replay/start\",\"mode\":\""
-                        + (window.snapshot() ? "snapshot" : "incremental") + "\"}"));
+                var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
+                if (window.tailSnapshot()) {
+                    header.put("hasMore", window.hasMore()).put("earlierCount", window.earlierCount());
+                }
+                client.send(dataFrame(header.toString()));
                 for (int i = window.from(); i < events.size(); i++) {
                     client.send(dataFrameWithId(i, toJson(events.get(i))));
                 }
@@ -529,26 +535,30 @@ public final class WebFace {
         });
     }
 
-    /** 回放窗口：起点下标 + 是否快照模式。 */
-    private record ReplayWindow(int from, boolean snapshot) { }
+    /** 回放窗口：起点下标 + 模式；尾部快照模式头帧额外携带 hasMore 与更早计数。 */
+    private record ReplayWindow(int from, String mode, boolean tailSnapshot,
+                                boolean hasMore, int earlierCount) { }
 
     /**
-     * 解析重连游标决定回放窗口：无游标 → 全量快照；游标合法且落在日志范围内 →
-     * 只补其后事件（增量）；解析失败或越界（日志经治理折叠、序号对不上）→
-     * 全量快照兜底——宁可重放不可丢事件（ADR-0010）。
+     * 解析重连游标决定回放窗口：游标合法且落在日志范围内 → 只补其后事件（增量，ADR-0010）；
+     * 无游标或游标非法/越界 → 尾部窗口快照（ADR-0013）——投影取尾部 {@link #TAIL_WINDOW_MESSAGES}
+     * 条消息的事件区间，头帧带 hasMore（是否还有更早消息）与更早计数。日志 append-only、
+     * 治理为纯读侧（不改编号），越界游标只见于跨会话误用——按首连同样兜底。
      */
-    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events) {
+    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events, Session bound) {
         if (cursor != null && !cursor.isBlank()) {
             try {
                 int parsed = Integer.parseInt(cursor.strip());
                 if (parsed >= 0 && parsed < events.size()) {
-                    return new ReplayWindow(parsed + 1, false);
+                    return new ReplayWindow(parsed + 1, "incremental", false, false, 0);
                 }
             } catch (NumberFormatException ignored) {
-                // 非法游标按无游标处理（快照兜底）
+                // 非法游标按无游标处理（尾部快照兜底）
             }
         }
-        return new ReplayWindow(0, true);
+        Session.TailWindow tail = bound.tailWindow(TAIL_WINDOW_MESSAGES);
+        return new ReplayWindow(tail.startEvent(), "tail-snapshot", true,
+                tail.earlierMessages() > 0, tail.earlierMessages());
     }
 
     /**

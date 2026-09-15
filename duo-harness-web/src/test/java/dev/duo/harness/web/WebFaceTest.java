@@ -47,8 +47,8 @@ class WebFaceTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：WebFaceTest —— Web 面：静态资源（拆分件/vendor 库/白名单 404）、"
-                + "状态 JSON（含上下文占用）、SSE 游标回放（快照/增量/越界兜底/帧序号）、"
-                + "安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限（25 用例） ===");
+                + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
+                + "安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限（27 用例） ===");
     }
 
     interface ToolsView {
@@ -593,9 +593,9 @@ class WebFaceTest {
     }
 
     @Test
-    void sseSnapshotReplayCarriesEventIds() throws Exception {
-        // 增量回放协议（工单 M10-05 / ADR-0010）：首连无游标 → 快照模式，会话事件帧带
-        // 日志序号 id；边界帧（replay/start、replay/done）不带 id（非会话事件无序号）
+    void sseTailSnapshotCarriesHeaderAndEventIds() throws Exception {
+        // 尾部窗口快照（工单 M13-01 / ADR-0013）：首连无游标 → tail-snapshot 头帧（携 hasMore
+        // 与更早计数）+ 窗口事件帧（带日志序号 id）；边界帧（replay/start、replay/done）不带 id
         Session session = Session.create(tempDir.resolve("sessions"));
         session.append(SessionEvent.userMessage("第一问"));
         session.append(SessionEvent.assistantMessage("第一答"));
@@ -606,10 +606,11 @@ class WebFaceTest {
             stream = sse.awaitText(800);
         }
 
-        assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"snapshot\""),
-                "首连为快照模式: " + stream);
-        assertTrue(stream.contains("id: 0\n"), "首条事件带序号 0: " + stream);
-        assertTrue(stream.contains("id: 1\n"), "第二条事件带序号 1: " + stream);
+        assertTrue(stream.contains("\"mode\":\"tail-snapshot\""), "首连为尾部窗口快照模式: " + stream);
+        assertTrue(stream.contains("\"hasMore\":false") && stream.contains("\"earlierCount\":0"),
+                "不足窗口上限：无更早消息: " + stream);
+        assertTrue(stream.contains("id: 0\n") && stream.contains("id: 1\n"),
+                "窗口未截断时事件帧从 0 起全量: " + stream);
         assertTrue(stream.contains("user/message") && stream.contains("assistant/message"), "事件内容在场");
         assertTrue(stream.contains("\"type\":\"replay/done\""), "边界帧在场");
         // 边界帧自带帧头（\n\ndata: 紧跟 JSON）：若被加上 id 行则格式变为 \n\nid: N\ndata: ...
@@ -617,6 +618,32 @@ class WebFaceTest {
                 "replay/start 帧不带序号: " + stream);
         assertTrue(stream.contains("\n\ndata: {\"type\":\"replay/done\"}"),
                 "replay/done 帧不带序号: " + stream);
+    }
+
+    @Test
+    void sseTailSnapshotStartsAtProjectedBoundary() throws Exception {
+        // 投影边界映射（工单 M13-01 正确性核心）：60 条投影消息取尾 50，事件帧从第 10 条
+        // 消息（0 基，即"问5"）的事件下标 10 起发，头帧 hasMore=true、更早计数=10
+        Session session = Session.create(tempDir.resolve("sessions"));
+        for (int i = 0; i < 30; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        start(session, scriptedAgent(session, "ok"));
+
+        String stream;
+        try (SseCollector sse = openSse(null)) {
+            stream = sse.awaitText(800);
+        }
+
+        assertTrue(stream.contains("\"mode\":\"tail-snapshot\""), "尾部快照模式: " + stream);
+        assertTrue(stream.contains("\"hasMore\":true") && stream.contains("\"earlierCount\":10"),
+                "窗口被截断：头帧携截断信息: " + stream);
+        assertTrue(stream.contains("id: 10\n"), "首帧从边界事件（下标 10）起: " + stream);
+        assertTrue(!stream.contains("id: 9\n"), "边界之前的事件不下发: " + stream);
+        assertTrue(stream.contains("问5") && stream.contains("答5"), "窗口首条消息（消息序数 10）在场");
+        assertTrue(!stream.contains("问4") && !stream.contains("答4"), "窗外消息（消息 0-9）不出现");
+        assertTrue(stream.contains("id: 59\n"), "末帧到日志末尾: " + stream);
     }
 
     @Test
@@ -642,8 +669,8 @@ class WebFaceTest {
     }
 
     @Test
-    void sseOutOfRangeOrInvalidCursorFallsBackToSnapshot() throws Exception {
-        // 游标越界（日志经治理折叠）/ 非法游标 → 全量快照兜底：宁可重放不可丢事件
+    void sseOutOfRangeOrInvalidCursorFallsBackToTailSnapshot() throws Exception {
+        // 游标越界 / 非法 → 尾部窗口快照兜底（与首连同路径，ADR-0013）
         Session session = Session.create(tempDir.resolve("sessions"));
         session.append(SessionEvent.userMessage("第一问"));
         session.append(SessionEvent.assistantMessage("第一答"));
@@ -654,10 +681,10 @@ class WebFaceTest {
             try (SseCollector sse = openSse(cursor)) {
                 stream = sse.awaitText(600);
             }
-            assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"snapshot\""),
-                    "游标 " + cursor + " 回退快照: " + stream);
+            assertTrue(stream.contains("\"mode\":\"tail-snapshot\""),
+                    "游标 " + cursor + " 回退尾部快照: " + stream);
             assertTrue(stream.contains("id: 0\n") && stream.contains("id: 1\n"),
-                    "游标 " + cursor + " 全量重发: " + stream);
+                    "游标 " + cursor + " 按尾部窗口重发: " + stream);
         }
     }
 

@@ -355,29 +355,93 @@ public final class Session {
     public List<Message> deriveMessages() {
         List<Message> messages = new ArrayList<>();
         for (SessionEvent event : events()) {
+            if (!projectsToMessage(event)) {
+                continue;
+            }
             switch (event.type()) {
                 case SessionEvent.USER_MESSAGE ->
                         messages.add(new Message(Message.Role.USER, event.text()));
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
-                case SessionEvent.TOOL_CALL -> {
-                    if (event.toolCallId() == null) {
-                        break;
-                    }
-                    messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
-                            event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
-                }
-                case SessionEvent.TOOL_RESULT -> {
-                    if (event.toolCallId() == null) {
-                        break;
-                    }
-                    messages.add(Message.tool(event.toolCallId(), event.text()));
-                }
-                default -> { /* 流式 chunk 与未知类型不投影 */ }
+                case SessionEvent.TOOL_CALL ->
+                        messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
+                                event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
+                case SessionEvent.TOOL_RESULT ->
+                        messages.add(Message.tool(event.toolCallId(), event.text()));
+                default -> { /* 不可达：projectsToMessage 已收窄类型集 */ }
             }
         }
         return messages;
     }
+
+    /** 投影判定：该事件是否入对话消息列表（与 {@link #deriveMessages} 同一语义，尾部窗口映射复用）。 */
+    private static boolean projectsToMessage(SessionEvent event) {
+        return switch (event.type()) {
+            case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE -> true;
+            case SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT -> event.toolCallId() != null;
+            default -> false;
+        };
+    }
+
+    /**
+     * 尾部窗口映射（ADR-0013）：最后 {@code maxMessages} 条投影消息的事件区间起点。
+     * 起点收在消息边界上——首屏不含残缺消息；tool/result 例外回折：结果卡的呈现依赖
+     * 同 id 调用卡在场，调用落在窗外则结果成无源之果，故回折把调用一并纳入（窗口因此
+     * 可比 maxMessages 多一条）。
+     *
+     * @param maxMessages 窗口内投影消息上限（须为正）
+     * @return startEvent=窗口首事件的日志下标（未截断时为 0——全量窗口不裁前导非投影事件，
+     *         如悬空审批卡），earlierMessages=起点之前的投影消息数（分页"更早还有 N 条"的计数源）
+     * @throws IllegalArgumentException maxMessages 非正
+     */
+    public TailWindow tailWindow(int maxMessages) {
+        if (maxMessages <= 0) {
+            throw new IllegalArgumentException("maxMessages 必须为正: " + maxMessages);
+        }
+        List<SessionEvent> snapshot = events();
+        int total = 0;
+        for (SessionEvent event : snapshot) {
+            if (projectsToMessage(event)) {
+                total++;
+            }
+        }
+        int tailStart = Math.max(0, total - maxMessages);
+        if (tailStart == 0) {
+            // 未截断 → 全量窗口：起点固定 0，前导非投影事件（悬空审批卡等）不下丢
+            return new TailWindow(0, 0);
+        }
+        int start = snapshot.size();
+        int seen = 0;
+        for (int i = 0; i < snapshot.size(); i++) {
+            if (projectsToMessage(snapshot.get(i)) && seen++ == tailStart) {
+                start = i;
+                break;
+            }
+        }
+        if (start < snapshot.size()) {
+            SessionEvent first = snapshot.get(start);
+            if (SessionEvent.TOOL_RESULT.equals(first.type())) {
+                for (int j = start - 1; j >= 0; j--) {
+                    SessionEvent prior = snapshot.get(j);
+                    if (SessionEvent.TOOL_CALL.equals(prior.type())
+                            && prior.toolCallId() != null && prior.toolCallId().equals(first.toolCallId())) {
+                        start = j;
+                        break;
+                    }
+                }
+            }
+        }
+        int earlier = 0;
+        for (int i = 0; i < start; i++) {
+            if (projectsToMessage(snapshot.get(i))) {
+                earlier++;
+            }
+        }
+        return new TailWindow(start, earlier);
+    }
+
+    /** 尾部窗口映射结果（ADR-0013）：事件起点 + 起点之前的投影消息数。 */
+    public record TailWindow(int startEvent, int earlierMessages) { }
 
     /** 新会话 id：启动时间 + 4 位十六进制随机后缀（补零保证同秒内字典序与生成序一致）。 */
     private static String newId() {

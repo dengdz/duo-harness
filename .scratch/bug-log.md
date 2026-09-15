@@ -8,6 +8,36 @@
 
 ---
 
+## BUG-20260915-03 · 流式中途刷新——已输出部分丢失，流结束才整段回来
+
+- **日期**：2026-09-15（M13 工单 01 验收发现；0.7.0 既有缺口）
+- **症状**：发"从一数到 1000"，流式数到 ~100 时刷新——刷新后从 101 续流，1~100 不见；整条消息结束后 1~1000 整段重现。
+- **根因**：回放门（0913-04 引入的 replay/done 边界帧语义）丢弃回放期全部 chunk——已完成轮次被 assistant/message 收口覆盖无感，但进行中轮次收口帧未落地，已输出部分在"刷新→流结束"窗口不可见。
+- **修复**：回放门放行 chunk（方案 A）——碎片流入 streamingBubble、收口整段覆盖防重；chunk 不触发状态面刷新（千帧回放不可逐帧 fetch）；摘除死状态机 replayed/isReplaying；scroll 合并 rAF。
+- **防复发**：验收对照表固化"流式中途刷新"常设验收点；回放语义改动必须同时对照防碎片化（0913-04）与进行中可见性（本案）两方向——防碎片化不能以丢弃为手段。2026-09-16 用户验收通过。档案见 .scratch/bugs/BUG-20260915-03.md。
+
+---
+
+## BUG-20260915-02 · 装配测试不隔离——与在跑的演示实例抢真实会话锁与端口
+
+- **日期**：2026-09-15（M12-04 验证期 Maven 卡死排查发现）
+- **症状**：单跑 ToolCatalogTest 挂起/失败——装配测试 boot 读真实 `~/.duo`，与用户在跑的演示实例抢会话独占锁与 18080 端口。
+- **根因**：surefire 默认继承环境无 DUO_HOME 覆盖，WebPlugin/CliPlugin 经 DuoHome.resolve 解析到真实 home。
+- **修复**：根 pom surefire 全局 DUO_HOME 指向 target/test-duo-home + LLM env 假值兜底；example 夹具 DemoYml 把 18080 换 port:0 临时副本。
+- **防复发**：测试永不依赖真实 `~/.duo`（全局已设）；固定端口 yml 一律 DemoYml 换随机端口。档案见 .scratch/bugs/BUG-20260915-02.md。
+
+---
+
+## BUG-20260915-01 · workspace-write 档区内写不走放行短路——静默等 Web 卡片像"卡死"
+
+- **日期**：2026-09-15（M12-02 验收第 4 步发现）
+- **症状**：workspace-write 默认档下区内新建写不出工具结果，页面静默等审批卡——用户观感"卡死"。
+- **根因**：工单 01 只实现了判定函数（WorkspacePolicy.decide），判定与审批管线的接线没有实现——判定无调用方，工单 02 checklist 措辞含糊带过。
+- **修复**：WorkspaceGatePolicy（ALLOW 短路/ASK 委托/路径缺失保守 ask）+ WorkspaceApprovalPlugin 闸门插件，yml 一行替换 InteractiveApprovalPlugin。
+- **防复发**：spec 有"裁决经 X"字样的工单，checklist 必须落到"调用方在哪"的接线项；审查时对新增判定 API 检索调用方。档案见 .scratch/bugs/BUG-20260915-01.md。
+
+---
+
 ## BUG-20260914-02 · 计划呈交/提问在 Web 无卡片可答——悬空挂起 10 分钟
 
 - **日期**：2026-09-14（M8 工单 06 用户手动验收发现）
