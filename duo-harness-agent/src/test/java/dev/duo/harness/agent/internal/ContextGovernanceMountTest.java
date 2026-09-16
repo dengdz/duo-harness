@@ -1,8 +1,8 @@
 package dev.duo.harness.agent.internal;
 
 import dev.duo.harness.agent.AgentListener;
-import dev.duo.harness.agent.ContextGovernance;
-import dev.duo.harness.agent.PromptRegistry;
+import dev.duo.harness.agent.governance.ContextGovernance;
+import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;

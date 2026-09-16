@@ -2,7 +2,7 @@ package dev.duo.harness.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.agent.AuditingAnswerer;
-import dev.duo.harness.agent.PromptRegistry;
+import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.SessionTitles;
 import dev.duo.harness.agent.presenter.PresenterAssembly;
 import dev.duo.harness.core.api.Context;
@@ -12,7 +12,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.agent.ChatAgent;
-import dev.duo.harness.agent.ContextGovernance;
+import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;

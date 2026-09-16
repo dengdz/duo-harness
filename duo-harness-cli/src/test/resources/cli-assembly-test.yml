@@ -5,7 +5,7 @@ plugins:
     name: dev.duo.harness.tools.ToolsPlugin
 
   - id: prompts
-    name: dev.duo.harness.agent.PromptPlugin
+    name: dev.duo.harness.agent.prompt.PromptPlugin
     config:
       systemPrompt: "装配测试用 system 提示。"
 
@@ -13,7 +13,7 @@ plugins:
     name: dev.duo.harness.tools.InteractionPlugin
 
   - id: skills
-    name: dev.duo.harness.agent.SkillsPlugin
+    name: dev.duo.harness.agent.skills.SkillsPlugin
     config:
       disabled: []
 

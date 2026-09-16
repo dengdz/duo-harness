@@ -6,7 +6,8 @@ import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ToolInvocation;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.agent.ChatAgent;
-import dev.duo.harness.agent.PromptRegistry;
+import dev.duo.harness.agent.governance.ContextGovernance;
+import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
@@ -48,7 +49,7 @@ public final class ToolCallingAgent implements ChatAgent {
     private final PromptRegistry prompts;
     private final int maxIterations;
     /** 上下文治理管线（M9；null = 未装配，投影直通——治理可选零残留）。 */
-    private final dev.duo.harness.agent.ContextGovernance governance;
+    private final ContextGovernance governance;
 
     /** 便捷构造：迭代上限取默认值，单一 system 提示（包装为用户指令片段）。 */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session, String systemPrompt) {
@@ -84,7 +85,7 @@ public final class ToolCallingAgent implements ChatAgent {
      */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             PromptRegistry prompts, int maxIterations,
-                            dev.duo.harness.agent.ContextGovernance governance) {
+                            ContextGovernance governance) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");

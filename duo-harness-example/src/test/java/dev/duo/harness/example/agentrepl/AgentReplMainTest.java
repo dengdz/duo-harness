@@ -149,12 +149,26 @@ class AgentReplMainTest {
         // 防回归：Boot 需装载全量装配——BUG（工单05 验收发现）：repeat-reminder 行
         // 缺 config 块，Boot 严格绑定整树点名失败。
         // cli 行（M11）读 System.in——置空流让 REPL 立即转 idle（不阻塞测试）；
-        // 随机端口副本避免与本机在跑的 demo 实例抢 18080（BUG-20260915-02）
+        // 随机端口副本避免与本机在跑的 demo 实例抢 18080（BUG-20260915-02）；
+        // duo home 重定向到临时目录并预置最小 config.yml（M14-01）——启动不依赖本机 ~/.duo
         System.setIn(new java.io.ByteArrayInputStream(new byte[0]));
-        Path yml = dev.duo.harness.example.support.DemoYml
-                .ephemeralPortCopy(tempDir, "/agent-demo.yml");
-        Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
-        root.dispose();
+        Path home = tempDir.resolve("duo-home");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("config.yml"), """
+                llm:
+                  baseUrl: https://placeholder.local
+                  apiKey: test-key
+                  model: test-model
+                """);
+        System.setProperty(dev.duo.harness.core.api.boot.DuoHome.PROP_OVERRIDE, home.toString());
+        try {
+            Path yml = dev.duo.harness.example.support.DemoYml
+                    .ephemeralPortCopy(tempDir, "/agent-demo.yml");
+            Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
+            root.dispose();
+        } finally {
+            System.clearProperty(dev.duo.harness.core.api.boot.DuoHome.PROP_OVERRIDE);
+        }
     }
 
     private static ToolDefinition echoDef() {

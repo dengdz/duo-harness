@@ -2,6 +2,16 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.9.0（开发中）
+
+### Changed
+
+- **limitations 收编定稿**（M14 工单 06）：已知限制清单恢复"唯一权威来源"完整性——"M7/M8（未发布）"陈旧标题改正为 0.3.0，补录 M9-M11（0.4.0-0.6.0）留档限制三条（CLI idle 无热恢复、交互工具会话绑定先到先得、compaction 无手动入口），过期去向标注清理；配合分页投影优化，"每次全量投影"限制条目消除（见下）
+- **事件快照读侧零拷贝**（M14，ADR-0014）：`Session.events()` 从每次锁内全量拷贝改为共享不可变快照——追加在锁内重建、读侧 O(1) 返回同一引用；对外语义不变（调用时刻稳定视图、与追加并发隔离、遍历无 CME），投影/回放/分页等读侧消费方自动受益
+- **分页定窗单趟化**（M14，ADR-0014）：消息窗口计算从三趟全量遍历收敛为单趟（O(max) 下标环形缓冲 + earlier 基线扣减回折前移量），窗口边界语义逐字不变；80K 事件会话"定窗+投影"实测 17.1ms → 7.6ms（-56%，达标线 15ms），基准转正为 `SessionPerfBenchmarkTest`（默认跳过，`-Dperf.benchmark=true` 启用）——已知限制"分页与尾部快照每次全量投影"就此消除
+- **agent 按域拆包**（M14 工单 05，duo-project-structure 达标）：根包 27 类收敛为"循环契约门面（6 类）+ 四域子包"——`governance` / `skills` / `plan` / `prompt`；**注意**：yml 插件行中的插件类为全限定名反射加载，prompt/skills/plan 域插件类名随之带子包路径（如 `dev.duo.harness.agent.prompt.PromptPlugin`、`dev.duo.harness.agent.skills.SkillsPlugin`），自写 yml 需同步更新（demo yml 与文档示例已迁移）
+- **装配测试密闭化**（M14 工单 01）：DuoHome 解析链新增最高优先级的系统属性 `duo.home`（`duo.home` > `DUO_HOME` 环境变量 > 缺省 `~/.duo`，部署侧 `DUO_HOME` 语义不变）；两处装配用例改临时目录自足——`mvn test` 不再依赖本机 `~/.duo/config.yml`
+
 ## 0.8.0（2026-09-16）
 
 ### Added

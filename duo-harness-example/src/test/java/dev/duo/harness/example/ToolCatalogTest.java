@@ -1,6 +1,6 @@
 package dev.duo.harness.example;
 
-import dev.duo.harness.agent.ExitPlanModeTool;
+import dev.duo.harness.agent.plan.ExitPlanModeTool;
 import dev.duo.harness.core.api.boot.Boot;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.example.support.DemoYml;

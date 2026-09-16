@@ -56,6 +56,13 @@ public final class Session {
     private final String id;
     private final Path jsonl;
     private final List<SessionEvent> events = new ArrayList<>();
+    /**
+     * 共享不可变快照（CoW，ADR-0014）：{@code events} 在 persist / load 追加后锁内
+     * （load 为构造期单线程）重建，读侧 {@link #events()} 零拷贝返回此引用——读多写少
+     * 的消费形态（治理每轮、状态面轮询、回放分页）不再每次付出 O(n) 拷贝，写侧每次
+     * 追加一次重建由 append-only 的低频写承担。
+     */
+    private volatile List<SessionEvent> snapshot = List.of();
     /** 事件监听器（CoW：回调中注销不破坏遍历）。 */
     private final List<BiConsumer<Integer, SessionEvent>> listeners = new CopyOnWriteArrayList<>();
     /** 独占锁的文件通道（持有至 {@link #close()}）。 */
@@ -112,6 +119,7 @@ public final class Session {
                 }
                 session.events.add(parse(line));
             }
+            session.snapshot = List.copyOf(session.events); // 构造期单线程：返回前建初始快照
         } catch (IOException e) {
             session.close(); // 读取失败即释放锁，不留半开状态
             throw new PluginException("会话文件读取失败: " + jsonl, e);
@@ -305,14 +313,14 @@ public final class Session {
     }
 
     /**
-     * 事件日志的只读快照：调用时刻的稳定拷贝——与 {@link #append} 经同一把锁互斥，
-     * 追加期间的拷贝与遍历都安全（裸 ArrayList 并发拷贝会读到扩容空洞而 NPE，
-     * 活视图遍历会抛 CME；Web SSE 回放与 agent 流式追加并发是常态）。
+     * 事件日志的只读快照：调用时刻的稳定不可变视图——与 {@link #append} 的隔离
+     * 经共享快照（CoW）实现：追加只在锁内整体重建快照并以 volatile 发布，读侧
+     * 返回的引用要么是旧快照要么是新快照，绝无半态；遍历期间的追加落在另一份
+     * 快照上，活视图会读到的扩容空洞与 CME 在此模型下不存在（Web SSE 回放与
+     * agent 流式追加并发是常态）。无追加期间多次调用共享同一实例（读侧零拷贝）。
      */
     public List<SessionEvent> events() {
-        synchronized (events) {
-            return List.copyOf(events);
-        }
+        return snapshot;
     }
 
     /**
@@ -364,6 +372,7 @@ public final class Session {
                 }
                 lockChannel.force(false); // 事件溯源的持久化承诺：落盘后才返回
                 events.add(event);
+                snapshot = List.copyOf(events); // CoW 重建在锁内：读侧只见完整旧/新快照，绝无半态
                 return events.size() - 1;
             } catch (IOException e) {
                 throw new PluginException("会话事件落盘失败: " + event.type(), e);
@@ -459,51 +468,52 @@ public final class Session {
      * 消息锚定窗口的统一计算：区间 [0, endExclusive) 内最后 {@code maxMessages} 条
      * 投影消息的首事件下标（tool/result 回折同 id 调用）与之前的投影消息数。
      * 未截断（区间内消息不超上限）时起点固定 0——全量窗口不裁前导非投影事件
-     * （悬空审批卡等是刷新后重建卡片的数据源）。三趟 O(n) 遍历，全量投影的
-     * 毫秒级成本为 spec 明示接受（O(n) 优化留 M14）。
+     * （悬空审批卡等是刷新后重建卡片的数据源）。单趟 O(n) 遍历：O(max) 下标环形
+     * 缓冲记最近 maxMessages 条投影消息的位置，起点即缓冲中第 tailStart 号；
+     * earlier 以 tailStart 为基线（起点之前恰有 tailStart 条投影消息，无需另趟
+     * 统计），唯 tool/result 回折前移起点时按纳入窗口的消息数扣减（ADR-0014）。
      */
     private static TailWindow messageWindow(List<SessionEvent> snapshot, int endExclusive, int maxMessages) {
         if (maxMessages <= 0) {
             throw new IllegalArgumentException("maxMessages 必须为正: " + maxMessages);
         }
-        int total = 0;
+        int[] ring = new int[maxMessages]; // 最近 maxMessages 条投影消息的下标（第 k 号在 k % max 槽）
+        int count = 0;
         for (int i = 0; i < endExclusive; i++) {
             if (projectsToMessage(snapshot.get(i))) {
-                total++;
+                ring[count % maxMessages] = i;
+                count++;
             }
         }
-        int tailStart = Math.max(0, total - maxMessages);
+        int tailStart = Math.max(0, count - maxMessages);
         if (tailStart == 0) {
             return new TailWindow(0, 0);
         }
-        int start = endExclusive;
-        int seen = 0;
-        for (int i = 0; i < endExclusive; i++) {
-            if (projectsToMessage(snapshot.get(i)) && seen++ == tailStart) {
-                start = i;
-                break;
-            }
-        }
-        if (start < endExclusive) {
-            SessionEvent first = snapshot.get(start);
-            if (SessionEvent.TOOL_RESULT.equals(first.type())) {
-                for (int j = start - 1; j >= 0; j--) {
-                    SessionEvent prior = snapshot.get(j);
-                    if (SessionEvent.TOOL_CALL.equals(prior.type())
-                            && prior.toolCallId() != null && prior.toolCallId().equals(first.toolCallId())) {
-                        start = j;
-                        break;
-                    }
+        // 截断时第 tailStart 号投影消息之后至多再写入 maxMessages-1 次，其槽位必未被覆盖
+        int start = ring[tailStart % maxMessages];
+        SessionEvent first = snapshot.get(start);
+        if (SessionEvent.TOOL_RESULT.equals(first.type())) {
+            // tool/result 回折：把同 id 调用卡纳入窗口。earlier 基线是 tailStart（起点前
+            // 的投影消息数），回折使起点前移——起点与调用卡之间的每条投影消息转入窗口，
+            // 按实际前移量从基线扣减；未找到同 id 调用（孤儿结果）则起点不动、基线不变。
+            int fold = -1;
+            int foldedIn = 0;
+            for (int j = start - 1; j >= 0; j--) {
+                SessionEvent prior = snapshot.get(j);
+                if (projectsToMessage(prior)) {
+                    foldedIn++;
+                }
+                if (SessionEvent.TOOL_CALL.equals(prior.type())
+                        && prior.toolCallId() != null && prior.toolCallId().equals(first.toolCallId())) {
+                    fold = j;
+                    break;
                 }
             }
-        }
-        int earlier = 0;
-        for (int i = 0; i < start; i++) {
-            if (projectsToMessage(snapshot.get(i))) {
-                earlier++;
+            if (fold >= 0) {
+                return new TailWindow(fold, tailStart - foldedIn);
             }
         }
-        return new TailWindow(start, earlier);
+        return new TailWindow(start, tailStart);
     }
 
     /** 尾部窗口映射结果（ADR-0013）：事件起点 + 起点之前的投影消息数。 */

@@ -6,8 +6,9 @@ import java.nio.file.Path;
 
 /**
  * duo-harness 用户级默认目录（{@code ~/.duo}）：会话、配置等运行时数据统一收在其下，
- * 保证密钥与个人配置永不入仓库（红线 2）。环境变量 {@code DUO_HOME} 可整体重定向
- * （测试与多实例隔离用）。
+ * 保证密钥与个人配置永不入仓库（红线 2）。解析优先级：系统属性 {@code duo.home}（测试
+ * 注入专用口——JVM 进程内无法修改环境变量）> 环境变量 {@code DUO_HOME}（部署与多实例
+ * 隔离用）> 缺省 {@code ~/.duo}。
  *
  * <p>目录懒创建：{@link #resolve(String)} 首次解析子目录时按需创建，首次运行零预置。
  */
@@ -16,6 +17,9 @@ public final class DuoHome {
     /** home 覆盖的环境变量名。 */
     public static final String ENV_OVERRIDE = "DUO_HOME";
 
+    /** home 覆盖的系统属性名（测试注入专用口，优先级高于环境变量）。 */
+    public static final String PROP_OVERRIDE = "duo.home";
+
     private final Path root;
 
     private DuoHome(Path root) {
@@ -23,21 +27,30 @@ public final class DuoHome {
     }
 
     /**
-     * 解析 duo home：{@code DUO_HOME} 环境变量优先，缺省 {@code ~/.duo}。
+     * 解析 duo home：显式覆盖值优先，空白等价未设回落缺省 {@code ~/.duo}。
      *
-     * @param envHome 环境变量 {@code DUO_HOME} 的值（可为 null/空白，测试注入用）
+     * @param envHome 显式覆盖值（可为 null/空白，测试注入用）
      * @return duo home 根目录（绝对路径）
      */
     public static DuoHome resolve(String envHome) {
-        String home = envHome != null && !envHome.isBlank()
-                ? envHome
-                : Path.of(System.getProperty("user.home"), ".duo").toString();
-        return new DuoHome(Path.of(home).toAbsolutePath().normalize());
+        return fromOverride(envHome);
     }
 
-    /** 从当前环境解析（读 {@code DUO_HOME}）。 */
+    /** 从当前环境解析：系统属性 {@code duo.home} 优先，其次 {@code DUO_HOME}，缺省 {@code ~/.duo}。 */
     public static DuoHome resolve() {
-        return resolve(System.getenv(ENV_OVERRIDE));
+        String prop = System.getProperty(PROP_OVERRIDE);
+        if (prop != null && !prop.isBlank()) {
+            return fromOverride(prop);
+        }
+        return fromOverride(System.getenv(ENV_OVERRIDE));
+    }
+
+    /** 从非空白覆盖值构建，空白回落缺省。 */
+    private static DuoHome fromOverride(String override) {
+        String home = override != null && !override.isBlank()
+                ? override
+                : Path.of(System.getProperty("user.home"), ".duo").toString();
+        return new DuoHome(Path.of(home).toAbsolutePath().normalize());
     }
 
     /** duo home 根目录。 */

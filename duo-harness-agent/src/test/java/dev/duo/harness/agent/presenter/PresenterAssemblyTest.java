@@ -2,8 +2,8 @@ package dev.duo.harness.agent.presenter;
 
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ChatAgent;
-import dev.duo.harness.agent.ContextGovernance;
-import dev.duo.harness.agent.PromptRegistry;
+import dev.duo.harness.agent.governance.ContextGovernance;
+import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatChunk;

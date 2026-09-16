@@ -1,8 +1,8 @@
 package dev.duo.harness.cli;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import dev.duo.harness.agent.Skill;
-import dev.duo.harness.agent.SkillRegistry;
+import dev.duo.harness.agent.skills.Skill;
+import dev.duo.harness.agent.skills.SkillRegistry;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

@@ -2,7 +2,7 @@ package dev.duo.harness.agent.internal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.agent.AgentListener;
-import dev.duo.harness.agent.PromptRegistry;
+import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
@@ -361,8 +361,8 @@ class ToolCallingAgentTest {
     @Test
     void promptRegistryComposesIntoRequestAndSupportsScopeRemoval() throws Exception {
         Session session = newSession();
-        dev.duo.harness.agent.PromptRegistry prompts =
-                new dev.duo.harness.agent.PromptRegistry("你是谨慎的助手");
+        dev.duo.harness.agent.prompt.PromptRegistry prompts =
+                new dev.duo.harness.agent.prompt.PromptRegistry("你是谨慎的助手");
         List<ChatRequest> captured = new ArrayList<>();
         LlmAdapter capturing = new StreamOnlyAdapter() {
             @Override
@@ -374,7 +374,7 @@ class ToolCallingAgentTest {
         dev.duo.harness.core.api.Context owner = dev.duo.harness.core.api.Context.root();
         PromptRegistry localView = prompts;
         dev.duo.harness.core.api.Disposable removal =
-                localView.register(owner, new dev.duo.harness.agent.PromptFragment("safety", "不做危险操作"));
+                localView.register(owner, new dev.duo.harness.agent.prompt.PromptFragment("safety", "不做危险操作"));
 
         ToolCallingAgent agent = new ToolCallingAgent(capturing, noTools(), session, prompts, 10);
         agent.send("问", AgentListener.NONE);
@@ -403,7 +403,7 @@ class ToolCallingAgentTest {
             }
         };
         ToolCallingAgent agent = new ToolCallingAgent(capturing, noTools(), session,
-                new dev.duo.harness.agent.PromptRegistry(null), 10);
+                new dev.duo.harness.agent.prompt.PromptRegistry(null), 10);
 
         agent.send("问", AgentListener.NONE);
 

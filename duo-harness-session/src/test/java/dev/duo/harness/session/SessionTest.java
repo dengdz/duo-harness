@@ -12,7 +12,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -466,6 +468,23 @@ class SessionTest {
         assertEquals(1, snapshot.size(), "快照不受后续追加影响");
         assertEquals("快照前", iterator.next().text(), "取快照时的迭代器在追加后仍可安全遍历");
         assertEquals(2, session.events().size(), "后续快照可见新事件");
+    }
+
+    @Test
+    void eventsReturnsSharedImmutableSnapshot() {
+        // CoW 快照契约（ADR-0014）：无追加期间 events() 返回同一共享不可变实例
+        // （读侧零拷贝的可观察形态），append 后快照重建、新事件经新快照可见
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("一"));
+        List<SessionEvent> first = session.events();
+
+        assertSame(first, session.events(), "无追加期间共享同一快照引用");
+        assertThrows(UnsupportedOperationException.class,
+                () -> first.add(SessionEvent.userMessage("写快照")), "快照不可变");
+
+        session.append(SessionEvent.userMessage("二"));
+        assertNotSame(first, session.events(), "追加后快照重建");
+        assertEquals(2, session.events().size(), "新快照可见追加事件");
     }
 
     @Test

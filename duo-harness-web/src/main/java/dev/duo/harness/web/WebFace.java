@@ -63,7 +63,7 @@ public final class WebFace {
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
     private final WebAnswerer webAnswerer;
     /** 上下文治理（状态面占用查询的同源数据源；null = 无治理装配，状态面省略占用）。 */
-    private volatile dev.duo.harness.agent.ContextGovernance governance;
+    private volatile dev.duo.harness.agent.governance.ContextGovernance governance;
     /** 会话目录（侧栏列表与切换用）。 */
     private final Path sessionsDir;
     /** 可换会话（/new 等价）：换绑时 SSE 监听器随之迁移。 */
@@ -113,7 +113,7 @@ public final class WebFace {
      * @throws IOException 端口绑定失败
      */
     public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
-                                ChatAgent agent, dev.duo.harness.agent.ContextGovernance governance,
+                                ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
                                 WebAnswerer webAnswerer, Path sessionsDir)
             throws IOException {
         Objects.requireNonNull(ctx, "ctx");
@@ -549,7 +549,7 @@ public final class WebFace {
                 // 日志序号 id）→ replay/done 边界帧（前端回放结束钩子：EmptyHero 判定与侧栏刷新）
                 String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
                 Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
-                List<SessionEvent> events = bound.events(); // 一次快照：events() 每次整体拷贝
+                List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
                 ReplayWindow window = resolveReplayWindow(cursor, events, bound);
                 // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
                 System.out.println("[web] SSE 连接：模式=" + window.mode()
@@ -648,7 +648,7 @@ public final class WebFace {
             for (var definition : tools.list()) {
                 toolsNode.addObject().put("name", definition.name()).put("description", definition.description());
             }
-            dev.duo.harness.agent.ContextGovernance current = governance;
+            dev.duo.harness.agent.governance.ContextGovernance current = governance;
             if (current != null) {
                 var occupancy = current.occupancy(session);
                 root.putObject("context")

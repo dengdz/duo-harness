@@ -82,7 +82,7 @@ class WebFaceTest {
 
     /** 装配重载：注入上下文治理（状态面占用查询的同源数据源；null = 无治理）。 */
     private WebFace start(Session session, ChatAgent agent,
-                          dev.duo.harness.agent.ContextGovernance governance) throws IOException {
+                          dev.duo.harness.agent.governance.ContextGovernance governance) throws IOException {
         return start(session, agent, governance, null);
     }
 
@@ -91,7 +91,7 @@ class WebFaceTest {
      * web answerer + 审计桥）——HITL 语义用例的供给。
      */
     private WebFace start(Session session, ChatAgent agent,
-                          dev.duo.harness.agent.ContextGovernance governance, WebAnswerer webAnswerer) throws IOException {
+                          dev.duo.harness.agent.governance.ContextGovernance governance, WebAnswerer webAnswerer) throws IOException {
         Context ctx = Context.root();
         faceCtx = ctx;
         if (webAnswerer != null) {
@@ -229,8 +229,8 @@ class WebFaceTest {
         session.append(SessionEvent.userMessage("问"));
         session.append(SessionEvent.assistantMessage("答",
                 new dev.duo.harness.session.TokenUsage(1200, 340, 1540)));
-        dev.duo.harness.agent.ContextGovernance governance =
-                new dev.duo.harness.agent.ContextGovernance(new dev.duo.harness.llm.LlmAdapter() {
+        dev.duo.harness.agent.governance.ContextGovernance governance =
+                new dev.duo.harness.agent.governance.ContextGovernance(new dev.duo.harness.llm.LlmAdapter() {
                     @Override
                     public void stream(dev.duo.harness.llm.ChatRequest request,
                                        java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
@@ -248,7 +248,7 @@ class WebFaceTest {
         JsonNode json = new ObjectMapper().readTree(get("/api/status"));
         assertEquals(1540, json.path("context").path("tokens").asLong(), "实测口径 prompt+completion");
         assertTrue(json.path("context").path("fromProvider").asBoolean(), "实测标记");
-        assertEquals(dev.duo.harness.agent.ContextGovernance.CONTEXT_WINDOW_TOKENS,
+        assertEquals(dev.duo.harness.agent.governance.ContextGovernance.CONTEXT_WINDOW_TOKENS,
                 json.path("context").path("windowTokens").asLong(), "窗口常量随行");
         assertTrue(json.path("context").path("thresholdTokens").asLong() > 0, "阈值随行（前端阈值对照用）");
     }

@@ -2,8 +2,8 @@ package dev.duo.harness.cli;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
-import dev.duo.harness.agent.PromptPlugin;
-import dev.duo.harness.agent.SkillsPlugin;
+import dev.duo.harness.agent.prompt.PromptPlugin;
+import dev.duo.harness.agent.skills.SkillsPlugin;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatRequest;
