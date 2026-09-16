@@ -428,7 +428,13 @@ const sse = (() => {
       app.refreshStatus(); // 回放期的逐帧刷新合并到此刻一次
       return;
     }
-    if (event.type === 'session/title') { document.title = event.text; return; } // 标题实时生成（工单 06）：只更新标签页
+    if (event.type === 'session/title') {
+      // 标题实时生成（工单 06）：标签页立即更新；侧栏标题走 refreshSessions 拉取——
+      // title append 已落盘，紧随的 /api/sessions 必返回新标题（标签页/侧栏两消费面各自接通）
+      document.title = event.text;
+      app.refreshSessions();
+      return;
+    }
     // 渲染单源（render.dispatch）；chunk 逐帧仅渲染——一次回复可达数百帧，状态面
     // 刷新交给 5s 轮询，其余事件帧后刷新一次
     render.dispatch(event);
