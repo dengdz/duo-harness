@@ -1,5 +1,8 @@
 package dev.duo.harness.agent.subagent;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
 /**
  * 子代理的框架级基线提示（M15）：每个子代理的 system 提示 = 本基线 + 模板专属提示
  * （可选）。分工对齐同类实现的形态——**基线承载框架通用纪律，模板只写角色**：
@@ -33,13 +36,38 @@ final class SubagentBaseline {
     }
 
     /**
-     * 组装子代理 system 提示：基线在前（通用纪律）、模板专属提示在后（角色与领域约束）。
-     * 模板提示为空则只有基线——不给 provider 的缺省提示兜底（子代理需要自己的身份约束）。
+     * 组装子代理 system 提示：基线在前（通用纪律）→ 运行环境段 → 模板专属提示
+     * （角色与领域约束）。模板提示为空则只有基线 + 环境段——不给 provider 的缺省
+     * 提示兜底（子代理需要自己的身份约束）。
      */
     static String compose(String templatePrompt) {
-        if (templatePrompt == null || templatePrompt.isBlank()) {
-            return TEXT;
-        }
-        return TEXT + "\n\n" + templatePrompt;
+        return compose(templatePrompt, environmentBlock());
     }
+
+    /** 环境块显式版（测试注入固定环境，断言不受机器差异影响）。 */
+    static String compose(String templatePrompt, String environment) {
+        String composed = TEXT;
+        if (environment != null && !environment.isBlank()) {
+            composed += "\n\n" + environment;
+        }
+        if (templatePrompt == null || templatePrompt.isBlank()) {
+            return composed;
+        }
+        return composed + "\n\n" + templatePrompt;
+    }
+
+    /**
+     * 运行环境段（M16 工单 04，ZCode env 块对照）：工作目录/平台/当前时间——
+     * 子代理 spawn 时现场生成（时间新鲜）。没有它，模型对运行环境两眼一抹黑
+     * （不知道自己在哪、时间靠猜）。数据取进程属性，与 bash 工具缺省工作目录同源。
+     */
+    static String environmentBlock() {
+        return "## 运行环境\n"
+                + "- 工作目录：" + System.getProperty("user.dir") + "\n"
+                + "- 操作系统：" + System.getProperty("os.name") + "\n"
+                + "- 当前时间：" + LocalDateTime.now().format(TIME_FORMATTER);
+    }
+
+    private static final DateTimeFormatter TIME_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 }

@@ -45,7 +45,7 @@ class SubagentEndToEndTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：SubagentEndToEndTest —— 端到端全链：父 spawn 子 → 子调工具 → "
-                + "完成回流 → 父投影收到结论；fork 播种全链（2 用例） ===");
+                + "完成回流 → 父投影收到结论；fork 播种全链；审批钉死与环境块（4 用例） ===");
     }
 
     /** tools 服务的视图接口（方法名即服务名）。 */
@@ -179,7 +179,8 @@ class SubagentEndToEndTest {
     void parentSpawnsChildRunsToolAndAnswerFlowsIntoParentProjection() throws Exception {
         java.util.List<String> systems = new java.util.concurrent.CopyOnWriteArrayList<>();
         SubagentManager manager = manager();
-        manager.bindBackend(new EmbeddedSubagentBackend(childLlm(systems), tools, null));
+        manager.bindBackend(new EmbeddedSubagentBackend(childLlm(systems), tools, null,
+                PinnedApprovalPolicy.ALWAYS_DENY));
         tools.register(root, new SpawnTool(manager, () -> parent));
 
         ToolCallingAgent parentAgent = new ToolCallingAgent(parentLlm(new AtomicInteger(), "spawn"), tools, parent, "父", 5);
@@ -202,6 +203,12 @@ class SubagentEndToEndTest {
                 "框架基线在场（无跨任务记忆等通用纪律）");
         assertTrue(childSystem.contains("不要重复读取同一个目标"), "基线的防重复读取纪律在场");
         assertTrue(childSystem.startsWith("你是被主 agent 委派"), "基线条文居首（模板提示在后）");
+        // 运行环境段（M16 工单 04）：基线之后、模板提示之前——cwd/平台/时间
+        assertTrue(childSystem.contains("## 运行环境"), "环境段在场");
+        assertTrue(childSystem.contains("工作目录：" + System.getProperty("user.dir")), "工作目录进环境段");
+        assertTrue(childSystem.contains("操作系统：" + System.getProperty("os.name")), "操作系统进环境段");
+        assertTrue(childSystem.indexOf("## 运行环境") > childSystem.indexOf("不要重复读取同一个目标"),
+                "环境段在基线之后");
     }
 
     @Test
@@ -211,7 +218,8 @@ class SubagentEndToEndTest {
         parent.append(SessionEvent.assistantMessage("好的，按方案 A 执行"));
 
         SubagentManager manager = manager();
-        manager.bindBackend(new EmbeddedSubagentBackend(childLlm(systems), tools, null));
+        manager.bindBackend(new EmbeddedSubagentBackend(childLlm(systems), tools, null,
+                PinnedApprovalPolicy.ALWAYS_DENY));
         tools.register(root, new ForkTool(manager, () -> parent));
 
         ToolCallingAgent parentAgent = new ToolCallingAgent(parentLlm(new AtomicInteger(), "fork"), tools, parent, "父", 5);
@@ -234,5 +242,88 @@ class SubagentEndToEndTest {
         } finally {
             child.close();
         }
+    }
+
+    @Test
+    void requiresApprovalToolIsPinnedDeniedForSubagent() throws Exception {
+        // 审批钉死（M16 工单 03，BUG：limitations M15#3）：模板里配了需审批工具
+        // （模拟 bash 形态）→ 子代理调用确定性拒绝、工具本体不执行、循环继续——
+        // 而不是挂起等待人工（旧形态会永久卡死）
+        java.util.List<String> systems = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.List<String> childToolResults = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AtomicInteger guardedRuns = new AtomicInteger();
+        SubagentManager manager = new SubagentManager(SubagentTemplates.parse(config(
+                "{\"templates\": [{\"name\": \"worker\", \"tools\": [\"echo\", \"guarded\"]}]}")));
+
+        // 子 LLM 脚本：首轮调 guarded（需审批），次轮读取工具结果后直答
+        LlmAdapter child = new LlmAdapter() {
+            final AtomicInteger calls = new AtomicInteger();
+
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                if (calls.incrementAndGet() == 1) {
+                    return new LlmTurn("", List.of(new ToolCallRequest("child_1", "guarded", "{}")));
+                }
+                request.messages().forEach(m -> {
+                    if (m.role() == dev.duo.harness.llm.ChatMessage.Role.TOOL) {
+                        childToolResults.add(m.content());
+                    }
+                });
+                String answer = "已确认受限，改为交回父代理";
+                textSink.accept(answer);
+                return new LlmTurn(answer, List.of());
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("agent 循环走 streamTurn");
+            }
+        };
+        manager.bindBackend(new EmbeddedSubagentBackend(child, tools, null,
+                PinnedApprovalPolicy.ALWAYS_DENY));
+        tools.register(root, new SpawnTool(manager, () -> parent));
+        tools.register(root, new ToolDefinition() {
+            @Override
+            public String name() {
+                return "guarded";
+            }
+
+            @Override
+            public String description() {
+                return "需审批的演示工具（模拟 bash 形态）";
+            }
+
+            @Override
+            public com.fasterxml.jackson.databind.JsonNode parameters() {
+                try {
+                    return new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                            "{\"type\":\"object\"}");
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+
+            @Override
+            public boolean requiresApproval() {
+                return true;
+            }
+
+            @Override
+            public Object execute(ToolExecution execution) {
+                guardedRuns.incrementAndGet();
+                return "不该被执行";
+            }
+        });
+
+        ToolCallingAgent parentAgent = new ToolCallingAgent(
+                parentLlm(new AtomicInteger(), "spawn"), tools, parent, "父", 5);
+        var reply = parentAgent.send("派个活", AgentListener.NONE);
+
+        assertTrue(reply.completed(), "父循环正常收尾（子代理未被卡死）");
+        awaitCompleted(parent);
+        assertEquals(0, guardedRuns.get(), "需审批工具本体未执行（钉死拒绝在委托之前）");
+        assertEquals(1, childToolResults.size(), "拒绝理由作为工具结果回传子代理上下文");
+        assertTrue(childToolResults.get(0).contains("子代理审批钉死"), "拒绝文案署名钉死策略");
+        assertTrue(childToolResults.get(0).contains("交回父代理处理"), "附交回父代理指引");
     }
 }

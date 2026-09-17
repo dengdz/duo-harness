@@ -26,24 +26,28 @@ public final class EmbeddedSubagentBackend implements SubagentBackend {
     private final LlmAdapter llm;
     private final ToolsService sharedTools;
     private final ContextGovernance.Tuning tuning;
+    private final PinnedApprovalPolicy approvalPolicy;
 
     /**
-     * @param llm         父的 LLM adapter（子唯一从父继承的构件）
-     * @param sharedTools 共享工具域注册表（多 agent 并行复用，注册表并发安全已有）
-     * @param tuning      治理阈值（与父装配同源；null = 缺省常量治理，与父一致）
+     * @param llm            父的 LLM adapter（子唯一从父继承的构件）
+     * @param sharedTools    共享工具域注册表（多 agent 并行复用，注册表并发安全已有）
+     * @param tuning         治理阈值（与父装配同源；null = 缺省常量治理，与父一致）
+     * @param approvalPolicy 子代理审批策略（装配处注入，钉死形态 = 恒否；M16 工单 03）
      */
     public EmbeddedSubagentBackend(LlmAdapter llm, ToolsService sharedTools,
-                                   ContextGovernance.Tuning tuning) {
+                                   ContextGovernance.Tuning tuning, PinnedApprovalPolicy approvalPolicy) {
         this.llm = llm;
         this.sharedTools = sharedTools;
         this.tuning = tuning;
+        this.approvalPolicy = approvalPolicy;
     }
 
     @Override
     public Outcome run(Task task) throws Exception {
         Set<String> registered = sharedTools.list().stream()
                 .map(ToolDefinition::name).collect(Collectors.toSet());
-        SubagentToolView tools = new SubagentToolView(sharedTools, task.template().allowedTools(registered));
+        SubagentToolView tools = new SubagentToolView(sharedTools,
+                task.template().allowedTools(registered), approvalPolicy);
         // 子代理 system = 框架基线 + 模板专属提示（SubagentBaseline：通用纪律归框架，
         // 模板只写角色；任务描述由父 agent 每次现场生成，不做预制模板）
         PromptRegistry prompts = new PromptRegistry(SubagentBaseline.compose(task.template().prompt()));

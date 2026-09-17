@@ -49,8 +49,10 @@ public final class SubagentPlugin implements Plugin<JsonNode> {
         }
         SubagentHost host = ctx.as(HostView.class).presenter();
         SubagentManager manager = new SubagentManager(templates);
+        // 审批钉死（M16 工单 03）：恒否策略在装配处注入——子代理需审批的调用确定性
+        // 拒绝并回传理由，不挂起等待人工；放宽（白名单）时只换此注入对象
         manager.bindBackend(new EmbeddedSubagentBackend(host.llm(),
-                ctx.as(ToolsView.class).tools(), host.tuning()));
+                ctx.as(ToolsView.class).tools(), host.tuning(), PinnedApprovalPolicy.ALWAYS_DENY));
         Disposable published = ctx.provide(SubagentManager.SERVICE_NAME, manager);
         ToolsService tools = ctx.as(ToolsView.class).tools();
         Disposable registered = registerAgentTools(ctx, tools, manager,

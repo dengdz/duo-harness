@@ -42,9 +42,9 @@ plugins:
     config:
       templates:
         - name: researcher
-          # 调研型：收集类工具 + write（交付报告须落盘——只读模板收到"写入报告"的任务会
-          # 永远无法交付；能力边界要与委派的任务形态匹配）+ 演示回显
-          tools: [echo, read, glob, grep, write]
+          # 调研型：收集类工具 + write + bash（bash 需审批——M16 起子代理审批钉死，
+          # 子代理调用 bash 会收到确定性拒绝并回退父代理；钉死演示用）
+          tools: [echo, read, glob, grep, write, bash]
           # 专属提示只写"角色与领域约束"——通用纪律（无记忆、不深挖范围外、结果被截断
           # 改精确查询、结论即交付）由框架基线 SubagentBaseline 统一承载，不必每个模板重写
           prompt: "你是调研助手：只做信息收集与核实，结论须有文件路径等证据支撑；write 仅用于写你自己的产出文件，不改动仓库既有文件。"
