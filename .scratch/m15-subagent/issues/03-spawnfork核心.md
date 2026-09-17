@@ -192,3 +192,16 @@ Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
 
 **注**：本纠正同时收敛了上一轮的过设计——通用纪律的归属是"框架基线"（一处维护），
 而不是"模板提示词 + 文件工作记忆"（多处重复 + 新机制）。
+
+## 发布审查（2026-09-17，OCR + 双轴）
+
+**OCR 审查**（`ocr review --from main --to 0.10.0`，5 条全修，提交 04de9be）：
+1. 模板可发现性缺陷（spawn/fork 各一条）：模型无法得知合法模板名 → 工具描述动态拼可用模板名、template 参数 schema 带 enum
+2. 控制面无会话归属：进程级注册表在长驻呈现位换绑后旧子代理仍可见可操作 → Entry 记 parentSessionId，三件工具按当前父会话过滤与归属拒绝
+3. subagent config 顶层不校验：拼错键名静默失效（空集零诊断）→ 顶层只认 templates 键
+4. FORBIDDEN_TOOLS 手写字符串改名即 fail-open → 改引用工具名常量
+
+**双轴审查**（Standards + Spec 并行子代理，对照 main@640e9c6）：
+- Spec 轴：**零缺失**——20 条故事、投影规则、播种切点、强制过滤、五件条件注册、文档六项全部落地；两处低危语义偏差（治理日志静默字面违故事 20 但属有意修复已记 CHANGELOG；子任务卡四态与工单 04 FAILED 态自洽）判定可接受
+- Standards 轴 9 条，处置：①NAME.formatted 丢错误文案（真 bug）修复 ②注释审查痕迹 4 处清理（trim-cot-leakage）③EmbeddedSubagentBackend JavaDoc 命题过时更新 ④ListAgentsTool 空会话降级与其余四件 fail-loud 不一致——统一 fail-loud ⑤回流文本 marker 提为 SubagentManager 公共常量（CLI 解析共用一份词汇）⑥sendMessage 续轮撞收尾窗口（IDLE 置位与锁释放之间）→ 捕获转"正在收尾请稍后" ⑦requireText 消息风格统一用 NAME ⑧误入工件移出（.workbuddy/、.scratch/quality-review-20260917.md——"砚"的评审报告，磁盘保留）；⑨subagent 包 15 顶层类超拆包阈值（~10）——记 backlog 发布后拆
+- 附带入库：用户侧"砚"质量评审的两条 Top 发现记 backlog（无 Java CI 门禁、WebFace 无 Origin/Host 校验）

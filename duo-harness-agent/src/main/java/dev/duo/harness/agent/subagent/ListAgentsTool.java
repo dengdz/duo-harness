@@ -1,6 +1,7 @@
 package dev.duo.harness.agent.subagent;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolExecution;
 
@@ -50,8 +51,10 @@ public final class ListAgentsTool implements ToolDefinition {
     public Object execute(ToolExecution execution) {
         StringBuilder text = new StringBuilder();
         var session = currentSession.get();
-        var entries = session == null ? manager.all()
-                : manager.byParentSession(session.id()); // 只列当前父会话名下的（换绑后互不可见）
+        if (session == null) {
+            throw new PluginException(NAME + ": 无可用父会话（装配不完整）");
+        }
+        var entries = manager.byParentSession(session.id()); // 只列当前父会话名下的（换绑后互不可见）
         if (entries.isEmpty()) {
             return "当前没有子代理。";
         }

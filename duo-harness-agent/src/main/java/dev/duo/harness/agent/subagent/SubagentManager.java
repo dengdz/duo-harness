@@ -39,6 +39,11 @@ public final class SubagentManager {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /** 终局回流文本的结构标记（拼装与 CLI/呈现解析共用一份词汇，措辞变更须同步）。 */
+    public static final String FINAL_ANSWER_MARKER = "最终回答：";
+    public static final String PARTIAL_RESULTS_MARKER = "已完成的中间成果：";
+    public static final String EXCERPT_MARKER = "末次结果摘录：";
+
     /**
      * 子代理状态（list_agents 四态）：运行中 / 空闲（正常完成待命，可续轮——
      * DSH idle 语义）/ 失败（异常结束，可续轮重试）/ 中断（被中止，终态不可续）。
@@ -136,7 +141,14 @@ public final class SubagentManager {
                 return "指示已送达运行中的子代理 " + agentId + "，将在其下一轮生效。";
             }
             case IDLE, FAILED -> {
-                Session child = Session.load(entry.jsonl);
+                Session child;
+                try {
+                    child = Session.load(entry.jsonl);
+                } catch (dev.duo.harness.session.SessionLockedException e) {
+                    // 窄窗口竞态：终局收尾已置空闲、锁尚未释放——指示未送达，稍后重试即可
+                    throw new PluginException(
+                            "子代理 " + agentId + " 正在收尾，请稍后重试。");
+                }
                 entry.childSession = child;
                 entry.state = State.RUNNING;
                 SubagentTemplate template = templates.byName(entry.templateName).orElseThrow();
@@ -268,7 +280,8 @@ public final class SubagentManager {
         entry.state = healthy ? State.IDLE : (aborted ? State.INTERRUPTED : State.FAILED);
         String summary;
         if (healthy) {
-            summary = "子代理 " + task.agentId() + "（模板 " + entry.templateName() + "）已完成。\n最终回答：\n"
+            summary = "子代理 " + task.agentId() + "（模板 " + entry.templateName() + "）已完成。\n"
+                    + FINAL_ANSWER_MARKER + "\n"
                     + outcome.finalAnswer();
         } else if (aborted) {
             summary = "子代理 " + task.agentId() + "（模板 " + entry.templateName() + "）已被中止：未产出结果。";
@@ -278,7 +291,7 @@ public final class SubagentManager {
             summary = "子代理 " + task.agentId() + "（模板 " + entry.templateName() + "）未正常完成："
                     + outcome.failure()
                     + (outcome.finalAnswer() == null || outcome.finalAnswer().isBlank()
-                            ? "" : "\n已完成的中间成果：\n" + outcome.finalAnswer())
+                            ? "" : "\n" + PARTIAL_RESULTS_MARKER + "\n" + outcome.finalAnswer())
                     + "\n（如需继续，可用 send_message 给该子代理更多指示——它将带着已有上下文续跑）";
         }
         try {

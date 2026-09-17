@@ -80,7 +80,7 @@ public final class ForkTool implements ToolDefinition {
     private static String requireText(JsonNode args, String field) {
         JsonNode node = args.get(field);
         if (node == null || node.isNull() || node.asText().isBlank()) {
-            throw new PluginException("fork 缺少必填参数 " + field);
+            throw new PluginException(NAME + " 缺少必填参数 " + field);
         }
         return node.asText();
     }

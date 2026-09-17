@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 /**
  * 同进程内嵌后端（ADR-0015 决策 1 的唯一实现）：子 agent 复用父的 LLM adapter
  * 与治理配置（fork 大前缀必需 compaction/spill），工具经过滤视图只见模板可用集，
- * system 提示 = 模板专属提示（子任务自包含，任务描述即指令，不继承父的提示片段）。
+ * system 提示 = 框架基线 + 模板专属提示（通用纪律归框架，模板只写角色；任务描述由父现场生成，不继承父的提示片段）。
  *
  * <p>治理为子任务新建实例——{@link ContextGovernance} 非线程安全（随 agent 循环
  * 串行使用），子代理在后台线程运行，与父循环并发时不得共享。</p>
@@ -81,7 +81,8 @@ public final class EmbeddedSubagentBackend implements SubagentBackend {
                             : invocation.result().length() + " 字符");
         }
         var last = invocations.get(invocations.size() - 1);
-        text.append("\n末次结果摘录：\n").append(tail(last.result(), 800));
+        text.append("\n").append(SubagentManager.EXCERPT_MARKER).append("\n")
+                .append(tail(last.result(), 800));
         return text.toString();
     }
 

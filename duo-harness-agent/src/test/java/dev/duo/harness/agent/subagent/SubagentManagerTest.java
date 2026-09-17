@@ -393,7 +393,7 @@ class SubagentManagerTest {
 
     @Test
     void controlPlaneIsScopedToTheCallingParentSession() throws Exception {
-        // 会话归属治理（OCR 审查③）：长驻呈现位换绑后，其他会话派的子代理不可见、不可操作——
+        // 会话归属治理：长驻呈现位换绑后，其他会话派的子代理不可见、不可操作——
         // 否则旧会话的子代理会被新对话的模型误治理
         manager.bindBackend(instantBackend("done"));
         String agentId = manager.spawn(parent, "worker", "A 会话的子代理");

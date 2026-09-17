@@ -73,7 +73,7 @@ class SubagentTemplatesTest {
 
     @Test
     void rejectsUnknownTopLevelField() throws Exception {
-        // 顶层严格绑定（OCR 审查④）：拼错键名会让子代理能力静默失效（空集→零注册零诊断），
+        // 顶层严格绑定：拼错键名会让子代理能力静默失效（空集→零注册零诊断），
         // 比模板级结构错误更难排查——顶层未知键必须点名
         PluginException e = assertThrows(PluginException.class,
                 () -> SubagentTemplates.parse(config("{\"template\": []}")));

@@ -163,7 +163,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
     }
 
     /**
-     * 未完成子任务的成果摘要摘取（M15 修复③的 CLI 呈现）：工具调用清单取前
+     * 未完成子任务的成果摘要摘取（终端可用性优先）：工具调用清单取前
      * {@value #SUMMARY_HEAD_LINES} 行、末次结果摘录取前 {@value #SUMMARY_TAIL_LINES} 行，
      * 其余折叠为指引——终端的可用性优先，完整内容可从子会话文件与父会话日志读取。
      */
@@ -181,7 +181,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         if (lines.length > head) {
             out.println("           …（工具调用清单略，共 " + lines.length + " 行；完整摘要见子会话文件）");
         }
-        int excerpt = body.indexOf("末次结果摘录：");
+        int excerpt = body.indexOf(dev.duo.harness.agent.subagent.SubagentManager.EXCERPT_MARKER);
         if (excerpt >= 0) {
             String[] tailLines = body.substring(excerpt).split("\n");
             int tail = Math.min(tailLines.length, SUMMARY_TAIL_LINES);
@@ -210,10 +210,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 case dev.duo.harness.session.SessionEvent.SUBAGENT_COMPLETED -> {
                     String text = event.text();
                     out.println("  [子任务] " + text.split("\n", 2)[0]);
-                    int idx = text.indexOf("最终回答：");
+                    int idx = text.indexOf(dev.duo.harness.agent.subagent.SubagentManager.FINAL_ANSWER_MARKER);
                     if (idx >= 0) {
                         // 完成路径：结论即要点
-                        out.println("           " + text.substring(idx + "最终回答：".length()).strip());
+                        out.println("           " + text.substring(
+                            idx + dev.duo.harness.agent.subagent.SubagentManager.FINAL_ANSWER_MARKER.length()).strip());
                     } else {
                         // 未完成路径（迭代上限/失败）：中间成果摘要取前几条 + 末次结果摘录，
                         // 完整摘要留在父会话事件与子会话文件里（摘要可达数十行，终端不刷屏）

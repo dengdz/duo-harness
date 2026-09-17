@@ -82,7 +82,7 @@ public final class SpawnTool implements ToolDefinition {
     private static String requireText(JsonNode args, String field) {
         JsonNode node = args.get(field);
         if (node == null || node.isNull() || node.asText().isBlank()) {
-            throw new PluginException("spawn 缺少必填参数 " + field);
+            throw new PluginException(NAME + " 缺少必填参数 " + field);
         }
         return node.asText();
     }

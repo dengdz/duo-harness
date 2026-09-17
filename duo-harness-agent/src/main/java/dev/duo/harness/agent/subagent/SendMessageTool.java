@@ -62,7 +62,7 @@ public final class SendMessageTool implements ToolDefinition {
     private void requireCurrentSession(String agentId) {
         var session = currentSession.get();
         if (session == null) {
-            throw new PluginException(NAME.formatted("无可用父会话（装配不完整）"));
+            throw new PluginException(NAME + ": 无可用父会话（装配不完整）");
         }
         var entry = manager.byId(agentId)
                 .orElseThrow(() -> new PluginException("子代理不存在: " + agentId));
