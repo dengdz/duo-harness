@@ -19,7 +19,9 @@ import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -420,7 +422,41 @@ public final class Session {
                 default -> { /* 不可达：projectsToMessage 已收窄类型集 */ }
             }
         }
-        return messages;
+        return repairToolMessageAdjacency(messages);
+    }
+
+    /**
+     * 工具结果紧邻修复（BUG-20260917-05）：审批阻塞（终端 y/n 等待人工）期间，
+     * 并发 append（子代理完成回流、异步标题）可能插在 tool/call 与 tool/result
+     * 事件之间——投影出的 tool 消息与配对的 assistant(tool_calls) 消息被 user
+     * 消息隔开，provider 拒绝该序列（HTTP 400，会话此后每轮必败）。此处把 tool
+     * 消息前移到配对 assistant 消息之后紧邻排放（同 callId 保持到达序）；
+     * 无配对调用的孤儿结果不投影（无法合法安置，日志原样保留可审计）。
+     * 正常相邻序列经此为恒等变换（O(n) 两遍，无副作用）。
+     */
+    private static List<Message> repairToolMessageAdjacency(List<Message> messages) {
+        Map<String, List<Message>> resultsByCallId = new LinkedHashMap<>();
+        List<Message> repaired = new ArrayList<>(messages.size());
+        for (Message message : messages) {
+            if (message.role() == Message.Role.TOOL) {
+                resultsByCallId.computeIfAbsent(message.toolCallId(), k -> new ArrayList<>()).add(message);
+            } else {
+                repaired.add(message);
+            }
+        }
+        List<Message> out = new ArrayList<>(messages.size());
+        for (Message message : repaired) {
+            out.add(message);
+            if (message.role() == Message.Role.ASSISTANT && message.toolCalls() != null) {
+                for (ToolCall call : message.toolCalls()) {
+                    List<Message> group = resultsByCallId.remove(call.id());
+                    if (group != null) {
+                        out.addAll(group);
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     /** 投影判定：该事件是否入对话消息列表（与 {@link #deriveMessages} 同一语义，尾部窗口映射复用）。 */

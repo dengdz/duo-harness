@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹（37 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复（39 用例） ===");
     }
 
     @TempDir
@@ -88,6 +88,42 @@ class SessionTest {
         assertEquals(Message.Role.ASSISTANT, messages.get(1).role());
         assertEquals("第一答", messages.get(1).content());
         assertEquals(Message.Role.USER, messages.get(2).role());
+    }
+
+    @Test
+    void toolResultInterleavedByConcurrentAppendMovesAdjacentToItsCall() {
+        // BUG-20260917-05：审批阻塞窗口内，子代理完成回流（投影为 user 消息）插在
+        // tool/call 与 tool/result 之间 → 修复把 tool 消息前移到配对 assistant
+        // 之后紧邻排放（provider 要求 tool 紧随 tool_calls），user 消息后移
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("派个活"));
+        session.append(SessionEvent.toolCall("call_1", "bash", "{}"));
+        session.append(SessionEvent.subagentCompleted("sa-1", "子代理完成：结论 X"));
+        session.append(SessionEvent.toolResult("call_1", "bash", "结果文本"));
+
+        List<Message> messages = session.deriveMessages();
+
+        assertEquals(4, messages.size());
+        assertEquals(Message.Role.USER, messages.get(0).role());
+        assertEquals(Message.Role.ASSISTANT, messages.get(1).role());
+        assertEquals(Message.Role.TOOL, messages.get(2).role());
+        assertEquals("call_1", messages.get(2).toolCallId());
+        assertEquals("结果文本", messages.get(2).content());
+        assertEquals(Message.Role.USER, messages.get(3).role());
+        assertEquals("子代理完成：结论 X", messages.get(3).content(), "子结论数据源保留");
+    }
+
+    @Test
+    void orphanToolResultsWithoutCallAreDroppedFromProjection() {
+        // 无配对调用的结果无法合法安置（provider 会拒）——投影跳过，日志原样保留
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("问"));
+        session.append(SessionEvent.toolResult("ghost", "bash", "孤儿结果"));
+
+        List<Message> messages = session.deriveMessages();
+
+        assertEquals(1, messages.size(), "孤儿结果不投影");
+        assertEquals(Message.Role.USER, messages.get(0).role());
     }
 
     @Test
