@@ -55,7 +55,8 @@ export default defineConfig({
           { text: '0013 会话尾部窗口快照与分页范式', link: '/adr/0013-会话尾部窗口快照与分页范式' },
           { text: '0014 事件快照读侧零拷贝与单趟窗口', link: '/adr/0014-事件快照读侧零拷贝与单趟窗口' },
           { text: '0015 subagent任务分解', link: '/adr/0015-subagent任务分解' },
-          { text: '0016 M16至1.0里程碑规划', link: '/adr/0016-M16至1.0里程碑规划' }
+          { text: '0016 M16至1.0里程碑规划', link: '/adr/0016-M16至1.0里程碑规划' },
+          { text: '0017 子代理知识可见性模板opt-in', link: '/adr/0017-子代理知识可见性模板opt-in' }
         ]
       },
       {
