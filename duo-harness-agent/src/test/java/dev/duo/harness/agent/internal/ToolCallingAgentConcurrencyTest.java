@@ -49,6 +49,22 @@ class ToolCallingAgentConcurrencyTest {
         }
 
         final List<Interval> intervals = new CopyOnWriteArrayList<>();
+        private final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        private volatile int maxConcurrent;
+
+        /** 工具进入执行时调用：维护在飞计数的峰值（滚动池上限断言）。 */
+        void enterTracked() {
+            int now = active.incrementAndGet();
+            maxConcurrent = Math.max(maxConcurrent, now);
+        }
+
+        void exitTracked() {
+            active.decrementAndGet();
+        }
+
+        int maxConcurrent() {
+            return maxConcurrent;
+        }
 
         Interval of(String tool) {
             return intervals.stream().filter(i -> i.tool.equals(tool)).findFirst()
@@ -102,11 +118,16 @@ class ToolCallingAgentConcurrencyTest {
         }
 
         @Override public String execute(ToolExecution exec) {
-            long enter = System.nanoTime();
-            sleepUnchecked(delayMs);
-            long exit = System.nanoTime();
-            journal.intervals.add(new Journal.Interval(name, enter, exit));
-            return "ok:" + name;
+            journal.enterTracked();
+            try {
+                long enter = System.nanoTime();
+                sleepUnchecked(delayMs);
+                long exit = System.nanoTime();
+                journal.intervals.add(new Journal.Interval(name, enter, exit));
+                return "ok:" + name;
+            } finally {
+                journal.exitTracked();
+            }
         }
     }
 
@@ -294,8 +315,7 @@ class ToolCallingAgentConcurrencyTest {
     }
 
     @Test
-    void maxParallelOneRestoresSerialExecution() throws IOException {
-        Journal journal = new Journal();
+    void maxParallelOneRestoresSerialExecution() throws IOException {        Journal journal = new Journal();
         ToolsService tools = toolsWith(
                 new ProbeTool("one", 80, ProbeTool.Safety.SAFE, journal),
                 new ProbeTool("two", 80, ProbeTool.Safety.SAFE, journal),
@@ -365,6 +385,73 @@ class ToolCallingAgentConcurrencyTest {
         mixed.send("参数不安全轮", AgentListener.NONE);
         assertFalse(Journal.overlaps(mixedJournal.of("byargs"), mixedJournal.of("steady")),
                 "safe=false 的调用独占（区间不重叠）");
+    }
+
+    @Test
+    void rollingPoolCapsInFlightAndQueuesBeyondLimit() throws IOException {
+        // 超限排队补位不拒绝（工单 01）：5 个安全工具 × 并发度 2——在飞峰值不超 2，
+        // 全部执行完、日志仍按 model 序成对提交
+        Journal journal = new Journal();
+        ProbeTool[] probes = new ProbeTool[5];
+        List<ToolCallRequest> calls = new ArrayList<>();
+        for (int k = 0; k < 5; k++) {
+            probes[k] = new ProbeTool("tool" + k, 80, ProbeTool.Safety.SAFE, journal);
+            calls.add(new ToolCallRequest("c" + k, "tool" + k, "{}"));
+        }
+        Session session = newSession();
+        ToolCallingAgent agent = new ToolCallingAgent(twoTurnAdapter(calls),
+                toolsWith(probes), session,
+                new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 2, null);
+
+        agent.send("排队补位", AgentListener.NONE);
+
+        assertTrue(journal.maxConcurrent() <= 2,
+                "在飞上限不超并发度 2，实测峰值 " + journal.maxConcurrent());
+        assertTrue(journal.maxConcurrent() >= 2, "并发度 2 应被用满（真并发发生）");
+        assertEquals(12, session.events().size(), "user + 5 对 call/result（10 条）+ assistant");
+        assertEquals("tool0", session.events().get(1).toolName(), "日志仍按 model 序成对");
+        assertEquals("tool4", session.events().get(9).toolName());
+    }
+
+    @Test
+    void parallelGroupWithOneTimedOutToolStillCommitsInModelOrder() throws IOException {
+        // 01+02 交汇（审查补充）：并行组内一个工具触发管线超时、其余正常——
+        // 超时错误与正常结果都按 model 序成对提交，循环继续收尾
+        Journal journal = new Journal();
+        dev.duo.harness.core.api.Context root = dev.duo.harness.core.api.Context.root();
+        root.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+        ToolsService tools = root.as(ToolsView.class).tools();
+        tools.register(root, new ProbeTool("slowStuck", 10_000, ProbeTool.Safety.SAFE, journal));
+        tools.register(root, new ProbeTool("quick1", 30, ProbeTool.Safety.SAFE, journal));
+        tools.register(root, new ProbeTool("quick2", 30, ProbeTool.Safety.SAFE, journal));
+        dev.duo.harness.tools.PipelineTimeout.mount(root, tools, 150);
+        Session session = newSession();
+        ToolCallingAgent agent = new ToolCallingAgent(twoTurnAdapter(List.of(
+                new ToolCallRequest("c1", "slowStuck", "{}"),
+                new ToolCallRequest("c2", "quick1", "{}"),
+                new ToolCallRequest("c3", "quick2", "{}"))),
+                tools, session, "你是助手", 10);
+
+        long start = System.nanoTime();
+        AgentReply reply = agent.send("超时混发", AgentListener.NONE);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertEquals("done", reply.finalText(), "循环继续（超时收敛为 error 结果）");
+        assertTrue(elapsedMs < 2_000, "不等 10s 工具跑完（150ms 上限掐断），实测 " + elapsedMs + "ms");
+        assertEquals(List.of(
+                SessionEvent.USER_MESSAGE,
+                SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT,
+                SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT,
+                SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT,
+                SessionEvent.ASSISTANT_MESSAGE), typeSequence(session),
+                "超时的 slowStuck 与正常的 quick 们仍按 model 序成对提交");
+        assertEquals("slowStuck", session.events().get(1).toolName());
+        assertTrue(reply.toolInvocations().stream()
+                        .filter(i -> i.tool().equals("slowStuck")).findFirst().orElseThrow().isError(),
+                "超时工具为 error 结果");
+        assertTrue(reply.toolInvocations().stream()
+                        .filter(i -> i.tool().equals("quick1")).findFirst().orElseThrow().isError() == false,
+                "正常工具不受邻居超时牵连");
     }
 
     private static void sleepUnchecked(long ms) {

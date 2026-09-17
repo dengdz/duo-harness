@@ -6,6 +6,7 @@ import dev.duo.harness.agent.plan.ExitPlanModeTool;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.agent.subagent.SubagentHost;
+import dev.duo.harness.agent.todo.TodoWriteTool;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.LlmAdapter;
@@ -259,8 +260,7 @@ public final class PresenterAssembly {
      */
     public static void registerTodoWriteTool(Context ctx, ToolsService tools,
                                              Supplier<Session> currentSession) {
-        registerIfAbsent(tools, ctx, dev.duo.harness.agent.todo.TodoWriteTool.NAME,
-                () -> new dev.duo.harness.agent.todo.TodoWriteTool(currentSession));
+        registerIfAbsent(tools, ctx, TodoWriteTool.NAME, () -> new TodoWriteTool(currentSession));
     }
 
     /** 同名已注册则跳过——多呈现位共存时先到方胜出。 */

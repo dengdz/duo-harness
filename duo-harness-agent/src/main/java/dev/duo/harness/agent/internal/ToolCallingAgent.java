@@ -284,7 +284,8 @@ public final class ToolCallingAgent implements ChatAgent {
         }
     }
 
-    /** 请求构造：组装 system 提示 + 会话投影历史（过治理管线）+ 工具清单（Function Calling）。 */    private ChatRequest buildRequest() {
+    /** 请求构造：组装 system 提示 + 会话投影历史（过治理管线）+ 工具清单（Function Calling）。 */
+    private ChatRequest buildRequest() {
         List<ToolSpec> specs = tools.list().stream()
                 .map(def -> new ToolSpec(def.name(), def.description(),
                         def.parameters() == null ? "{}" : def.parameters().toString()))

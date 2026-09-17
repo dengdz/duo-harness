@@ -79,6 +79,7 @@ public final class PipelineTimeout {
     /**
      * 本调用的超时上限：豁免返回 -1；覆盖声明优先；否则挂载方给定的缺省。
      * 未知工具（注册表中找不到——理论上 execute 前已查过）按缺省兜底。
+     * 声明抛错一律回落缺省——与调度面的并发安全判定同款 fail-closed 防御。
      */
     private static long resolveTimeout(ToolsService tools, String toolName, JsonNode args,
                                        long defaultTimeoutMs) {
@@ -89,13 +90,17 @@ public final class PipelineTimeout {
         if (def == null) {
             return defaultTimeoutMs;
         }
-        if (def.exemptFromPipelineTimeout(args)) {
-            return -1;
-        }
-        Long override = def.pipelineTimeoutMs(args);
-        if (override == null || override <= 0) {
+        try {
+            if (def.exemptFromPipelineTimeout(args)) {
+                return -1;
+            }
+            Long override = def.pipelineTimeoutMs(args);
+            if (override == null || override <= 0) {
+                return defaultTimeoutMs;
+            }
+            return override;
+        } catch (Exception e) {
             return defaultTimeoutMs;
         }
-        return override;
     }
 }

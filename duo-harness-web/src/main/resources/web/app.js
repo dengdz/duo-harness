@@ -255,8 +255,10 @@ const render = (() => {
     showMessages();
     let todos = [];
     try {
-      const parsed = JSON.parse(event.text || '[]');
+      // tool/call 的 text 是参数对象 {"todos":[...]}；todo/write 事件的 text 才是裸数组
+      const parsed = JSON.parse(event.text || '{}');
       if (Array.isArray(parsed)) todos = parsed;
+      else if (parsed && Array.isArray(parsed.todos)) todos = parsed.todos;
     } catch (e) { /* 参数非法按空清单渲染，徽标由结果路径定夺 */ }
     const card = document.createElement('div');
     card.className = 'card';
@@ -282,7 +284,8 @@ const render = (() => {
     return card;
   }
 
-  function toolResult(event) {    // ask_user 的结果即回答文本：冻结其提问卡，不再渲染普通工具卡
+  // ask_user 的结果即回答文本：冻结其提问卡，不再渲染普通工具卡
+  function toolResult(event) {
     if (event.toolName === 'ask_user') {
       resolveByToolName('ask_user', '✓ 已回答：' + (event.text || '').trim(), true);
       return;

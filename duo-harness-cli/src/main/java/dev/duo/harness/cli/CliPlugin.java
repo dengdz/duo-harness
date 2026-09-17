@@ -12,6 +12,7 @@ import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.skills.Skill;
 import dev.duo.harness.agent.skills.SkillRegistry;
 import dev.duo.harness.agent.presenter.PresenterAssembly;
+import dev.duo.harness.agent.todo.TodoWriteTool;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
@@ -317,7 +318,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
                         @Override
                         public void onToolCall(String toolName, String argumentsJson) {
-                            if ("todo_write".equals(toolName)) {
+                            if (TodoWriteTool.NAME.equals(toolName)) {
                                 // 清单更新的参数是整表 JSON（终端不画清单）——只打动作行，
                                 // 计数摘要随 onToolResult 的结果文本给出（ADR-0018）
                                 out.println();
@@ -332,7 +333,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
                         @Override
                         public void onToolResult(String toolName, String resultText, boolean isError) {
-                            if ("todo_write".equals(toolName)) {
+                            if (TodoWriteTool.NAME.equals(toolName)) {
                                 out.println("  [清单] " + resultText);
                                 out.flush();
                                 return;
