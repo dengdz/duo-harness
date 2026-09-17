@@ -131,6 +131,8 @@ class PipelineTimeoutTest {
 
         ToolResult tight = tools.execute("tight", JsonNodeFactory.instance.objectNode());
         assertTrue(tight.isError(), "覆盖短于缺省时按覆盖掐断: " + tight.value());
+        assertTrue(String.valueOf(tight.value()).contains("超时"),
+                "迟到返回值不得覆盖超时错误（冻结语义，ADR-0018）: " + tight.value());
     }
 
     @Test

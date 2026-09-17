@@ -64,7 +64,7 @@ public final class PipelineTimeout {
                     } catch (TimeoutException e) {
                         // interrupt 执行线程；不可中断的让它在后台跑完、结果丢弃
                         running.cancel(true);
-                        exec.markError("工具 \"" + exec.toolName() + "\" 执行超时（上限 "
+                        exec.markTimeout("工具 \"" + exec.toolName() + "\" 执行超时（上限 "
                                 + timeoutMs + "ms），已中断；若操作不可中断则其结果被丢弃");
                         return Boolean.TRUE;
                     } catch (Exception e) {

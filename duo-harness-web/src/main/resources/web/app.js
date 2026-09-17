@@ -533,6 +533,9 @@ const render = (() => {
     t.subagentCards.clear();
     t.lastOpenToolCard = null;
     t.streamingBubble = null;
+    // todo 面板属于渲染区：整窗替换的基线必须清（/new 与切换会话不经增量回放，
+    // 上一会话的清单不得残留——清空后由回放流里的 todo/write 重建终态）
+    todoPanel.clear();
   }
 
   /**
