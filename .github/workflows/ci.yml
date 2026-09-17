@@ -42,8 +42,9 @@ jobs:
           # 同一份诊断经注释通道发出（check-run annotations API 匿名可读，免仓库日志权限）
           emit() { printf '::error title=%s::%s\n' "$1" "$(printf %s "${2:0:280}" | tr '%' '_')"; }
           grep -E "^\[INFO\] duo-harness.*(SUCCESS|FAILURE)" /tmp/build.log | head -12 | while IFS= read -r l; do emit "模块状态" "$l"; done
-          grep -E "^\[ERROR\]" /tmp/build.log | head -10 | while IFS= read -r l; do emit "ERROR" "$l"; done
-          grep -hE "<<< (FAILURE|ERROR)!|Tests run: .*(Failures: [1-9]|Errors: [1-9])" */target/surefire-reports/*.txt 2>/dev/null | head -10 | while IFS= read -r l; do emit "失败用例" "$l"; done
+          grep -hE "<<< (FAILURE|ERROR)!" */target/surefire-reports/*.txt 2>/dev/null | head -8 | while IFS= read -r l; do emit "失败用例" "$l"; done
+          grep -h -A6 "<<< (FAILURE|ERROR)!" */target/surefire-reports/*.txt 2>/dev/null | head -24 | while IFS= read -r l; do emit "用例详情" "$l"; done
+          tail -n 40 /tmp/build.log | while IFS= read -r l; do emit "构建尾部" "$l"; done
       - name: 上传测试报告工件
         if: failure()
         uses: actions/upload-artifact@v4
