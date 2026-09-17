@@ -58,14 +58,20 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
 
     @Override
     public void stream(ChatRequest request, Consumer<ChatChunk> onChunk) {
+        boolean[] delivered = {false};
         try {
             HttpResponse<InputStream> response = send(request);
-            try (InputStream body = response.body()) {
+            try (InputStream body = idleGuarded(response.body())) {
                 if (response.statusCode() != 200) {
                     throw errorFrom(response.statusCode(), body);
                 }
-                streamLines(body, onChunk);
+                streamLines(body, chunk -> {
+                    delivered[0] = true;
+                    onChunk.accept(chunk);
+                });
             }
+        } catch (StreamIdleTimeoutException e) {
+            throw idleOutcome(e, delivered[0]);
         } catch (IOException e) {
             // 网络故障可重试（RetryingAdapter 据此退避重试）
             throw new RetryableLlmException("LLM 调用失败: " + e.getMessage(), e);
@@ -77,14 +83,20 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
 
     @Override
     public LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink) {
+        boolean[] delivered = {false};
         try {
             HttpResponse<InputStream> response = send(request);
-            try (InputStream body = response.body()) {
+            try (InputStream body = idleGuarded(response.body())) {
                 if (response.statusCode() != 200) {
                     throw errorFrom(response.statusCode(), body);
                 }
-                return aggregateTurn(body, textSink);
+                return aggregateTurn(body, text -> {
+                    delivered[0] = true;
+                    textSink.accept(text);
+                });
             }
+        } catch (StreamIdleTimeoutException e) {
+            throw idleOutcome(e, delivered[0]);
         } catch (IOException e) {
             // 网络故障可重试（RetryingAdapter 据此退避重试）
             throw new RetryableLlmException("LLM 调用失败: " + e.getMessage(), e);
@@ -92,6 +104,26 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
             Thread.currentThread().interrupt();
             throw new PluginException("LLM 调用被中断", e);
         }
+    }
+
+    /**
+     * body 包装空闲超时（M16 工单 05）：单点覆盖 stream 与 streamTurn 两条读取
+     * 路径（包装在 raw body 与上层 BufferedReader 之间，轮询式空闲检测）。
+     */
+    private InputStream idleGuarded(InputStream body) {
+        return new IdleTimeoutStream(body, config.streamIdleTimeoutMs());
+    }
+
+    /**
+     * 空闲超时的二分语义（与重试链的流式安全对齐）：尚未交付任何增量的超时按
+     * 可重试错误上抛（RetryingAdapter 退避重试）；已交付增量后的超时不可重试
+     * （重试会导致内容重复），已输出文本按契约保留。
+     */
+    private PluginException idleOutcome(StreamIdleTimeoutException e, boolean delivered) {
+        if (delivered) {
+            return new PluginException("LLM 流式空闲超时，已输出内容保留: " + e.getMessage(), e);
+        }
+        return new RetryableLlmException("LLM 流式空闲超时: " + e.getMessage(), e);
     }
 
     /** 发送请求并返回响应（流式 body；调用方负责关闭）。 */

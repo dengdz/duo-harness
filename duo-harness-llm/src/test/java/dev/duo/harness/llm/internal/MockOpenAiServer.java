@@ -27,6 +27,9 @@ final class MockOpenAiServer {
     private final Queue<Script> scriptQueue = new ConcurrentLinkedQueue<>();
     /** 收到的请求数（重试语义断言用）。 */
     private final AtomicInteger requests = new AtomicInteger();
+    /** 空闲挂起模式（M16 工单 05）：非空时先回放这些 payload 再停发字节挂起 holdMs。 */
+    private volatile List<String> stallPayloads = null;
+    private volatile long stallHoldMs = 0;
 
     private record Script(int statusCode, List<String> ssePayloads, String errorBody) {
 
@@ -51,6 +54,23 @@ final class MockOpenAiServer {
             requests.incrementAndGet();
             Script polled = scriptQueue.poll();
             Script current = polled != null ? polled : script;
+            List<String> stalled = stallPayloads;
+            if (stalled != null) {
+                // 空闲挂起模式（工单 05）：发完指定 payload 后停发字节并挂起——
+                // 模拟 provider 半开连接（响应头/首帧后断流不关）
+                exchange.sendResponseHeaders(200, 0);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    for (String payload : stalled) {
+                        out.write(("data: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8));
+                    }
+                    out.flush();
+                    Thread.sleep(stallHoldMs);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+                exchange.close();
+                return;
+            }
             if (current.statusCode() == 200) {
                 // SSE 流式：无定长头，写完即关
                 exchange.sendResponseHeaders(200, 0);
@@ -82,6 +102,13 @@ final class MockOpenAiServer {
     /** 脚本：非 200 错误响应（JSON 体）。 */
     void respondError(int statusCode, String jsonBody) {
         this.script = Script.error(statusCode, jsonBody);
+    }
+
+    /** 空闲挂起脚本（M16 工单 05）：先回放 payloads 再停发字节挂起 holdMs——模拟半开连接。 */
+    void respondStalledAfter(List<String> payloads, long holdMs) {
+        this.stallPayloads = List.copyOf(payloads);
+        this.stallHoldMs = holdMs;
+        this.scriptQueue.clear();
     }
 
     /** 顺序脚本：按请求次序逐个消费，耗尽后回退到最近设定的固定脚本。 */

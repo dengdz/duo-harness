@@ -3,6 +3,7 @@ package dev.duo.harness.llm.internal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.llm.RetryableLlmException;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmConfig;
@@ -27,7 +28,7 @@ class OpenAiCompatAdapterTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：OpenAiCompatAdapterTest —— OpenAI 兼容适配器：流式聚合与请求形态、usage 统计捕获、错误呈现（14 用例） ===");
+        System.out.println("\n=== 套件：OpenAiCompatAdapterTest —— OpenAI 兼容适配器：流式聚合与请求形态、usage 统计捕获、错误呈现、流式空闲超时二分（17 用例） ===");
     }
 
     private final ObjectMapper json = new ObjectMapper();
@@ -40,6 +41,17 @@ class OpenAiCompatAdapterTest {
 
     private OpenAiCompatAdapter adapter() throws IOException {
         return new OpenAiCompatAdapter(new LlmConfig(server.baseUrl(), "sk-test", "test-model", LlmConfig.DEFAULT_SYSTEM_PROMPT));
+    }
+
+    /** 指定空闲超时的适配器（空闲超时用例：短超时让测试不等 90s）。 */
+    private OpenAiCompatAdapter adapterWithIdleTimeout(long idleTimeoutMs) throws IOException {
+        return new OpenAiCompatAdapter(new LlmConfig(server.baseUrl(), "sk-test", "test-model",
+                LlmConfig.DEFAULT_SYSTEM_PROMPT, 1, 0, idleTimeoutMs));
+    }
+
+    private ChatRequest request(String text) {
+        return new ChatRequest("系统提示", List.of(new ChatMessage(
+                ChatMessage.Role.USER, text, null, null, null)), List.of());
     }
 
     private List<String> collect(OpenAiCompatAdapter adapter, ChatRequest request) {
@@ -253,5 +265,41 @@ class OpenAiCompatAdapterTest {
                 () -> dead.stream(new ChatRequest("s", List.of(ChatMessage.user("q"))), chunk -> { }));
 
         assertTrue(e.getMessage().contains("LLM 调用失败"), e.getMessage());
+    }
+
+
+    @Test
+    void idleTimeoutBeforeAnyChunkIsRetryable() throws Exception {
+        // 半开连接（发完响应头后零交付断流）→ 空闲超时按可重试错误上抛（重试链接管）
+        server.respondStalledAfter(List.of(), 10_000);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                RetryableLlmException.class,
+                () -> adapterWithIdleTimeout(300).stream(request("x"), chunk -> { }),
+                "未交付任何增量的空闲超时应可重试");
+    }
+
+    @Test
+    void idleTimeoutAfterDeliveredChunksPreservesOutputAndIsNotRetryable() throws Exception {
+        // 已交付增量后的空闲超时：不可重试（重试导致内容重复），已输出文本按契约保留
+        server.respondStalledAfter(List.of(MockOpenAiServer.deltaChunk("部分输出")), 10_000);
+
+        List<String> chunks = new ArrayList<>();
+        org.junit.jupiter.api.Assertions.assertThrows(
+                PluginException.class,
+                () -> adapterWithIdleTimeout(300).streamTurn(request("x"), text -> chunks.add(text)),
+                "已交付增量后的超时不应可重试");
+
+        assertTrue(chunks.contains("部分输出"), "已输出内容保留");
+    }
+
+    @Test
+    void bytesWithinTimeoutDoNotMisfire() throws Exception {
+        // 短停顿（100ms < 超时 300ms）不误伤——思考模型的长间隔安全
+        server.respondStalledAfter(List.of(MockOpenAiServer.deltaChunk("间歇"), MockOpenAiServer.deltaChunk("后到")), 100);
+
+        List<String> chunks = collect(adapterWithIdleTimeout(300), request("x"));
+
+        assertEquals(List.of("间歇", "后到"), chunks, "停顿不误伤，两段增量完整到达");
     }
 }

@@ -67,7 +67,7 @@ LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含�
 | 需要补充信息的任务 | `[提问]` 模型经 ask_user 向你提问（选项序号或自由文本）→ 回答后模型继续 |
 | 连续重复同一调用 | 第 3 次起 `[提醒]` 附加于工具结果，逐级加码 |
 
-交互安全语义（ADR-0008 / ADR-0012）：审批 one-shot、无"永久放行"；你不回答（Ctrl+C / EOF）一律按拒绝处理。`/new` 开新话题，`/exit` 退出；会话 JSONL 落 `~/.duo/agent-sessions`。LLM 调用自带重试（网络故障与 429/5xx 指数退避，参数见 config.yml `llm.retry` 段）。
+交互安全语义（ADR-0008 / ADR-0012）：审批 one-shot、无"永久放行"；你不回答（Ctrl+C / EOF）一律按拒绝处理。`/new` 开新话题，`/exit` 退出；会话 JSONL 落 `~/.duo/agent-sessions`。LLM 调用自带重试（网络故障与 429/5xx 指数退避，参数见 config.yml `llm.retry` 段）；流式响应连续 90s（`llm.streamIdleTimeoutSeconds` 可配）无新字节即中止——首字节前超时自动重试，已输出内容后中止并保留已生成文本。
 
 ## Web 双面（M8）
 

@@ -24,9 +24,11 @@ import java.util.Map;
  * @param systemPrompt 行为指令（可选；M6 起作为 prompt 注册表的最前用户片段）
  * @param retryMaxAttempts      重试总尝试次数（含首次，默认 {@link #DEFAULT_RETRY_MAX_ATTEMPTS}）
  * @param retryInitialBackoffMs 首次重试退避毫秒（×2 递增，默认 {@link #DEFAULT_RETRY_INITIAL_BACKOFF_MS}）
+ * @param streamIdleTimeoutMs  流式空闲超时毫秒（连续无新字节即中止，默认 {@link #DEFAULT_STREAM_IDLE_TIMEOUT_MS}）
  */
 public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
-                        int retryMaxAttempts, long retryInitialBackoffMs) {
+                        int retryMaxAttempts, long retryInitialBackoffMs,
+                        long streamIdleTimeoutMs) {
 
     /** systemPrompt 未配置时的缺省指令。 */
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
@@ -37,9 +39,13 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /** 首次重试退避毫秒缺省值。 */
     public static final long DEFAULT_RETRY_INITIAL_BACKOFF_MS = 1000;
 
-    /** 兼容构造：重试参数取缺省（3 次 / 1000ms）。 */
+    /** 流式空闲超时缺省值（90s：思考模型的长间隔不误伤，半开连接不至于久等）。 */
+    public static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
+
+    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s）。 */
     public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
-        this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS, DEFAULT_RETRY_INITIAL_BACKOFF_MS);
+        this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS,
+                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
     }
 
 
@@ -84,7 +90,8 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
         }
         return new LlmConfig(baseUrl, apiKey, model,
                 systemPrompt != null && !systemPrompt.isBlank() ? systemPrompt : DEFAULT_SYSTEM_PROMPT,
-                parseRetryMaxAttempts(llm), parseRetryInitialBackoffMs(llm));
+                parseRetryMaxAttempts(llm), parseRetryInitialBackoffMs(llm),
+                parseStreamIdleTimeoutMs(llm));
     }
 
     /** 解析可选 retry.maxAttempts（非正数回落默认）。 */
@@ -97,6 +104,12 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     private static long parseRetryInitialBackoffMs(JsonNode llm) {
         long value = llm == null ? -1 : llm.path("retry").path("initialBackoffMs").asLong(-1);
         return value >= 0 ? value : DEFAULT_RETRY_INITIAL_BACKOFF_MS;
+    }
+
+    /** 解析可选 streamIdleTimeoutSeconds（非正数回落默认 90s，换算为毫秒）。 */
+    private static long parseStreamIdleTimeoutMs(JsonNode llm) {
+        long seconds = llm == null ? -1 : llm.path("streamIdleTimeoutSeconds").asLong(-1);
+        return seconds >= 1 ? seconds * 1000 : DEFAULT_STREAM_IDLE_TIMEOUT_MS;
     }
 
     private static String override(String fromFile, String fromEnv) {
