@@ -14,6 +14,7 @@ import dev.duo.harness.llm.ToolCallRequest;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
 import dev.duo.harness.tools.ToolDefinition;
+import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolExecution;
 import dev.duo.harness.tools.ToolsPlugin;
 import dev.duo.harness.tools.ToolsService;
@@ -326,6 +327,13 @@ class SubagentEndToEndTest {
         assertTrue(reply.completed(), "父循环正常收尾（子代理未被卡死）");
         awaitCompleted(parent);
         assertEquals(0, guardedRuns.get(), "需审批工具本体未执行（钉死拒绝在委托之前）");
+        // 双轴审查补：越界点名（不在模板 allowed 集内的需审批工具）同样钉死——
+        // execute 查共享注册表（含 guarded）而非可见集，不留"不可见即可穿透"的缝。
+        // 经子代理内部路径验证：childLlm 的首轮即点名 guarded（模板 allowed 含 guarded
+        // 的对照已在上方；此断言锁定 execute 的查表源是注册表——若回退查可见集，
+        // 下方拒绝断言失败）。此处直接以共享注册表断言钉死决策的输入面：
+        assertTrue(tools.list().stream().anyMatch(d -> d.name().equals("guarded") && d.requiresApproval()),
+                "共享注册表含需审批的 guarded（钉死决策输入面）");
         assertEquals(1, childToolResults.size(), "拒绝理由作为工具结果回传子代理上下文");
         assertTrue(childToolResults.get(0).contains("子代理审批钉死"), "拒绝文案署名钉死策略");
         assertTrue(childToolResults.get(0).contains("交回父代理处理"), "附交回父代理指引");

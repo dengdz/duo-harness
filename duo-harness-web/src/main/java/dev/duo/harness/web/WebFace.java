@@ -523,6 +523,10 @@ public final class WebFace {
         boolean completed;
         try {
             JsonNode node = JSON.readTree(new String(raw, StandardCharsets.UTF_8));
+            if (node.hasNonNull("decision") && node.hasNonNull("answers")) {
+                respondEmpty(exchange, 400); // 两形态互斥：同时出现按协议错误拒绝
+                return;
+            }
             if (node.hasNonNull("decision")) {
                 String decision = node.get("decision").asText("");
                 if (!"approve".equals(decision) && !"reject".equals(decision)) {
@@ -691,8 +695,8 @@ public final class WebFace {
 
     /**
      * 静态形态响应并禁缓存（`Cache-Control: no-cache`）：单页与脚本随版本频繁演进、
-     * 又无 ETag/Last-Modified 可协商，浏览器启发式缓存会让用户拿到旧脚本（M16 工单 07
-     * 实测：去重补丁上线后旧缓存仍渲染双计划卡）；loopback 本地服务重新拉取成本可忽略。
+     * 又无 ETag/Last-Modified 可协商，浏览器启发式缓存会让用户拿到旧脚本
+     * （实测形态：旧脚本曾渲染出重复的计划卡）；loopback 本地服务重新拉取成本可忽略。
      */
     private static void respondNoCache(HttpExchange exchange, int status, String contentType,
                                        byte[] body) throws IOException {

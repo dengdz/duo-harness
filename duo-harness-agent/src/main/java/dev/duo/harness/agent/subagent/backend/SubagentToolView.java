@@ -17,9 +17,8 @@ import java.util.Set;
  * 三段管线（审批/guard/输出契约）对子代理调用自然生效，工具域注册机制零改动
  * （ADR-0015 Consequences）。子代理不注册工具、不挂 guard——对应操作拒绝。
  *
- * <p>审批钉死（M16 工单 03）：需审批的调用在委托前确定性拒绝（理由随工具结果
- * 回传子代理），不进入审批管线挂起等待人工——交互请求无法到达子代理上下文，
- * 挂起即永久卡死——limitations M15#3 随本修复消除）。</p>
+ * <p>审批钉死：需审批的调用在委托前确定性拒绝（理由随工具结果回传子代理），
+ * 不进入审批管线挂起等待人工——交互请求无法到达子代理上下文，挂起即永久卡死。</p>
  */
 final class SubagentToolView implements ToolsService {
 
@@ -42,9 +41,10 @@ final class SubagentToolView implements ToolsService {
 
     @Override
     public ToolResult execute(String toolName, JsonNode args) {
-        // 审批钉死：委托前查工具的 requiresApproval 声明，按注入策略裁决——
-        // 声明归声明者、裁决归策略（与工具域"声明/裁决分离"同构），视图不含策略细节
-        var definition = list().stream()
+        // 审批钉死：委托前对**共享注册表**（非模板可见集）查 requiresApproval 声明，
+        // 按注入策略裁决——查注册表而非可见集：模型越界点名的需审批工具（幻觉/绕行）
+        // 同样钉死，不留"不可见即可穿透"的缝；声明归声明者、裁决归策略
+        var definition = delegate.list().stream()
                 .filter(def -> def.name().equals(toolName)).findFirst();
         if (definition.isPresent() && !approvalPolicy.allows(definition.get())) {
             return ToolResult.error(approvalPolicy.denialReason(toolName));

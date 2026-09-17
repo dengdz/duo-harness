@@ -17,6 +17,7 @@
 - [ ] **计费口径统计**：cache 命中率、分桶明细——usage 已随 M10 落 assistant/message 日志，按需投影展示。→ 建议时机 M21（与会话查询/导出同期能力域）
 - [ ] **工具名协议化渲染**：前端散布 ask_user/exit_plan_mode 硬编码、后端"拒绝"魔法串判定审批语义，改元数据驱动。→ 后端魔法串部分已入册 M16（/api/answer 结构化协议）；前端元数据渲染建议时机 M23
 - [ ] **状态面轮询统一**：5s setInterval 与 SSE 双通道并存，统一事件通道或论证保留轮询。→ 1.0 后菜单
+- [ ] **父呈现位动态时间上下文**（M16 工单 04 降级入账）：prompt 注册表仅静态片段（注册时刻冻结，长会话内变陈旧），动态时间需注册表扩展（按请求组装时刻注入）——子代理侧已由环境段覆盖（spawn 时新鲜生成），父呈现位待注册表支持。来源：M16 工单 04
 - [ ] **迭代上限终止的 Web 用户可见化**（BUG-20260917-03 验收 B 发现）：达上限返回 completed=false 的 AgentReply，CLI 打印 [异常终止] 而 Web 面 /api/message 不看返回值也不渲染——页面无提示地停住。可用 run/error 帧机制做提示（方向：completed=false 时直推一帧错误卡）。来源：用户验收 B 实测（会话 213120-b3c8）
 
 ## 文档与呈现（M8.5 衍生）
@@ -27,7 +28,7 @@
 ## 容器与测试基建（M12 衍生）
 
 - [ ] **插件可选依赖**：`inject()` 目前全是硬依赖（缺失即 PENDING 挂起/启动失败），CLI 想"不带 fs 工具"的纯对话装配无法表达——需要声明可选服务名与降级语义（如 `/permission` 在无 workspace 服务时提示未挂载）。来源：M12-02 审查修复（/permission 接线引入 CLI→fs 硬依赖）。→ 已入册 M18 扩展机制（ADR-0016）
-- [ ] **测试进程收割**：surefire fork 被强杀（或异常退出）时 MiniFileSystemServer 等 stdio 子进程不回收，机上是曾累计 150+ 僵尸进程； graceful dispose 路径正常。可考虑 McpClientPlugin 挂 shutdown hook 兜底杀子进程。来源：M12-02 回归排查（2026-09-15） 补充案例（M12-05）：cli 行的 REPL 线程非守护且阻塞在 System.in——单跑含 cli 行装配的测试类时测试本体已完成但 **JVM 退出挂起**（surefire forkedProcessTimeoutInSeconds=240 未兜住此形态，其只约束测试执行段）；修法=Boot 前 System.setIn 空流（ToolCatalogTest 已修），机制级收敛随 awaitStartup 超时语义一并评估。→ 建议时机 M16 小杂件包（CI 门禁落地后僵尸进程会累积在 CI 侧，优先级升高）
+- [ ] **测试进程收割**：surefire fork 被强杀（或异常退出）时 MiniFileSystemServer 等 stdio 子进程不回收，机上是曾累计 150+ 僵尸进程； graceful dispose 路径正常。可考虑 McpClientPlugin 挂 shutdown hook 兜底杀子进程。来源：M12-02 回归排查（2026-09-15） 补充案例（M12-05）：cli 行的 REPL 线程非守护且阻塞在 System.in——单跑含 cli 行装配的测试类时测试本体已完成但 **JVM 退出挂起**（surefire forkedProcessTimeoutInSeconds=240 未兜住此形态，其只约束测试执行段）；修法=Boot 前 System.setIn 空流（ToolCatalogTest 已修），机制级收敛随 awaitStartup 超时语义一并评估。→ M16 已书面化兜底结论（CliPlugin.stop 的 in.close() 即 REPL 阻塞解除）；机制级收敛随 awaitStartup 超时语义一并评估
 - [ ] **awaitStartup 超时语义**：编程挂载 `Context.plugin(...).awaitStartup()` 缺依赖时无限等待且无日志，测试/演示易静默卡死（yml 路径有 Boot 校验点名报错）——评估加可配超时 + 点名缺失服务。来源：M12-02 回归排查（2026-09-15）。→ 已入册 M18 扩展机制（ADR-0016）
 
 ## 交互路由（M12-02 验收衍生）
