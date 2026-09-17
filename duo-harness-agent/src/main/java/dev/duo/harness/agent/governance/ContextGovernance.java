@@ -75,6 +75,20 @@ public final class ContextGovernance {
                          Double keepRecentRatio, Integer minRemoteMessages) {
     }
 
+    /**
+     * 治理过程日志开关（默认关）：治理是实现内细节，逐轮打印会在呈现位对话流里
+     * 刷屏——子代理后台长跑时尤甚（每次修剪/计量一行，数十轮即淹没父对话）。
+     * 需要诊断时以 {@code -Dduo.governance.verbose=true} 开启。
+     */
+    private static final boolean VERBOSE = Boolean.getBoolean("duo.governance.verbose");
+
+    /** 治理过程日志（开关控制；见 {@link #VERBOSE}）。 */
+    private static void log(String message) {
+        if (VERBOSE) {
+            System.out.println("[上下文治理] " + message);
+        }
+    }
+
     private final LlmAdapter llm;
     private final int spillThresholdChars;
     private final int pruneThresholdChars;
@@ -124,7 +138,7 @@ public final class ContextGovernance {
                 contextTokens, usage != null);
         long after = ContextBudget.estimateMessageTokens(governed);
         if (after != estimate) {
-            System.out.println("[上下文治理] " + messages.size() + " 条消息：估算 "
+            log(messages.size() + " 条消息：估算 "
                     + estimate + " → " + after + " tokens（会话 " + session.id() + "）");
         }
         return governed;
@@ -203,7 +217,7 @@ public final class ContextGovernance {
     /** 修剪：头 2K + 标注 + 尾 1K（次长结果的体量收窄；原文仍在 JSONL）。 */
     private String prune(String content) {
         int middle = content.length() - PRUNE_HEAD_CHARS - PRUNE_TAIL_CHARS;
-        System.out.println("[上下文治理] 工具结果 " + content.length() + " 字符超 "
+        log("工具结果 " + content.length() + " 字符超 "
                 + pruneThresholdChars + "，修剪中段 " + middle + " 字符");
         return content.substring(0, PRUNE_HEAD_CHARS)
                 + "\n…[已修剪中段 " + middle + " 字符，完整原文在会话日志中]…\n"
@@ -225,11 +239,11 @@ public final class ContextGovernance {
             String preview = content.substring(0, SPILL_PREVIEW_HEAD) + "\n…[中间 "
                     + (content.length() - SPILL_PREVIEW_HEAD - SPILL_PREVIEW_TAIL) + " 字符已卸载]…\n"
                     + content.substring(content.length() - SPILL_PREVIEW_TAIL);
-            System.out.println("[上下文治理] 工具结果 " + content.length() + " 字符超 "
+            log("工具结果 " + content.length() + " 字符超 "
                     + spillThresholdChars + "，已卸载 " + file);
             return preview + "\n[完整原文已落盘: " + file + "，需要更多内容时请向用户询问该文件路径]";
         } catch (IOException e) {
-            System.out.println("[上下文治理] 卸载失败，保留原结果: " + e.getMessage());
+            log("卸载失败，保留原结果: " + e.getMessage());
             return null;
         }
     }
@@ -282,7 +296,7 @@ public final class ContextGovernance {
             if (summary.isBlank()) {
                 return messages;
             }
-            System.out.println("[上下文治理] " + (measuredFromProvider ? "实测" : "估算") + " "
+            log((measuredFromProvider ? "实测" : "估算") + " "
                     + measuredTokens + " tokens 超阈值 " + thresholdTokens
                     + "，远端 " + remote.size() + " 条折叠为摘要（近端保留 " + recent.size() + " 条原文）");
             List<Message> result = new ArrayList<>();

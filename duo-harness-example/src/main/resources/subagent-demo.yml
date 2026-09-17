@@ -1,0 +1,69 @@
+# M15 subagent 演示：CLI 里直接让主 agent 派子代理（spawn/fork + 控制面三件）
+#
+# 运行：
+#   mvn -pl duo-harness-example -am package exec:java \
+#     -Dexec.mainClass=dev.duo.harness.example.DuoMain \
+#     -Dexec.args="duo-harness-example/target/classes/subagent-demo.yml"
+#
+# 需要 ~/.duo/config.yml 里有真实 LLM 配置（同 agent-demo）。挂载后主 agent 的工具
+# 清单里会出现 spawn / fork / send_message / interrupt_agent / list_agents 五件；
+# 试探话术示例：
+#   "用 spawn 派一个 researcher 模板的子代理去调研 X，模板名模板名照抄配置里的"
+#   "用 list_agents 看看子代理什么状态"
+#   "给那个子代理发条消息，让它改用方案 B"
+plugins:
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  # 子代理可用工具（模板里点名的 echo 演示件；真实使用换成 fs/grep 等只读工具）
+  - id: echo-tool
+    name: dev.duo.harness.example.tools.EchoToolPlugin
+
+  - id: fs-tools
+    name: dev.duo.harness.tools.fs.FsToolsPlugin
+    config:
+      mode: workspace-write   # researcher 模板含 write（交付报告落盘）：父侧档位须允许写
+
+  - id: prompts
+    name: dev.duo.harness.agent.prompt.PromptPlugin
+    config:
+      # 派发纪律（父侧引导位）：子代理是短命的一次性执行者（无跨任务记忆）——
+      # 派之前先想清楚"这件小事是什么"，一件小事一个子代理；大任务自己先探索定位再分块派发
+      systemPrompt: "你是在 duo-harness 中运行的助手，回答使用中文并保持简洁。任务可分解时优先用 spawn/fork 把边界清晰的小块工作交出去（子代理无跨任务记忆，task 必须自包含；大任务拆成多个子代理分别派发，而不是把整包甩给一个）。"
+
+  # ★ M15 subagent 插件：模板制装配——部署者在此定义子代理能力边界。
+  #   注：本插件依赖呈现位发布的 presenter 服务（子代理的 LLM/当前会话来源），
+  #   故部署必须含 cli 或 web 呈现位；缺失时启动报"永久等待中，缺失服务 [presenter]"。
+  #   模板 = 工具清单（+ 可选专属提示）；spawn/fork 时模型只点名模板名
+  #   交互工具（ask_user/exit_plan_mode）与控制面五件强制不进子模板（框架过滤，不可绕过）
+  #   maxIterations 可省（缺省 30，高于主对话的 10——子代理承担多步收集型重活）
+  - id: subagent
+    name: dev.duo.harness.agent.subagent.SubagentPlugin
+    config:
+      templates:
+        - name: researcher
+          # 调研型：收集类工具 + write（交付报告须落盘——只读模板收到"写入报告"的任务会
+          # 永远无法交付；能力边界要与委派的任务形态匹配）+ 演示回显
+          tools: [echo, read, glob, grep, write]
+          # 专属提示只写"角色与领域约束"——通用纪律（无记忆、不深挖范围外、结果被截断
+          # 改精确查询、结论即交付）由框架基线 SubagentBaseline 统一承载，不必每个模板重写
+          prompt: "你是调研助手：只做信息收集与核实，结论须有文件路径等证据支撑；write 仅用于写你自己的产出文件，不改动仓库既有文件。"
+          maxIterations: 40                        # 多步收集型子任务轮次需求高（缺省 30）
+        - name: worker
+          tools: [echo, read, write]               # 执行型：可写（写操作仍受父侧审批管辖）
+
+  # 技能发现：CliPlugin 声明依赖它（软件包内有 .agents/skills 时可用 /技能名 直调）
+  - id: skills
+    name: dev.duo.harness.agent.skills.SkillsPlugin
+    config:
+      disabled: []
+
+  - id: answers
+    name: dev.duo.harness.tools.InteractionPlugin
+
+  - id: approval
+    name: dev.duo.harness.tools.fs.WorkspaceApprovalPlugin
+
+  - id: cli
+    name: dev.duo.harness.cli.CliPlugin
+    config: {}

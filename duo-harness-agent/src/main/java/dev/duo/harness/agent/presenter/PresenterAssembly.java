@@ -5,6 +5,7 @@ import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.plan.ExitPlanModeTool;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
+import dev.duo.harness.agent.subagent.SubagentHost;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.LlmAdapter;
@@ -160,5 +161,25 @@ public final class PresenterAssembly {
         if (tools.list().stream().noneMatch(definition -> name.equals(definition.name()))) {
             tools.register(ctx, factory.get());
         }
+    }
+
+    /**
+     * subagent 宿主发布（M15，ADR-0015）：呈现位把子代理执行链所需的父侧构件
+     * （LLM adapter / 治理阈值 / 当前会话供给）发布为 {@code subagent-host} 服务
+     * ——{@code SubagentPlugin} 经 inject 读取它自行装配五件工具。**依赖方向由
+     * 呈现位指向 subagent 插件**：呈现位不必知道 subagent 是否存在，未配置模板
+     * 的部署零感知（本方法只发布服务，不注册任何工具）。
+     *
+     * <p>多呈现位共存（如 cli + web 双开）时先到方发布、后来方跳过——与会话锁
+     * 归属一致（先启动的呈现位是当前会话的属主，其会话供给才是"当前父会话"的
+     * 正解）。</p>
+     */
+    public static void publishSubagentHost(Context ctx, LlmAdapter llm,
+                                           ContextGovernance.Tuning tuning,
+                                           Supplier<Session> currentSession) {
+        if (ctx.hasService(SubagentHost.SERVICE_NAME)) {
+            return; // 先到方胜出（多呈现位共存）
+        }
+        ctx.provide(SubagentHost.SERVICE_NAME, new SubagentHost(llm, tuning, currentSession));
     }
 }

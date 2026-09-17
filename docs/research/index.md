@@ -15,3 +15,4 @@
 | DSH | 项目总览 | [DSH/总览.md](DSH/总览.md) | b150a551b8d465e31e418e1b2eaf5e79bbb7d28e | 源已更新（现行锚点 c291e796，待增量补扫） |
 | DSH | 插件化架构 | [DSH/插件化架构/](DSH/插件化架构/)（架构设计 / 代码说明 / 细节备忘） | b150a551b8d465e31e418e1b2eaf5e79bbb7d28e | 源已更新（现行锚点 c291e796，待增量补扫） |
 | DSH | 核心功能全景 | [DSH/核心功能全景.md](DSH/核心功能全景.md) | c291e7961a515f6d7af9304e7fd1d257929aef26 | 当前（2026-09-13） |
+| DSH+ZCode | 子代理派发与提示词生成对照 | [subagent-派发与提示词对照.md](subagent-派发与提示词对照.md) | DSH c291e796；ZCode app.asar + ~/.zcode/cli/agents 实证 | 当前（2026-09-16） |

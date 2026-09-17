@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影（32 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹（37 用例） ===");
     }
 
     @TempDir
@@ -533,5 +533,91 @@ class SessionTest {
         List<Message> messages = reloaded.deriveMessages();
         assertEquals(1, messages.size(), "审批事件是审计事件，不进对话投影");
         assertEquals(Message.Role.USER, messages.get(0).role());
+    }
+
+    @Test
+    void subagentEventsRoundTripWithProjectionRules() throws IOException {
+        // M15 子代理引用事件：spawned/completed 落父会话，JSONL 往返一致；
+        // 投影分流——completed 最终回答进父上下文（父聚合结果的数据源），spawned 卡片专用跳过
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("帮我调研"));
+        session.append(SessionEvent.subagentSpawned("sa-1", "researcher",
+                "{\"task\":\"调研 X\",\"mode\":\"spawn\"}"));
+        session.append(SessionEvent.subagentCompleted("sa-1", "子代理 sa-1 已完成。\n最终回答：结论 ……"));
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(3, reloaded.events().size(), "子代理事件随 JSONL 完整往返");
+        SessionEvent spawned = reloaded.events().get(1);
+        assertEquals(SessionEvent.SUBAGENT_SPAWNED, spawned.type());
+        assertEquals("sa-1", spawned.toolCallId(), "子 agent id 走关联 id 可选位");
+        assertEquals("researcher", spawned.toolName(), "模板名走工具名可选位");
+        assertEquals("{\"task\":\"调研 X\",\"mode\":\"spawn\"}", spawned.text(), "载荷 JSON 透明往返");
+        SessionEvent completed = reloaded.events().get(2);
+        assertEquals(SessionEvent.SUBAGENT_COMPLETED, completed.type());
+        assertEquals("sa-1", completed.toolCallId(), "completed 以同 id 关联 spawned");
+        assertEquals("子代理 sa-1 已完成。\n最终回答：结论 ……", completed.text());
+
+        List<Message> messages = reloaded.deriveMessages();
+        assertEquals(2, messages.size(), "spawned 跳过投影，completed 投影进父上下文");
+        assertEquals(Message.Role.USER, messages.get(1).role(),
+                "子代理结果以 USER 形态进入父 LLM 上下文（tool 关联位已被 spawn 调用消费）");
+        assertEquals("子代理 sa-1 已完成。\n最终回答：结论 ……", messages.get(1).content());
+    }
+
+    @Test
+    void legacyLinesAndSubagentEventsCoexist() throws IOException {
+        // 旧格式行（仅 type/at/text 三字段）与新事件混排：load 不崩，投影各归各位——
+        // 既有会话文件在升级后读取行为不变
+        Path jsonl = sessionsDir().resolve("legacy-mix.jsonl");
+        Files.createDirectories(sessionsDir());
+        Files.write(jsonl, List.of(
+                "{\"type\":\"user/message\",\"at\":1000,\"text\":\"旧格式一问\"}",
+                "{\"type\":\"assistant/message\",\"at\":2000,\"text\":\"旧格式一答\"}",
+                "{\"type\":\"subagent/spawned\",\"at\":3000,"
+                        + "\"text\":\"{\\\"task\\\":\\\"T\\\",\\\"mode\\\":\\\"fork\\\"}\","
+                        + "\"toolCallId\":\"sa-9\",\"toolName\":\"researcher\"}",
+                "{\"type\":\"subagent/completed\",\"at\":4000,\"text\":\"fork 子代理结论\",\"toolCallId\":\"sa-9\"}"));
+
+        Session reloaded = Session.load(jsonl);
+        assertEquals(4, reloaded.events().size(), "旧格式行与新事件行全部读回");
+        assertEquals("researcher", reloaded.events().get(2).toolName());
+
+        List<Message> messages = reloaded.deriveMessages();
+        assertEquals(3, messages.size(), "旧格式消息照常投影，spawned 跳过，completed 入列");
+        assertEquals("旧格式一问", messages.get(0).content());
+        assertEquals("旧格式一答", messages.get(1).content());
+        assertEquals("fork 子代理结论", messages.get(2).content());
+        reloaded.close();
+    }
+
+    @Test
+    void seedBoundaryEventRoundTripsAndSkipsProjection() throws IOException {
+        // M15 fork 播种的种子边界（工单 03）：子会话审计标记——往返一致、不进对话投影
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.subagentSeedBoundary("parent-1", 7));
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(1, reloaded.events().size(), "种子边界随 JSONL 往返");
+        assertEquals(SessionEvent.SUBAGENT_SEED_BOUNDARY, reloaded.events().get(0).type());
+        assertEquals("前 7 条来自父会话 parent-1", reloaded.events().get(0).text());
+        assertTrue(reloaded.deriveMessages().isEmpty(), "边界是审计标记，不进对话投影");
+        reloaded.close();
+    }
+
+    @Test
+    void interruptedEventRoundTripsAndSkipsProjection() throws IOException {
+        // M15 控制面中止痕迹（工单 04）：子会话侧的终止审计——往返一致、不进对话投影
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.subagentInterrupted("sa-5", "被父 agent 中止"));
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(SessionEvent.SUBAGENT_INTERRUPTED, reloaded.events().get(0).type());
+        assertEquals("sa-5", reloaded.events().get(0).toolCallId());
+        assertEquals("被父 agent 中止", reloaded.events().get(0).text());
+        assertTrue(reloaded.deriveMessages().isEmpty(), "中止痕迹是审计事件，不进对话投影");
+        reloaded.close();
     }
 }

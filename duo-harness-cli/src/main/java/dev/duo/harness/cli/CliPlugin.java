@@ -124,8 +124,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
         // 执行链与 HITL 供给（呈现位共享装配器）：治理（governance 段可省——缺省常量）、
         // agent、回答者（审计桥包装）、交互工具
-        ContextGovernance governance = PresenterAssembly.governance(
-                llm, PresenterAssembly.parseGovernance(config));
+        ContextGovernance.Tuning governanceTuning = PresenterAssembly.parseGovernance(config);
+        ContextGovernance governance = PresenterAssembly.governance(llm, governanceTuning);
         // 会话标题生成（精简版，工单 M13-06）：首条消息后异步一次，/new 换绑的新会话同源触发
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
@@ -137,6 +137,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
             plan.active = false;
             disposeGuidance(plan);
         });
+        // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
+        // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
+        PresenterAssembly.publishSubagentHost(ctx, llm, governanceTuning, holder::current);
+        attachSubagentTrace(session);
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
         plan.active = PlanMode.isActive(session);
@@ -156,6 +160,72 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private Path sessionsDir() {
         return sessionsDirOverride != null
                 ? sessionsDirOverride : DuoHome.resolve().resolveDir("agent-sessions");
+    }
+
+    /**
+     * 未完成子任务的成果摘要摘取（M15 修复③的 CLI 呈现）：工具调用清单取前
+     * {@value #SUMMARY_HEAD_LINES} 行、末次结果摘录取前 {@value #SUMMARY_TAIL_LINES} 行，
+     * 其余折叠为指引——终端的可用性优先，完整内容可从子会话文件与父会话日志读取。
+     */
+    private void printAbbreviatedSummary(String text) {
+        int newline = text.indexOf('\n');
+        String body = newline < 0 ? "" : text.substring(newline + 1);
+        if (body.isBlank()) {
+            return;
+        }
+        String[] lines = body.split("\n");
+        int head = Math.min(lines.length, SUMMARY_HEAD_LINES);
+        for (int i = 0; i < head; i++) {
+            out.println("           " + lines[i]);
+        }
+        if (lines.length > head) {
+            out.println("           …（工具调用清单略，共 " + lines.length + " 行；完整摘要见子会话文件）");
+        }
+        int excerpt = body.indexOf("末次结果摘录：");
+        if (excerpt >= 0) {
+            String[] tailLines = body.substring(excerpt).split("\n");
+            int tail = Math.min(tailLines.length, SUMMARY_TAIL_LINES);
+            for (int i = 1; i < tail; i++) {
+                out.println("           " + tailLines[i]);
+            }
+        }
+    }
+
+    /** 未完成摘要的终端呈现行数上限（工具调用清单头部 / 末次结果摘录）。 */
+    private static final int SUMMARY_HEAD_LINES = 6;
+    private static final int SUMMARY_TAIL_LINES = 4;
+
+    /**
+     * 子任务过程行（M15 工单 05）：会话监听器打印 spawned/completed 状态——
+     * spawned 在 spawn 工具执行时落会话（[子任务] 已派生），completed 由子代理
+     * 后台线程回流（[子任务] 完成 + 最终回答；跨线程打印经 PrintStream 同步）。
+     * /new 换绑后对新会话重新挂载（旧监听器随旧会话 close 自动失效）。
+     */
+    private void attachSubagentTrace(Session target) {
+        target.addListener((index, event) -> {
+            switch (event.type()) {
+                case dev.duo.harness.session.SessionEvent.SUBAGENT_SPAWNED ->
+                        out.println("  [子任务] 已派生子代理 " + event.toolCallId()
+                                + "（模板 " + event.toolName() + "），后台运行中");
+                case dev.duo.harness.session.SessionEvent.SUBAGENT_COMPLETED -> {
+                    String text = event.text();
+                    out.println("  [子任务] " + text.split("\n", 2)[0]);
+                    int idx = text.indexOf("最终回答：");
+                    if (idx >= 0) {
+                        // 完成路径：结论即要点
+                        out.println("           " + text.substring(idx + "最终回答：".length()).strip());
+                    } else {
+                        // 未完成路径（迭代上限/失败）：中间成果摘要取前几条 + 末次结果摘录，
+                        // 完整摘要留在父会话事件与子会话文件里（摘要可达数十行，终端不刷屏）
+                        printAbbreviatedSummary(text);
+                    }
+                }
+                default -> {
+                    // 其余事件不经 CLI 过程行（对话流/工具卡由 agent 循环回调呈现）
+                }
+            }
+            out.flush();
+        });
     }
 
     /** REPL 主循环（交互沿 AgentReplMain 既有形态）：读行 → 命令分发 → agent 执行。 */
@@ -180,6 +250,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     holder.session = Session.create(sessionsDir);
                     agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts, governance);
                     SessionTitles.attach(holder.session, llm);
+                    attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                     previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                     plan.active = false;
                     disposeGuidance(plan);

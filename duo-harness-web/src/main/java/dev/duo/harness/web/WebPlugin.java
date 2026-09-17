@@ -104,6 +104,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
         PresenterAssembly.registerInteractionTools(
                 ctx, tools, answers, face::currentSession, () -> { });
+        // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
+        // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
+        PresenterAssembly.publishSubagentHost(ctx, adapter, governanceTuning, face::currentSession);
         // /new：全新会话；/switch：换绑既有会话——两者换绑后都经会话变更回调重建 agent
         // （ToolCallingAgent 持有 final 会话引用，不重建即分脑）
         face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));

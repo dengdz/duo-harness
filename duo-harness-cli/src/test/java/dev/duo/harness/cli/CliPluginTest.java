@@ -41,7 +41,8 @@ class CliPluginTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、/new 换绑、"
-                + "/exit idle 锁释放、占用提示、/permission 档位、工具叙述行通用形态（7 用例） ===");
+                + "/exit idle 锁释放、占用提示、/permission 档位、工具叙述行通用形态、"
+                + "子任务过程行（spawn 派生 + 完成回流）（8 用例） ===");
     }
 
     interface ToolsView {
@@ -64,6 +65,16 @@ class CliPluginTest {
         final Path sessionsDir;
 
         Fixture(Path sessionsDir, String scriptedInput, LlmAdapter llm) throws Exception {
+            this(sessionsDir, scriptedInput, llm, null);
+        }
+
+        /**
+         * 带前置装配钩子的重载（M15 子任务用例）：钩子在 CliPlugin 启动前执行——
+         * 呈现位装配（registerSubagentTools）在 CliPlugin.apply 内探测服务，故
+         * SubagentPlugin 等前置件必须先挂好。
+         */
+        Fixture(Path sessionsDir, String scriptedInput, LlmAdapter llm,
+                java.util.function.Consumer<Context> preAssembly) throws Exception {
             this.sessionsDir = sessionsDir;
             root.plugin(new ToolsPlugin(), null).awaitStartup();
             root.plugin(new PromptPlugin(), JsonNodeFactory.instance.objectNode()
@@ -81,6 +92,9 @@ class CliPluginTest {
             // 档位审批：ask 落回答者（本 fixture 为终端 y/n）；依赖 workspace（上一步已挂）
             root.plugin(new dev.duo.harness.tools.fs.WorkspaceApprovalPlugin(), null).awaitStartup();
             registerGuardedWriteTool();
+            if (preAssembly != null) {
+                preAssembly.accept(root);
+            }
             BufferedReader in = new BufferedReader(new InputStreamReader(
                     new ByteArrayInputStream(scriptedInput.getBytes(StandardCharsets.UTF_8)),
                     StandardCharsets.UTF_8));
@@ -361,5 +375,105 @@ class CliPluginTest {
         } finally {
             fx.dispose();
         }
+    }
+
+    @Test
+    void subagentLifecyclePrintsTraceLines() throws Exception {
+        // M15 工单 05：CLI 子任务过程行——spawn 派生与子代理完成（后台回流）各打一行，
+        // 完成行携最终回答；子代理经真实内嵌后端 + mock LLM（按 system 分流父/子）
+        Path dir = tempDir.resolve("subagent");
+        LlmAdapter llm = subagentScriptedLlm(dir);
+        Fixture fx = new Fixture(dir, "派个活\n/exit\n", llm, ctx -> {
+            // 模板制装配前置：subagent 插件（模板 worker 带专属提示——mock 据此分流）
+            var template = JsonNodeFactory.instance.objectNode()
+                    .put("name", "worker")
+                    .put("prompt", "子代理专用提示");
+            template.putArray("tools").add("echo");
+            var config = JsonNodeFactory.instance.objectNode();
+            config.putArray("templates").add(template);
+            ctx.plugin(new dev.duo.harness.agent.subagent.SubagentPlugin(), config);
+            ctx.as(ToolsView.class).tools().register(ctx, new dev.duo.harness.tools.ToolDefinition() {
+                @Override
+                public String name() {
+                    return "echo";
+                }
+
+                @Override
+                public String description() {
+                    return "回声";
+                }
+
+                @Override
+                public com.fasterxml.jackson.databind.JsonNode parameters() {
+                    return JsonNodeFactory.instance.objectNode().put("type", "object");
+                }
+
+                @Override
+                public Object execute(dev.duo.harness.tools.ToolExecution execution) {
+                    return "echo";
+                }
+            });
+        });
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("[子任务] 已派生子代理"), "派生过程行可见:\n" + out);
+            assertTrue(out.contains("（模板 worker）"), out);
+            assertTrue(out.contains("[子任务] 子代理") && out.contains("已完成"), "完成过程行可见:\n" + out);
+            assertTrue(out.contains("子代理结论：方案 A 可行"), "完成行携最终回答:\n" + out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    /**
+     * 父/子共用 adapter 的脚本（按 systemPrompt 分流——子代理 system 即模板专属提示，
+     * 不继承父的 userPrompt）：父首轮调 spawn，其后等子代理子会话锁释放（完成回流
+     * 已落父会话）再直答；子代理直答结论。
+     */
+    private static LlmAdapter subagentScriptedLlm(Path sessionsDir) {
+        AtomicInteger parentCalls = new AtomicInteger();
+        return new LlmAdapter() {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                onChunk.accept(new ChatChunk("x"));
+            }
+
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                if (request.systemPrompt().contains("子代理专用提示")) {
+                    textSink.accept("子代理结论：方案 A 可行");
+                    return new LlmTurn("子代理结论：方案 A 可行", List.of());
+                }
+                if (parentCalls.incrementAndGet() == 1) {
+                    return new LlmTurn("", List.of(new dev.duo.harness.llm.ToolCallRequest("p1", "spawn",
+                            "{\"template\":\"worker\",\"task\":\"调研 X\"}")));
+                }
+                awaitChildrenReleased(sessionsDir);
+                textSink.accept("已派子代理在后台执行。");
+                return new LlmTurn("已派子代理在后台执行。", List.of());
+            }
+        };
+    }
+
+    /** 轮询等全部子会话锁释放（子代理完成后释放，其 completed 回流必已在先）。 */
+    private static void awaitChildrenReleased(Path sessionsDir) {
+        Path subagents = sessionsDir.resolve("subagents");
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                if (java.nio.file.Files.isDirectory(subagents)) {
+                    var files = java.nio.file.Files.list(subagents)
+                            .filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList();
+                    if (!files.isEmpty() && files.stream().noneMatch(Session::isOccupied)) {
+                        return;
+                    }
+                }
+                Thread.sleep(50);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        throw new AssertionError("子代理未在时限内完成");
     }
 }

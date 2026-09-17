@@ -49,7 +49,7 @@ class WebFaceTest {
         System.out.println("\n=== 套件：WebFaceTest —— Web 面：静态资源（拆分件/vendor 库/白名单 404）、"
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
                 + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
-                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限（32 用例，含标题字段） ===");
+                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限、子任务回放端点（33 用例，含标题字段） ===");
     }
 
     interface ToolsView {
@@ -898,5 +898,40 @@ class WebFaceTest {
             listener.onChunk(reply);
             return new AgentReply(reply, List.of(), true);
         };
+    }
+
+    @Test
+    void subagentReplayServesEventsSkipsBadLinesAndRejectsBadIds() throws Exception {
+        // 子任务回放端点（M15 工单 05）：静态只读——事件原样返回、坏行跳过；
+        // id 白名单拒绝路径穿越；不存在的子会话返回 found=false 而非 404（前端弹层统一呈现）
+        Path sessionsDir = tempDir.resolve("web-sessions");
+        Path subagentsDir = sessionsDir.resolve("subagents");
+        java.nio.file.Files.createDirectories(subagentsDir);
+        String childId = "20260916-120000-00ff";
+        java.nio.file.Files.write(subagentsDir.resolve(childId + ".jsonl"), List.of(
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"播种的父背景\"}",
+                "{\"type\":\"subagent/seed-boundary\",\"at\":2,\"text\":\"前 1 条来自父会话 p-1\"}",
+                "not-a-json-line",
+                "{\"type\":\"assistant/message\",\"at\":3,\"text\":\"子代理结论\"}"));
+        Session parent = Session.create(sessionsDir);
+        start(parent, scriptedAgent(parent, "好"));
+
+        HttpResponse<String> ok = fetch("/api/subagent/events?id=" + childId);
+        assertEquals(200, ok.statusCode(), "正常读取");
+        JsonNode node = new ObjectMapper().readTree(ok.body());
+        assertTrue(node.get("found").asBoolean());
+        assertEquals(3, node.get("events").size(), "坏行跳过，其余事件原样返回");
+        assertEquals("播种的父背景", node.get("events").get(0).get("text").asText());
+        assertEquals("subagent/seed-boundary", node.get("events").get(1).get("type").asText(),
+                "fork 播种背景段在子会话回放中可见");
+
+        assertEquals(400, fetch("/api/subagent/events?id=../../etc/passwd").statusCode(),
+                "路径穿越形态拒绝");
+        assertEquals(400, fetch("/api/subagent/events?id=short").statusCode(),
+                "白名单外 id 拒绝");
+        HttpResponse<String> missing = fetch("/api/subagent/events?id=20260916-120000-00aa");
+        assertEquals(200, missing.statusCode(), "合法 id 不存在的文件不 404");
+        assertFalse(new ObjectMapper().readTree(missing.body()).get("found").asBoolean(),
+                "found=false 由前端统一呈现");
     }
 }

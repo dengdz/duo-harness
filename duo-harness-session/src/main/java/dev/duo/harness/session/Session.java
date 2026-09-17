@@ -31,7 +31,8 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * <p>{@link #append} 是唯一写入原语——内存追加与 JSONL 同步落盘同时发生，
  * 崩溃最多丢正在写的一条。对话历史由 {@link #deriveMessages()} 从日志投影派生：
- * `user/message` 与 `assistant/message` 入列，流式 chunk 是过程细节不投影。
+ * `user/message` 与 `assistant/message` 入列，流式 chunk 是过程细节不投影，
+ * `subagent/completed` 的最终回答以 USER 消息入列（父聚合子代理结果的数据源）。
  * 会话是中立数据基座——多轮记忆、持久化回放等消费方都基于同一份日志。</p>
  *
  * <p>会话身份在文件名：{@code ~/.duo/sessions/<id>.jsonl}，id = 启动时间 + 短随机后缀，
@@ -414,6 +415,8 @@ public final class Session {
                                 event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
                 case SessionEvent.TOOL_RESULT ->
                         messages.add(Message.tool(event.toolCallId(), event.text()));
+                case SessionEvent.SUBAGENT_COMPLETED ->
+                        messages.add(new Message(Message.Role.USER, event.text()));
                 default -> { /* 不可达：projectsToMessage 已收窄类型集 */ }
             }
         }
@@ -425,7 +428,8 @@ public final class Session {
         return switch (event.type()) {
             case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE -> true;
             case SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT -> event.toolCallId() != null;
-            default -> false;
+            case SessionEvent.SUBAGENT_COMPLETED -> true; // 子代理最终回答进父上下文（父聚合的数据源）
+            default -> false; // subagent/spawned 卡片专用，同 approval/title 不投影
         };
     }
 

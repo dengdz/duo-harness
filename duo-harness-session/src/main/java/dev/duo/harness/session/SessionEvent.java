@@ -15,8 +15,8 @@ import java.util.Objects;
  * @param type       事件类型（见本类常量）
  * @param at         事件时间戳（epoch millis）
  * @param text       事件载荷文本（tool/call 为参数 JSON；tool/result 为结果文本）
- * @param toolCallId 协议关联 id（仅工具事件携带，其余为 null）
- * @param toolName   工具名（仅工具事件携带，其余为 null）
+ * @param toolCallId 协议关联 id（工具事件与子代理事件携带——后者为子 agent id，其余为 null）
+ * @param toolName   工具名（工具事件与子代理 spawned 携带——后者为模板名，其余为 null）
  * @param reasoning  思考内容（仅 tool/call 携带，其余为 null）
  * @param usage      真实 token 用量（仅 assistant/message 携带，provider 未报告为 null）
  */
@@ -49,6 +49,32 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
 
     /** 会话标题（M13；text = 标题文本。投影 latest-wins 经 {@code Session.title()} 读取，不进对话消息）。 */
     public static final String TITLE = "session/title";
+
+    /**
+     * 子代理已派生（M15；text = 载荷 JSON——任务描述、模式、fork 源引用，
+     * toolCallId = 子 agent id，toolName = 模板名。投影跳过——呈现卡片专用）。
+     */
+    public static final String SUBAGENT_SPAWNED = "subagent/spawned";
+
+    /**
+     * 子代理完成（M15；text = 结果概要与最终回答，toolCallId = 子 agent id。
+     * 最终回答投影进父 LLM 上下文——父聚合结果的数据源）。
+     */
+    public static final String SUBAGENT_COMPLETED = "subagent/completed";
+
+    /**
+     * 子会话种子边界（M15 fork 播种；text = "前 N 条来自父会话 <id>" 的标记，
+     * 写在播种段之后、子任务消息之前）。真用户消息与播种消息据此在审计上可区分
+     * （ADR-0015 决策 4）；投影跳过——边界是审计标记，不是对话消息。
+     */
+    public static final String SUBAGENT_SEED_BOUNDARY = "subagent/seed-boundary";
+
+    /**
+     * 子代理中止痕迹（M15 控制面 interrupt；text = 中止说明，toolCallId = 子 agent id，
+     * 落子会话日志）。父侧终局经 {@code subagent/completed} 回流（text 标注"已被中止"）
+     * ——投影层只认 completed 一种终局事件；本事件是子会话侧的可审计终止痕迹。
+     */
+    public static final String SUBAGENT_INTERRUPTED = "subagent/interrupted";
 
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
@@ -128,5 +154,29 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：会话标题（生成器一次写入；重写即投影 latest-wins 自然覆盖）。 */
     public static SessionEvent title(String text) {
         return new SessionEvent(TITLE, System.currentTimeMillis(), text);
+    }
+
+    /**
+     * 便捷工厂：子代理已派生（id 关联后续 completed；模板名走工具名可选位，
+     * 载荷 JSON 走 text——任务描述、模式、fork 源引用由写入方组装，会话层透明往返）。
+     */
+    public static SessionEvent subagentSpawned(String agentId, String templateName, String payloadJson) {
+        return new SessionEvent(SUBAGENT_SPAWNED, System.currentTimeMillis(), payloadJson, agentId, templateName, null);
+    }
+
+    /** 便捷工厂：子代理完成（id 关联 spawned；text = 结果概要与最终回答）。 */
+    public static SessionEvent subagentCompleted(String agentId, String resultText) {
+        return new SessionEvent(SUBAGENT_COMPLETED, System.currentTimeMillis(), resultText, agentId, null, null);
+    }
+
+    /** 便捷工厂：子会话种子边界（text = "前 N 条来自父会话 <id>" 标记）。 */
+    public static SessionEvent subagentSeedBoundary(String parentSessionId, int seededCount) {
+        return new SessionEvent(SUBAGENT_SEED_BOUNDARY, System.currentTimeMillis(),
+                "前 " + seededCount + " 条来自父会话 " + parentSessionId);
+    }
+
+    /** 便捷工厂：子代理中止痕迹（id 关联 spawned；落子会话，父侧终局走 completed）。 */
+    public static SessionEvent subagentInterrupted(String agentId, String reason) {
+        return new SessionEvent(SUBAGENT_INTERRUPTED, System.currentTimeMillis(), reason, agentId, null, null);
     }
 }

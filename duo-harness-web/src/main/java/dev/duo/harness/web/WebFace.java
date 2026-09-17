@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
@@ -526,6 +527,49 @@ public final class WebFace {
             var arr = root.putArray("events");
             for (int i = window.startEvent(); i < before; i++) {
                 arr.add(JSON.valueToTree(events.get(i)));
+            }
+            byte[] body = root.toString().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        // 子任务回放（M15 工单 05，ADR-0015 决策 3）：子会话事件只读回放——静态逐行读
+        // **不持锁**（活跃子会话读到部分文件即所见，不与子代理写者争锁）；id 白名单
+        // 防路径穿越（与侧栏切换同一 SESSION_ID 形态）；坏行跳过（回放是锦上添花，
+        // 不因单行损坏失败）
+        server.createContext("/api/subagent/events", exchange -> {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String id = queryParam(exchange, "id");
+            if (id == null || !SESSION_ID.matcher(id).matches()) {
+                exchange.sendResponseHeaders(400, -1);
+                return;
+            }
+            Path jsonl = sessionsDir.resolve(dev.duo.harness.agent.subagent.SubagentManager.SUBDIRECTORY)
+                    .resolve(id + ".jsonl");
+            var root = JSON.createObjectNode();
+            var arr = root.putArray("events");
+            root.put("found", Files.isRegularFile(jsonl));
+            if (Files.isRegularFile(jsonl)) {
+                try {
+                    for (String line : Files.readAllLines(jsonl)) {
+                        if (line.isBlank()) {
+                            continue;
+                        }
+                        try {
+                            arr.add(JSON.readTree(line));
+                        } catch (Exception ignored) {
+                            // 单行损坏跳过（探测语义宽松）
+                        }
+                    }
+                } catch (IOException e) {
+                    exchange.sendResponseHeaders(500, -1);
+                    return;
+                }
             }
             byte[] body = root.toString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");

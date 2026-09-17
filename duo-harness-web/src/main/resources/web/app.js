@@ -51,14 +51,39 @@ const api = {
 
 // ----- §2 render：事件 → 卡片（9 种形态，对齐 prototype.html） -----
 const render = (() => {
-  const messages = $('#messages');
   const hero = $('#hero');
-  // 打开的工具卡：toolCallId → 卡元素（tool/result 回填同一张卡）
-  const toolCards = new Map();
-  // 尚无 toolCallId 的最近工具卡（兜底匹配下一条 result）
-  let lastOpenToolCard = null;
-  let lastOpenToolName = null;
-  let streamingBubble = null;
+  /**
+   * 渲染目标（M15 工单 05）：一套 DOM 容器 + 一组渲染状态——主对话与子任务抽屉
+   * 各持一份，共用下面全部渲染函数（子 agent 与主 agent 的呈现形态一致）。
+   */
+  function makeTarget(container, isMain) {
+    return {
+      container, isMain,
+      // 打开的工具卡：toolCallId → 卡元素（tool/result 回填同一张卡）
+      toolCards: new Map(),
+      // 子任务卡：子代理 id → 卡元素（completed 回填状态与结果）
+      subagentCards: new Map(),
+      // 尚无 toolCallId 的最近工具卡（兜底匹配下一条 result）
+      lastOpenToolCard: null,
+      lastOpenToolName: null,
+      streamingBubble: null,
+    };
+  }
+
+  const main = makeTarget($('#messages'), true);
+  /** 当前渲染目标（同步切换：回放整批事件期间指向抽屉目标，其余时刻是主对话）。 */
+  let t = main;
+
+  /** 在指定目标上同步执行渲染（渲染函数读模块级 t；切换是同步的，无并发歧义）。 */
+  function onTarget(target, fn) {
+    const prev = t;
+    t = target;
+    try {
+      return fn();
+    } finally {
+      t = prev;
+    }
+  }
 
   // 滚动合并到动画帧：回放/流式可瞬间到达数百帧 chunk，逐帧强制 reflow 会卡顿
   let scrollQueued = false;
@@ -67,14 +92,14 @@ const render = (() => {
     scrollQueued = true;
     requestAnimationFrame(() => {
       scrollQueued = false;
-      messages.scrollTop = messages.scrollHeight;
+      t.container.scrollTop = t.container.scrollHeight;
     });
   };
 
   function showMessages() {
-    if (hero.style.display !== 'none') {
+    if (t.isMain && hero.style.display !== 'none') {
       hero.style.display = 'none';
-      messages.style.display = 'block';
+      t.container.style.display = 'block';
     }
   }
 
@@ -86,7 +111,7 @@ const render = (() => {
     b.className = 'bubble';
     b.textContent = text;
     div.appendChild(b);
-    messages.appendChild(div);
+    t.container.appendChild(div);
     scroll();
   }
 
@@ -95,7 +120,7 @@ const render = (() => {
     const div = document.createElement('div');
     div.className = 'msg assistant';
     div.textContent = text;
-    messages.appendChild(div);
+    t.container.appendChild(div);
     scroll();
     return div;
   }
@@ -103,12 +128,12 @@ const render = (() => {
   /** 流式聚合：chunks 追加进同一个带光标的气泡；assistant/message 收口。 */
   function chunk(text) {
     showMessages();
-    if (!streamingBubble) {
-      streamingBubble = document.createElement('div');
-      streamingBubble.className = 'msg assistant streaming';
-      messages.appendChild(streamingBubble);
+    if (!t.streamingBubble) {
+      t.streamingBubble = document.createElement('div');
+      t.streamingBubble.className = 'msg assistant streaming';
+      t.container.appendChild(t.streamingBubble);
     }
-    streamingBubble.textContent += text;
+    t.streamingBubble.textContent += text;
     scroll();
   }
 
@@ -133,15 +158,15 @@ const render = (() => {
     // 流式期间保持纯文本追加（半截 markdown 渲染会闪烁），assistant/message 收口时整段渲染；
     // 历史回放无对应 chunk 流，同样走此分支
     let bubble;
-    if (streamingBubble) {
-      bubble = streamingBubble;
+    if (t.streamingBubble) {
+      bubble = t.streamingBubble;
       bubble.classList.remove('streaming');
       bubble.textContent = '';
-      streamingBubble = null;
+      t.streamingBubble = null;
     } else {
       bubble = document.createElement('div');
       bubble.className = 'msg assistant';
-      messages.appendChild(bubble);
+      t.container.appendChild(bubble);
     }
     bubble.appendChild(renderMarkdown(text));
     scroll();
@@ -156,11 +181,11 @@ const render = (() => {
     card.querySelector('b').textContent = event.toolName || '';
     card.querySelector('pre').textContent = event.text || '';
     if (event.toolCallId) {
-      toolCards.set(event.toolCallId, card);
+      t.toolCards.set(event.toolCallId, card);
     }
-    lastOpenToolCard = card;
-    lastOpenToolName = event.toolName || '';
-    messages.appendChild(card);
+    t.lastOpenToolCard = card;
+    t.lastOpenToolName = event.toolName || '';
+    t.container.appendChild(card);
     scroll();
     return card;
   }
@@ -177,7 +202,7 @@ const render = (() => {
       resolveByToolName('exit_plan_mode', text, text.includes('已获批准'));
       return;
     }
-    const card = (event.toolCallId && toolCards.get(event.toolCallId)) || lastOpenToolCard;
+    const card = (event.toolCallId && t.toolCards.get(event.toolCallId)) || t.lastOpenToolCard;
     if (!card) return;
     const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
     const badge = card.querySelector('.badge');
@@ -206,11 +231,11 @@ const render = (() => {
       const remind = document.createElement('div');
       remind.className = 'remind';
       remind.textContent = remindPart;
-      messages.insertBefore(remind, card.nextSibling);
+      t.container.insertBefore(remind, card.nextSibling);
     }
-    if (event.toolCallId && toolCards.get(event.toolCallId) === card) {
-      lastOpenToolCard = null;
-      lastOpenToolName = '';
+    if (event.toolCallId && t.toolCards.get(event.toolCallId) === card) {
+      t.lastOpenToolCard = null;
+      t.lastOpenToolName = '';
     }
     scroll();
   }
@@ -260,7 +285,7 @@ const render = (() => {
       free.innerHTML = '<input placeholder="打回时给模型的修改意见…"><button class="choice" data-action="plan-reject">打回</button>';
       card.appendChild(free);
     }
-    messages.appendChild(card);
+    t.container.appendChild(card);
     scroll();
     return card;
   }
@@ -299,7 +324,7 @@ const render = (() => {
     free.className = 'free-input';
     free.innerHTML = '<input placeholder="或直接输入你的回答…"><button class="choice" data-action="answer-free">回答</button>';
     card.appendChild(free);
-    messages.appendChild(card);
+    t.container.appendChild(card);
     scroll();
     return card;
   }
@@ -316,14 +341,14 @@ const render = (() => {
   }
 
   function resolveByToolName(toolName, note, ok) {
-    const cards = $$('#messages .interactive').filter(c => c.dataset.toolName === toolName);
+    const cards = $$('.interactive', t.container).filter(c => c.dataset.toolName === toolName);
     resolveCard(cards[cards.length - 1], note, ok);
   }
 
   /** approval/decided 回放/实时：按 toolName 找最后一张同工具交互卡冻结。 */
   function approvalDecided(event) {
     const denied = (event.text || '').startsWith('deny');
-    const cards = $$('#messages .interactive').filter(c => c.dataset.toolName === (event.toolName || ''));
+    const cards = $$('.interactive', t.container).filter(c => c.dataset.toolName === (event.toolName || ''));
     const card = cards[cards.length - 1];
     if (event.toolName === 'exit_plan_mode') {
       resolveCard(card, denied ? '✗ 计划未获批准' : '✓ 计划已获批准', !denied);
@@ -341,28 +366,87 @@ const render = (() => {
     body.className = 'result-body';
     body.textContent = text || '';
     card.appendChild(body);
-    messages.appendChild(card);
+    t.container.appendChild(card);
+    scroll();
+  }
+
+  /**
+   * 子任务卡（M15 工单 05）：spawned 引用事件建卡（运行中态，携模板与任务描述），
+   * completed 按 id 回填终态——「已被中止」「未正常完成」分别呈中断/失败，
+   * 正常完成呈完成态 + 结果概要折叠 + 子会话回放入口。
+   */
+  function subagentSpawned(event) {
+    showMessages();
+    let task = event.text || '';
+    try { task = JSON.parse(event.text || '{}').task || task; } catch (e) { /* 纯文本载荷 */ }
+    const card = document.createElement('div');
+    card.className = 'card subagent';
+    card.innerHTML = '<div class="tool">🤖 <b></b> <span class="badge badge-run">⟳ 运行中</span></div>'
+      + '<div class="subagent-task"></div>';
+    card.querySelector('b').textContent = '子任务 · 模板 ' + (event.toolName || '');
+    card.querySelector('.subagent-task').textContent = task;
+    card.dataset.task = task; // 抽屉开场语境（打开入口据此携带任务描述）
+    if (event.toolCallId) {
+      t.subagentCards.set(event.toolCallId, card);
+    }
+    t.container.appendChild(card);
+    scroll();
+  }
+
+  function subagentCompleted(event) {
+    const card = (event.toolCallId && t.subagentCards.get(event.toolCallId)) || null;
+    if (!card) return; // 卡不在场（回放窗口外）：终局已由模型回复承载，不重复呈现
+    const text = event.text || '';
+    const aborted = text.includes('已被中止');
+    const failed = !aborted && text.includes('未正常完成');
+    const badge = card.querySelector('.badge');
+    if (badge) {
+      badge.className = 'badge ' + (aborted || failed ? 'badge-fail' : 'badge-ok');
+      badge.textContent = aborted ? '✗ 已中断' : (failed ? '✗ 失败' : '✓ 完成');
+    }
+    card.classList.add(aborted || failed ? 'failed' : 'done');
+    if (!aborted && !failed) {
+      const idx = text.indexOf('最终回答：');
+      const answer = idx >= 0 ? text.slice(idx + '最终回答：'.length).trim() : text;
+      const details = document.createElement('details');
+      details.className = 'result';
+      const summary = document.createElement('summary');
+      summary.textContent = '▸ 结果概要（点击展开）';
+      const body = document.createElement('div');
+      body.className = 'result-body';
+      body.textContent = answer;
+      details.append(summary, body);
+      card.appendChild(details);
+      const open = document.createElement('button');
+      open.className = 'choice subagent-open';
+      open.dataset.action = 'open-subagent';
+      open.dataset.agentId = event.toolCallId || '';
+      open.dataset.task = card.dataset.task || '';
+      open.textContent = '查看子任务全程';
+      card.appendChild(open);
+    }
     scroll();
   }
 
   /** 会话清空（/new）：回到 EmptyHero 初始态。 */
   function resetToHero() {
     resetForReplay();
-    messages.style.display = 'none';
+    t.container.style.display = 'none';
     hero.style.display = 'flex';
   }
 
   /** 重连复位：清空渲染区，等本轮全量回放重建（幂等——重连不该叠加重複历史）。 */
   function resetForReplay() {
-    messages.innerHTML = '';
-    toolCards.clear();
-    lastOpenToolCard = null;
-    streamingBubble = null;
+    t.container.innerHTML = '';
+    t.toolCards.clear();
+    t.subagentCards.clear();
+    t.lastOpenToolCard = null;
+    t.streamingBubble = null;
   }
 
   /**
    * 事件 → 纯渲染（无网络/状态副作用）：SSE handle 与分页前置渲染共用的单源分发。
-   * 回放期 chunk 照常渲染（BUG-20260915-03）：碎片流入 streamingBubble、assistant/message
+   * 回放期 chunk 照常渲染（BUG-20260915-03）：碎片流入 t.streamingBubble、assistant/message
    * 收口整段覆盖——进行中轮次刷新不空窗，且不复发 0913-04 碎片化（防碎片化不以丢弃为手段）。
    */
   function dispatch(ev) {
@@ -376,6 +460,8 @@ const render = (() => {
     } else if (ev.type === 'tool/result') toolResult(ev);
     else if (ev.type === 'approval/requested') interactiveCard(ev);
     else if (ev.type === 'approval/decided') approvalDecided(ev);
+    else if (ev.type === 'subagent/spawned') subagentSpawned(ev);
+    else if (ev.type === 'subagent/completed') subagentCompleted(ev);
     else if (ev.type === 'run/error') runError(ev.text);
   }
 
@@ -385,19 +471,51 @@ const render = (() => {
    * 高度锚点，渲染后补偿 scrollTop——顶部加内容视窗不跳屏。
    */
   function prependEvents(events) {
-    const prevHeight = messages.scrollHeight;
-    const prevTop = messages.scrollTop;
+    const prevHeight = t.container.scrollHeight;
+    const prevTop = t.container.scrollTop;
     const rest = document.createDocumentFragment();
-    while (messages.firstChild) rest.appendChild(messages.firstChild);
+    while (t.container.firstChild) rest.appendChild(t.container.firstChild);
     for (const ev of events) dispatch(ev);
-    messages.appendChild(rest);
-    messages.scrollTop = messages.scrollHeight - prevHeight + prevTop;
+    t.container.appendChild(rest);
+    t.container.scrollTop = t.container.scrollHeight - prevHeight + prevTop;
+  }
+
+  /**
+   * 子任务抽屉渲染（M15 工单 05）：在指定容器上新建渲染目标并整批回放子会话事件
+   * ——与主对话共用全部渲染函数（消息气泡 / 工具卡 / 子任务卡形态一致）。
+   * 返回该目标，供抽屉关闭时丢弃（状态随目标对象一起回收）。
+   */
+  function replayInto(container, events, taskDescription) {
+    container.innerHTML = '';
+    const target = makeTarget(container, false);
+    onTarget(target, () => {
+      // 任务描述作开场（子会话日志从播种背景或子任务首条消息起，界面给出语境锚点）
+      if (taskDescription) {
+        const note = document.createElement('div');
+        note.className = 'drawer-note';
+        note.textContent = '子任务：' + taskDescription;
+        container.appendChild(note);
+      }
+      for (const ev of events) {
+        if (ev.type === 'subagent/seed-boundary') {
+          // 种子边界（ADR-0015 决策 4 的审计可区分要求在呈现层的体现）
+          const mark = document.createElement('div');
+          mark.className = 'drawer-seed-mark';
+          mark.textContent = '↑ 以上为继承的父对话背景 ｜ ' + (ev.text || '种子边界')
+              + ' ｜ 以下为子代理自身行为 ↓';
+          container.appendChild(mark);
+          continue;
+        }
+        dispatch(ev);
+      }
+    });
+    return target;
   }
 
   return {
     user, assistant, chunk, finishAssistant, toolCall, toolResult,
     interactiveCard, questionCard, approvalDecided, resolveCard,
-    resetToHero, resetForReplay, showMessages, dispatch, prependEvents
+    resetToHero, resetForReplay, showMessages, dispatch, prependEvents, replayInto
   };
 })();
 
@@ -514,11 +632,58 @@ const app = (() => {
         render.resolveCard(card, feedback ? '✗ 已打回，反馈：' + feedback : '✗ 已打回', false);
         // 打回也是 approved=true + 反馈文本（approved=false 会落 fail-closed 文案）
         await api.answer(true, [verdict]);
+      } else if (action === 'open-subagent') {
+        // 子任务回放入口（M15 工单 05）：完成态子任务卡 → 右侧抽屉只读回放
+        await openSubagentReplay(btn.dataset.agentId || '', btn.dataset.task || '');
       }
     } catch (err) {
       render.assistant('[未处理异常] ' + (err instanceof Error ? err.message : String(err)));
     }
   });
+
+  // ---- 子任务抽屉（M15 工单 05）：完成态子任务卡的"查看子任务全程"——从右侧滑出，
+  // 内容复用主对话渲染器（消息气泡 / 工具卡 / 子任务卡形态一致），含 fork 播种背景段；
+  // 只读回放（服务端静态读，不持子会话锁、不可续写） ----
+  async function openSubagentReplay(agentId, taskDescription) {
+    if (!agentId) return;
+    const drawer = $('#subagentDrawer');
+    const body = $('#subagentBody');
+    $('#subagentTitle').textContent = '子任务全程 · ' + agentId;
+    drawer.hidden = false;
+    void drawer.offsetWidth; // 强制重排：让下面的过渡从"屏外"起播（不用 rAF——后台标签会被节流）
+    drawer.classList.add('open');
+    body.innerHTML = '<div class="drawer-loading">载入子任务全程…</div>';
+
+    let data;
+    try {
+      const res = await fetch('/api/subagent/events?id=' + encodeURIComponent(agentId));
+      if (!res.ok) {
+        body.innerHTML = '<div class="drawer-loading">拉取失败（HTTP ' + res.status + '）</div>';
+        return;
+      }
+      data = await res.json();
+    } catch (err) {
+      body.innerHTML = '<div class="drawer-loading">拉取失败：' + errText(err) + '</div>';
+      return;
+    }
+    if (!data.found) {
+      body.innerHTML = '<div class="drawer-loading">子会话文件不存在</div>';
+      return;
+    }
+    // 复用主对话渲染器整批回放（子 agent 与主 agent 呈现一致）
+    render.replayInto(body, data.events || [], taskDescription);
+  }
+
+  function closeSubagentDrawer() {
+    const drawer = $('#subagentDrawer');
+    drawer.classList.remove('open');
+    setTimeout(() => { drawer.hidden = true; $('#subagentBody').innerHTML = ''; }, 200);
+  }
+  $('#subagentClose').addEventListener('click', closeSubagentDrawer);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#subagentDrawer').hidden) closeSubagentDrawer();
+  });
+
 
   // ---- composer：发送（不本地回显，用户气泡由 SSE user/message 渲染） ----
   // 发送受理中禁用按钮（"…"），202 后转"思考中…"——保持到本轮处理完成（assistant/message）

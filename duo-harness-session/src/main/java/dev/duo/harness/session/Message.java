@@ -16,7 +16,8 @@ import java.util.Objects;
  *
  * <p>由 {@link Session#deriveMessages()} 从事件日志派生：`user/message` 与
  * `assistant/message` 投影为纯文本消息；`tool/call` 投影为带 toolCalls 与
- * reasoning 的 ASSISTANT 消息；`tool/result` 投影为 TOOL 消息。</p>
+ * reasoning 的 ASSISTANT 消息；`tool/result` 投影为 TOOL 消息；
+ * `subagent/completed` 的最终回答投影为 USER 消息（父聚合子代理结果的数据源）。</p>
  */
 public record Message(Role role, String content, String toolCallId, List<ToolCall> toolCalls,
                       String reasoning) {
