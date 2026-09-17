@@ -39,7 +39,7 @@ class PresenterAssemblyTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：PresenterAssemblyTest —— 呈现位共享装配器：执行链装配、"
-                + "交互工具查重注册、LLM 配置失败点名、governance 段解析与生效（6 用例） ===");
+                + "交互工具查重注册、LLM 配置失败点名、governance 段解析与生效、maxIterations 解析（7 用例） ===");
     }
 
     interface ToolsView {
@@ -185,5 +185,26 @@ class PresenterAssemblyTest {
 
         assertEquals(16000L, governance.occupancyThresholdTokens(), "压缩阈值 = 32000 × 0.5");
         assertEquals(32000L, governance.occupancyWindowTokens(), "状态面窗口取生效配置");
+    }
+
+    @Test
+    void maxIterationsDefaultsToTenAndBindsStrictly() throws IOException {
+        // BUG-20260917-03：迭代上限可配——缺省 10 行为不变；显式值整数严格绑定
+        assertEquals(10, PresenterAssembly.parseMaxIterations(null), "config 缺失取缺省");
+        assertEquals(10, PresenterAssembly.parseMaxIterations(config("{\"port\":8080}")),
+                "字段缺席取缺省（不配置零漂移）");
+        assertEquals(30, PresenterAssembly.parseMaxIterations(config("{\"maxIterations\":30}")),
+                "显式值生效");
+
+        PluginException fractional = assertThrows(PluginException.class,
+                () -> PresenterAssembly.parseMaxIterations(config("{\"maxIterations\":5.5}")),
+                "小数点名拒绝");
+        assertTrue(fractional.getMessage().contains("maxIterations"), "异常点名字段");
+        assertThrows(PluginException.class,
+                () -> PresenterAssembly.parseMaxIterations(config("{\"maxIterations\":\"30\"}")),
+                "字符串点名拒绝");
+        assertThrows(PluginException.class,
+                () -> PresenterAssembly.parseMaxIterations(config("{\"maxIterations\":0}")),
+                "非正点名拒绝");
     }
 }

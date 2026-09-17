@@ -51,13 +51,15 @@ plugins:
   - id: web
     name: dev.duo.harness.web.WebPlugin
     config:
-      port: 18080   # 避开本机常用端口（8080/8081 被 duoduo 占用）
+      port: 18080          # 避开本机常用端口（8080/8081 被 duoduo 占用）
+      maxIterations: 30    # 单轮迭代上限（缺省 10）——计划模式等探索型任务建议调高
 
   # CLI 呈现位（ADR-0011）：终端 REPL 插件——与 web 对称。
   # 行序即回答者路由：cli 在 web 之后，审批/提问由 Web 卡片优先呈现
   - id: cli
     name: dev.duo.harness.cli.CliPlugin
-    config: {}
+    config:
+      maxIterations: 30    # 与 web 同步调高（/plan 等探索型任务）
 
   # ask_user / exit_plan_mode 交互工具由两个呈现位插件各自查重注册（先到先得）。
   # agent demo 装配仅本机工具族（消除双写工具选型噪音）；MCP 机制演示在

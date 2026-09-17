@@ -133,11 +133,43 @@ public final class PresenterAssembly {
         }
     }
 
+    /**
+     * 解析呈现位 config 的可选迭代上限（{@code config.maxIterations}）：缺席或 null 返回
+     * 内核缺省（{@link ToolCallingAgent#MAX_ITERATIONS}，不配置行为不变）；在场必须是
+     * 正整数，非整数/非正一律异常点名——配置错误不做静默纠正。
+     *
+     * <p>动机（BUG-20260917-03）：计划模式的引导式探索会连读多份文档/技能，真实仓库级
+     * 设计任务可超十余轮；缺省 10 在探索型任务上会把循环停在呈交之前。大预算需求经此
+     * 字段显式调高，防失控硬停在缺省路径上原样保留。</p>
+     *
+     * @throws PluginException 值非正整数
+     */
+    public static int parseMaxIterations(JsonNode config) {
+        if (config == null || !config.hasNonNull("maxIterations")) {
+            return ToolCallingAgent.MAX_ITERATIONS;
+        }
+        JsonNode value = config.get("maxIterations");
+        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            throw new PluginException("maxIterations 必须是整数: " + value);
+        }
+        int parsed = value.asInt();
+        if (parsed < 1) {
+            throw new PluginException("maxIterations 必须为正: " + parsed);
+        }
+        return parsed;
+    }
+
     /** 对话执行者：工具循环 + prompt 注册表 + 治理，迭代上限取内核缺省。 */
     public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
                                       PromptRegistry prompts, ContextGovernance governance) {
-        return new ToolCallingAgent(llm, tools, session, prompts,
-                ToolCallingAgent.MAX_ITERATIONS, governance);
+        return chatAgent(llm, tools, session, prompts, ToolCallingAgent.MAX_ITERATIONS, governance);
+    }
+
+    /** 对话执行者（迭代上限显式版，BUG-20260917-03）：呈现位经 {@link #parseMaxIterations} 传入。 */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      ContextGovernance governance) {
+        return new ToolCallingAgent(llm, tools, session, prompts, maxIterations, governance);
     }
 
     /**
