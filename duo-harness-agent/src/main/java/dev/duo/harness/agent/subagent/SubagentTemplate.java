@@ -31,8 +31,10 @@ public record SubagentTemplate(String name, List<String> tools, String prompt, I
      * 不进子模板即禁嵌套，深度恒为 1，ADR-0015 决策 6，无深度配额守卫）。
      */
     public static final Set<String> FORBIDDEN_TOOLS = Set.of(
-            "ask_user", "exit_plan_mode",
-            "spawn", "fork", "send_message", "interrupt_agent", "list_agents");
+            dev.duo.harness.tools.AskUserTool.NAME,
+            dev.duo.harness.agent.plan.ExitPlanModeTool.NAME,
+            SpawnTool.NAME, ForkTool.NAME,
+            SendMessageTool.NAME, InterruptAgentTool.NAME, ListAgentsTool.NAME);
 
     /** 构造时校验非空与防御性拷贝——错误前移到构造点。 */
     public SubagentTemplate {

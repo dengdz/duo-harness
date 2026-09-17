@@ -40,18 +40,25 @@ public final class ForkTool implements ToolDefinition {
                 + "适合把当前讨论中的一个分支深挖下去——例如让子代理拿着已确定的方案去做耗时执行。"
                 + "注意：子代理拿到的是背景快照，之后本对话的进展它看不到，也不会跨任务记忆；"
                 + "task 仍应是边界清晰、有限步内可完成的一件小事（目标与期望产出写明确），"
-                + "大任务请拆成多个子代理分别 fork。template 必须是已配置的子代理模板名。"
-                + "用 list_agents 查看各子代理进展，用 send_message 补充指示。";
+                + "大任务请拆成多个子代理分别 fork。template 必须从已配置的模板中点名。"
+                + "用 list_agents 查看各子代理进展，用 send_message 补充指示。"
+                + "可用模板：" + String.join("、", manager.templateNames()) + "。";
     }
 
     @Override
     public JsonNode parameters() {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
-                    {"type":"object","properties":{
-                      "template":{"type":"string","description":"子代理模板名（部署方预定义的能力边界）"},
-                      "task":{"type":"string","description":"子任务目标与期望产出（对话背景自动继承）"}},
-                     "required":["template","task"]}""");
+            var schema = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                    .put("type", "object");
+            var props = schema.putObject("properties");
+            var template = props.putObject("template")
+                    .put("description", "子代理模板名（部署方预定义的能力边界）");
+            var enumNames = template.putArray("enum");
+            manager.templateNames().forEach(enumNames::add);
+            props.putObject("task")
+                    .put("description", "子任务目标与期望产出（对话背景自动继承）");
+            schema.putArray("required").add("template").add("task");
+            return schema;
         } catch (Exception e) {
             throw new IllegalStateException("fork 参数 schema 内置错误", e);
         }

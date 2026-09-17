@@ -39,7 +39,23 @@ public final class SubagentTemplates {
      * @throws PluginException 未知字段、类型不符、模板名空/重复、工具清单空或缺项（点名具体位置）
      */
     public static SubagentTemplates parse(JsonNode config) {
-        if (config == null || !config.hasNonNull("templates")) {
+        if (config == null) {
+            return new SubagentTemplates(List.of());
+        }
+        if (!config.isObject()) {
+            throw new PluginException("subagent config 必须是对象: " + config.getNodeType());
+        }
+        // 顶层严格绑定：只认 templates 键——拼错键名（如 template/Templates）会让整个
+        // 子代理能力静默失效（空集 → 零注册零诊断），比结构错误更难排查，故点名拒绝
+        var topFields = new LinkedHashSet<String>();
+        config.fieldNames().forEachRemaining(topFields::add);
+        for (String field : topFields) {
+            if (!"templates".equals(field)) {
+                throw new PluginException("subagent config 存在未知字段: " + field
+                        + "（唯一合法字段为 templates）");
+            }
+        }
+        if (!config.hasNonNull("templates")) {
             return new SubagentTemplates(List.of());
         }
         JsonNode node = config.get("templates");

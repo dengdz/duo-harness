@@ -42,18 +42,25 @@ public final class SpawnTool implements ToolDefinition {
                 + "『统计某目录下的类分布』）；需要数十步采集的大任务，请拆成多个子代理分别派发，"
                 + "或先自己探索定位再委派小块；③ 子代理有迭代上限，任务过大它会在中途耗尽轮次。"
                 + "适合过程冗长、结论可比过程更短的工作（探索、批量处理、独立调研）——"
-                + "中间过程不占用主对话上下文。template 必须是已配置的子代理模板名。"
-                + "用 list_agents 查看各子代理进展，用 send_message 补充指示。";
+                + "中间过程不占用主对话上下文。template 必须从已配置的模板中点名。"
+                + "用 list_agents 查看各子代理进展，用 send_message 补充指示。"
+                + "可用模板：" + String.join("、", manager.templateNames()) + "。";
     }
 
     @Override
     public JsonNode parameters() {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
-                    {"type":"object","properties":{
-                      "template":{"type":"string","description":"子代理模板名（部署方预定义的能力边界）"},
-                      "task":{"type":"string","description":"子任务描述：目标、约束、期望产出，自包含"}},
-                     "required":["template","task"]}""");
+            var schema = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                    .put("type", "object");
+            var props = schema.putObject("properties");
+            var template = props.putObject("template")
+                    .put("description", "子代理模板名（部署方预定义的能力边界）");
+            var enumNames = template.putArray("enum");
+            manager.templateNames().forEach(enumNames::add);
+            props.putObject("task")
+                    .put("description", "子任务描述：目标、约束、期望产出，自包含");
+            schema.putArray("required").add("template").add("task");
+            return schema;
         } catch (Exception e) {
             throw new IllegalStateException("spawn 参数 schema 内置错误", e);
         }

@@ -69,9 +69,9 @@ public final class SubagentPlugin implements Plugin<JsonNode> {
     static final List<BiFunction<SubagentManager, Supplier<Session>, ToolDefinition>> AGENT_TOOLS = List.of(
             (manager, session) -> new SpawnTool(manager, session),
             (manager, session) -> new ForkTool(manager, session),
-            (manager, session) -> new SendMessageTool(manager),
-            (manager, session) -> new InterruptAgentTool(manager),
-            (manager, session) -> new ListAgentsTool(manager));
+            (manager, session) -> new SendMessageTool(manager, session),
+            (manager, session) -> new InterruptAgentTool(manager, session),
+            (manager, session) -> new ListAgentsTool(manager, session));
 
     /**
      * 条件注册机制：供给清单逐项实例化并注册进工具域。包内可见——测试以

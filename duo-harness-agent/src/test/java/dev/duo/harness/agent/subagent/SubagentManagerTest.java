@@ -42,7 +42,7 @@ class SubagentManagerTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：SubagentManagerTest —— 生命周期：spawn 立即返回/latch 确定性回流、"
                 + "运行期持锁与完成释放、子目录与侧栏排除、fork 播种与种子边界；控制面：运行中纠偏/空闲续轮/"
-                + "interrupt 中止痕迹/list 状态、未完成回流带成果、不可达状态点名（13 用例） ===");
+                + "interrupt 中止痕迹/list 状态、未完成回流带成果、会话归属过滤、不可达状态点名（14 用例） ===");
     }
 
     @BeforeEach
@@ -375,7 +375,7 @@ class SubagentManagerTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         manager.bindBackend(gatedBackend(started, release, "结论"));
-        ListAgentsTool listTool = new ListAgentsTool(manager);
+        ListAgentsTool listTool = new ListAgentsTool(manager, () -> parent);
 
         assertEquals("当前没有子代理。", listTool.execute(null), "空注册表呈现");
 
@@ -389,6 +389,33 @@ class SubagentManagerTest {
         String idle = (String) listTool.execute(null);
         assertTrue(idle.contains("空闲"), "完成 → 空闲呈现");
         assertTrue(idle.contains("worker"), "模板名呈现");
+    }
+
+    @Test
+    void controlPlaneIsScopedToTheCallingParentSession() throws Exception {
+        // 会话归属治理（OCR 审查③）：长驻呈现位换绑后，其他会话派的子代理不可见、不可操作——
+        // 否则旧会话的子代理会被新对话的模型误治理
+        manager.bindBackend(instantBackend("done"));
+        String agentId = manager.spawn(parent, "worker", "A 会话的子代理");
+        awaitCompleted(parent, new HashSet<>());
+
+        Session other = Session.create(sessionsDir());
+        try {
+            ListAgentsTool otherList = new ListAgentsTool(manager, () -> other);
+            assertEquals("当前没有子代理。", (String) otherList.execute(null), "其他会话视角零可见");
+
+            var args = config("{\"agentId\": \"" + agentId + "\", \"message\": \"hello\"}");
+            var ex = assertThrows(PluginException.class,
+                    () -> new SendMessageTool(manager, () -> other).execute(
+                            new dev.duo.harness.tools.ToolExecution("send_message", args)));
+            assertTrue(ex.getMessage().contains("属于会话") && ex.getMessage().contains(parent.id()),
+                    "归属拒绝点名双方会话: " + ex.getMessage());
+
+            ListAgentsTool ownList = new ListAgentsTool(manager, () -> parent);
+            assertTrue(((String) ownList.execute(null)).contains(agentId), "本会话视角可见可操作");
+        } finally {
+            other.close();
+        }
     }
 
     @Test

@@ -18,9 +18,12 @@ public final class InterruptAgentTool implements ToolDefinition {
     public static final String NAME = "interrupt_agent";
 
     private final SubagentManager manager;
+    private final java.util.function.Supplier<dev.duo.harness.session.Session> currentSession;
 
-    public InterruptAgentTool(SubagentManager manager) {
+    public InterruptAgentTool(SubagentManager manager,
+              java.util.function.Supplier<dev.duo.harness.session.Session> currentSession) {
         this.manager = Objects.requireNonNull(manager, "manager");
+        this.currentSession = java.util.Objects.requireNonNull(currentSession, "currentSession");
     }
 
     @Override
@@ -49,7 +52,22 @@ public final class InterruptAgentTool implements ToolDefinition {
     @Override
     public Object execute(ToolExecution execution) {
         String agentId = requireText(execution.args(), "agentId");
+        requireCurrentSession(agentId);
         return manager.interrupt(agentId);
+    }
+
+    /** 会话归属校验：长驻呈现位换绑后，旧会话的子代理对新会话不可达（治理边界）。 */
+    private void requireCurrentSession(String agentId) {
+        var session = currentSession.get();
+        if (session == null) {
+            throw new PluginException(NAME.formatted("无可用父会话（装配不完整）"));
+        }
+        var entry = manager.byId(agentId)
+                .orElseThrow(() -> new PluginException("子代理不存在: " + agentId));
+        if (!entry.parentSessionId().equals(session.id())) {
+            throw new PluginException("子代理 " + agentId + " 属于会话 " + entry.parentSessionId()
+                    + "，不属于当前会话 " + session.id());
+        }
     }
 
     private static String requireText(JsonNode args, String field) {

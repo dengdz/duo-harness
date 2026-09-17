@@ -17,9 +17,12 @@ public final class ListAgentsTool implements ToolDefinition {
     public static final String NAME = "list_agents";
 
     private final SubagentManager manager;
+    private final java.util.function.Supplier<dev.duo.harness.session.Session> currentSession;
 
-    public ListAgentsTool(SubagentManager manager) {
+    public ListAgentsTool(SubagentManager manager,
+                          java.util.function.Supplier<dev.duo.harness.session.Session> currentSession) {
         this.manager = Objects.requireNonNull(manager, "manager");
+        this.currentSession = java.util.Objects.requireNonNull(currentSession, "currentSession");
     }
 
     @Override
@@ -46,7 +49,9 @@ public final class ListAgentsTool implements ToolDefinition {
     @Override
     public Object execute(ToolExecution execution) {
         StringBuilder text = new StringBuilder();
-        var entries = manager.all();
+        var session = currentSession.get();
+        var entries = session == null ? manager.all()
+                : manager.byParentSession(session.id()); // 只列当前父会话名下的（换绑后互不可见）
         if (entries.isEmpty()) {
             return "当前没有子代理。";
         }

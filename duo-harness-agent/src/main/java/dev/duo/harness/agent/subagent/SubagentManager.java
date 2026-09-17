@@ -52,6 +52,7 @@ public final class SubagentManager {
         private final String templateName;
         private final Path jsonl;
         private final Session parentSession;
+        private final String parentSessionId;
         private volatile Session childSession;
         private volatile Thread worker;
         private volatile State state = State.RUNNING;
@@ -61,6 +62,12 @@ public final class SubagentManager {
             this.templateName = templateName;
             this.jsonl = jsonl;
             this.parentSession = parentSession;
+            this.parentSessionId = parentSession.id();
+        }
+
+        /** 父会话（completed 回流的落点；跨线程写经 persist 锁保护）。 */
+        Session parentSession() {
+            return parentSession;
         }
 
         /** 子代理 id（同子会话 id）。 */
@@ -81,6 +88,11 @@ public final class SubagentManager {
         /** 子会话文件（完成后可打开回放全程）。 */
         public Path jsonl() {
             return jsonl;
+        }
+
+        /** 创建本子代理的父会话 id（控制面的会话归属校验用）。 */
+        public String parentSessionId() {
+            return parentSessionId;
         }
     }
 
@@ -167,6 +179,18 @@ public final class SubagentManager {
     /** 按 id 查寻（控制面寻址入口）。 */
     public Optional<Entry> byId(String agentId) {
         return Optional.ofNullable(agents.get(agentId));
+    }
+
+    /** 某父会话名下的全部子代理（list_agents 的呈现边界——长驻呈现位换绑后互不可见）。 */
+    public List<Entry> byParentSession(String parentSessionId) {
+        return agents.values().stream()
+                .filter(e -> e.parentSessionId().equals(parentSessionId))
+                .toList();
+    }
+
+    /** 可用模板名清单（spawn/fork 的工具描述与 schema enum 的取数源——模型第一次就能点对名）。 */
+    public List<String> templateNames() {
+        return templates.all().stream().map(SubagentTemplate::name).toList();
     }
 
     /**
@@ -258,7 +282,7 @@ public final class SubagentManager {
                     + "\n（如需继续，可用 send_message 给该子代理更多指示——它将带着已有上下文续跑）";
         }
         try {
-            entry.parentSession.append(SessionEvent.subagentCompleted(task.agentId(), summary));
+            entry.parentSession().append(SessionEvent.subagentCompleted(task.agentId(), summary));
         } catch (RuntimeException ignored) {
             // 父会话已关闭（/exit 后子代理才完成）：降级为仅子会话留痕，不炸后台线程
         } finally {
