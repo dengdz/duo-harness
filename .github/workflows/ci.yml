@@ -46,7 +46,6 @@ jobs:
           TAIL=$(tail -n 30 /tmp/build.log | tr '%' '_' | sed ':a;N;$!ba;s/\n/%0A/g')
           printf '::error title=构建尾部::%s\n' "${TAIL:0:3500}"
       - name: 上传测试报告工件
-      - name: 上传测试报告工件
         if: failure()
         uses: actions/upload-artifact@v4
         with:
