@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复（39 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合（41 用例） ===");
     }
 
     @TempDir
@@ -111,6 +111,49 @@ class SessionTest {
         assertEquals("结果文本", messages.get(2).content());
         assertEquals(Message.Role.USER, messages.get(3).role());
         assertEquals("子代理完成：结论 X", messages.get(3).content(), "子结论数据源保留");
+    }
+
+    @Test
+    void loadSealsDanglingToolCallWithSyntheticResult() throws IOException {
+        // 崩溃恢复（M16 工单 08）：tool/call 落盘后进程死亡（无 result）→ 打开时
+        // 合成闭合——投影合法、可续聊；子会话走同一加载路径自然受益
+        Session crashed = Session.create(sessionsDir());
+        crashed.append(SessionEvent.userMessage("派个活"));
+        crashed.append(SessionEvent.toolCall("call_1", "bash", "{}"));
+        crashed.close(); // 模拟进程死亡：result 永远不会落盘
+
+        Session reopened = Session.load(sessionsDir().resolve(
+                crashed.id() + ".jsonl"));
+
+        List<Message> messages = reopened.deriveMessages();
+        assertEquals(3, messages.size(), "悬空调用已合成闭合（user → tool_calls → tool）");
+        assertEquals(Message.Role.TOOL, messages.get(2).role());
+        assertEquals("call_1", messages.get(2).toolCallId());
+        assertTrue(messages.get(2).content().contains("结果因进程中断未知"),
+                "合成闭合文本注明中断未知与只读/幂等重试指引");
+
+        // 会话可续聊：追加新一轮后投影仍合法
+        reopened.append(SessionEvent.userMessage("继续"));
+        assertEquals(4, reopened.deriveMessages().size());
+        assertEquals(Message.Role.USER, reopened.deriveMessages().get(3).role());
+    }
+
+    @Test
+    void loadLeavesCompleteToolPairsUnchanged() throws IOException {
+        // 正常会话（调用与结果配对）：加载零改动——合成闭合只对悬空调用生效
+        Session crashed = Session.create(sessionsDir());
+        crashed.append(SessionEvent.userMessage("派个活"));
+        crashed.append(SessionEvent.toolCall("call_1", "bash", "{}"));
+        crashed.append(SessionEvent.toolResult("call_1", "bash", "输出内容"));
+        crashed.close();
+
+        int before = Files.readString(sessionsDir().resolve(
+                crashed.id() + ".jsonl")).split("\n", -1).length - 1;
+        Session reopened = Session.load(sessionsDir().resolve(
+                crashed.id() + ".jsonl"));
+
+        assertEquals(before, reopened.events().size(), "配对完整的日志零追加");
+        assertEquals(3, reopened.deriveMessages().size(), "投影不受影响");
     }
 
     @Test

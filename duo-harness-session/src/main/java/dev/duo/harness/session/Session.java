@@ -122,6 +122,7 @@ public final class Session {
                 }
                 session.events.add(parse(line));
             }
+            sealDanglingToolCalls(session);
             session.snapshot = List.copyOf(session.events); // 构造期单线程：返回前建初始快照
         } catch (IOException e) {
             session.close(); // 读取失败即释放锁，不留半开状态
@@ -423,6 +424,32 @@ public final class Session {
             }
         }
         return repairToolMessageAdjacency(messages);
+    }
+
+    /**
+     * 崩溃恢复——悬空工具调用的合成闭合（M16 工单 08，ADR-0015 的"结果因中断未知"
+     * 语义）：进程可能死在 tool/call 落盘之后、tool/result 落盘之前（崩溃/审批等待
+     * 中断）——悬空调用使投影出现无结果的操作请求，provider 拒绝该序列，会话从此
+     * 每轮 400 永久无法续聊。
+     *
+     * <p>打开会话取锁后扫描未闭合的调用，逐一追加合成 tool/result（结果注明
+     * "因进程中断未知，只可重试只读/幂等操作"）——日志自包含（重开/回放/子代理
+     * 续轮全部自然正确），投影零特判。子代理会话走同一加载路径自然受益。</p>
+     */
+    private static void sealDanglingToolCalls(Session session) {
+        Map<String, String> pending = new LinkedHashMap<>();
+        for (SessionEvent event : session.events) {
+            if (SessionEvent.TOOL_CALL.equals(event.type()) && event.toolCallId() != null) {
+                pending.put(event.toolCallId(), event.toolName());
+            } else if (SessionEvent.TOOL_RESULT.equals(event.type())
+                    && event.toolCallId() != null) {
+                pending.remove(event.toolCallId());
+            }
+        }
+        for (Map.Entry<String, String> dangling : pending.entrySet()) {
+            session.append(SessionEvent.toolResult(dangling.getKey(), dangling.getValue(),
+                    "结果因进程中断未知——只可重试只读/幂等操作，不可重试有副作用的调用。"));
+        }
     }
 
     /**
