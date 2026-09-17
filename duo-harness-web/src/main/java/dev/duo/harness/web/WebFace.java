@@ -419,12 +419,19 @@ public final class WebFace {
         exchange.sendResponseHeaders(202, -1);
         Thread.ofVirtual().start(() -> {
             try {
-                current.send(text, new dev.duo.harness.agent.AgentListener() {
-                    @Override
-                    public void onChunk(String chunk) {
-                        session.append(SessionEvent.assistantChunk(chunk));
-                    }
-                });
+                dev.duo.harness.agent.AgentReply reply =
+                        current.send(text, new dev.duo.harness.agent.AgentListener() {
+                            @Override
+                            public void onChunk(String chunk) {
+                                session.append(SessionEvent.assistantChunk(chunk));
+                            }
+                        });
+                if (!reply.completed()) {
+                    // 迭代上限等未完成终止（ADR-0018）：CLI 有 [异常终止] 行而 Web 面原先
+                    // 无提示地停住（BUG-20260917-03 验收 B）——直推 run/error 错误卡补齐可见性；
+                    // 直推帧不落会话历史，与异常路径同一呈现口径
+                    pushTransientFrame(toJson(SessionEvent.errorEvent(reply.finalText())));
+                }
             } catch (Exception e) {
                 // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
                 // 帧内只给通用文案——异常细节服务端日志留痕，不外推（M10-02 脱敏口径）

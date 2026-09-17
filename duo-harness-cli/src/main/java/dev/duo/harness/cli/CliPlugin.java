@@ -317,6 +317,14 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
                         @Override
                         public void onToolCall(String toolName, String argumentsJson) {
+                            if ("todo_write".equals(toolName)) {
+                                // 清单更新的参数是整表 JSON（终端不画清单）——只打动作行，
+                                // 计数摘要随 onToolResult 的结果文本给出（ADR-0018）
+                                out.println();
+                                out.println("  [清单] 更新任务清单…");
+                                out.flush();
+                                return;
+                            }
                             out.println();
                             out.println("  [调工具] " + toolName + " " + argumentsJson);
                             out.flush();
@@ -324,6 +332,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
                         @Override
                         public void onToolResult(String toolName, String resultText, boolean isError) {
+                            if ("todo_write".equals(toolName)) {
+                                out.println("  [清单] " + resultText);
+                                out.flush();
+                                return;
+                            }
                             out.println("  [工具" + (isError ? "错误] " : "结果] ") + resultText);
                             out.flush();
                         }

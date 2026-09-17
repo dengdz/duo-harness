@@ -151,6 +151,46 @@
   }
   .free-input input:focus { border-color: var(--brand); }
 
+  /* ===== §样式层 · todo 常驻面板与工具行摘要（ADR-0018，工单 M17-04） ===== */
+  .todo-panel { padding: 8px 12px 0; }
+  .todo-fold {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-lv1);
+    padding: 8px 12px; font-size: 13px;
+  }
+  .todo-fold summary { cursor: pointer; color: var(--text-dim); user-select: none; }
+  .todo-fold summary:hover { color: var(--text); }
+  .todo-list { list-style: none; margin: 8px 0 2px; padding: 0; display: none; }
+  .todo-fold[open] .todo-list { display: block; }
+  .todo-list li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  /* 圆圈三态（DSH 同款形态）：completed 实圆带勾 / in_progress 品牌色圆环呼吸 / pending 虚线圆 */
+  .todo-mark {
+    width: 12px; height: 12px; border-radius: 50%; flex: none; box-sizing: border-box;
+    position: relative;
+  }
+  .todo-list li[data-status="completed"] .todo-mark {
+    background: var(--ok);
+  }
+  .todo-list li[data-status="completed"] .todo-mark::after {
+    content: '✓'; color: #fff; font-size: 9px; line-height: 1;
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  }
+  .todo-list li[data-status="in_progress"] .todo-mark {
+    border: 2px solid var(--brand); animation: todo-breathe 1.6s ease-in-out infinite;
+  }
+  .todo-list li[data-status="pending"] .todo-mark {
+    border: 1.5px dashed var(--text-dim);
+  }
+  @keyframes todo-breathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(86, 134, 254, 0.35); }
+    50% { box-shadow: 0 0 0 4px rgba(86, 134, 254, 0.15); }
+  }
+  .todo-list li[data-status="completed"] > span:last-child {
+    color: var(--text-dim); text-decoration: line-through;
+  }
+  /* 工具行内联摘要（todo_write 调用卡头行） */
+  .todo-inline { color: var(--text-dim); font-size: 12px; }
+
   /* ===== §样式层 · 输入区 ===== */
   .composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
   #input {

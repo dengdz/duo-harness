@@ -50,6 +50,65 @@ const api = {
   }
 };
 
+// ----- §1.5 todoPanel：输入框上方常驻折叠面板（ADR-0018）-----
+// 数据源是 todo/write 事件（与后端 Session.todoProjection 同语义）：整表替换渲染；
+// 新 user/message 清空（上一轮清单使命结束）、终版回复后保留（读完答案还能看到）。
+// 空清单不渲染（hidden）；回放经 dispatch 单源分发自然重建终态。
+const todoPanel = (() => {
+  const el = $('#todoPanel');
+
+  function parse(todosJson) {
+    try {
+      const todos = JSON.parse(todosJson || '[]');
+      return Array.isArray(todos) ? todos : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function summaryText(todos) {
+    const done = todos.filter(t => t.status === 'completed').length;
+    const active = todos.filter(t => t.status === 'in_progress').map(t => t.content);
+    return done + '/' + todos.length + ' 已完成'
+        + (active.length ? ' · ' + active.join('；') : '');
+  }
+
+  function update(todosJson) {
+    const todos = parse(todosJson);
+    if (todos.length === 0) {
+      clear();
+      return;
+    }
+    const details = document.createElement('details');
+    details.className = 'todo-fold';
+    const summary = document.createElement('summary');
+    summary.textContent = '任务清单 · ' + summaryText(todos);
+    const list = document.createElement('ul');
+    list.className = 'todo-list';
+    for (const item of todos) {
+      const li = document.createElement('li');
+      li.dataset.status = item.status || 'pending';
+      const mark = document.createElement('span');
+      mark.className = 'todo-mark';
+      const label = document.createElement('span');
+      label.textContent = item.content || '';
+      li.append(mark, label);
+      list.appendChild(li);
+    }
+    details.append(summary, list);
+    el.innerHTML = '';
+    el.appendChild(details);
+    el.hidden = false;
+  }
+
+  function clear() {
+    el.hidden = true;
+    el.innerHTML = '';
+  }
+
+  return { update, clear, summaryText };
+})();
+
 // ----- §2 render：事件 → 卡片（9 种形态，对齐 prototype.html） -----
 const render = (() => {
   const hero = $('#hero');
@@ -191,8 +250,39 @@ const render = (() => {
     return card;
   }
 
-  function toolResult(event) {
-    // ask_user 的结果即回答文本：冻结其提问卡，不再渲染普通工具卡
+  /** todo_write 工具行摘要卡（ADR-0018）：头行给 done/total 与活动任务，结果回填走通用路径。 */
+  function todoCard(event) {
+    showMessages();
+    let todos = [];
+    try {
+      const parsed = JSON.parse(event.text || '[]');
+      if (Array.isArray(parsed)) todos = parsed;
+    } catch (e) { /* 参数非法按空清单渲染，徽标由结果路径定夺 */ }
+    const card = document.createElement('div');
+    card.className = 'card';
+    const head = document.createElement('div');
+    head.className = 'tool';
+    const name = document.createElement('b');
+    name.textContent = '任务清单';
+    const inline = document.createElement('span');
+    inline.className = 'todo-inline';
+    inline.textContent = todos.length ? todoPanel.summaryText(todos) : '';
+    const badge = document.createElement('span');
+    badge.className = 'badge badge-run';
+    badge.textContent = '⟳ 运行中';
+    head.append('🧹 ', name, ' ', inline, ' ', badge);
+    card.appendChild(head);
+    if (event.toolCallId) {
+      t.toolCards.set(event.toolCallId, card);
+    }
+    t.lastOpenToolCard = card;
+    t.lastOpenToolName = 'todo_write';
+    t.container.appendChild(card);
+    scroll();
+    return card;
+  }
+
+  function toolResult(event) {    // ask_user 的结果即回答文本：冻结其提问卡，不再渲染普通工具卡
     if (event.toolName === 'ask_user') {
       resolveByToolName('ask_user', '✓ 已回答：' + (event.text || '').trim(), true);
       return;
@@ -451,14 +541,19 @@ const render = (() => {
    * 收口整段覆盖——进行中轮次刷新不空窗，且不复发 0913-04 碎片化（防碎片化不以丢弃为手段）。
    */
   function dispatch(ev) {
-    if (ev.type === 'user/message') user(ev.text);
+    if (ev.type === 'user/message') {
+      user(ev.text);
+      todoPanel.clear(); // 新轮开始：上一轮清单使命结束（与 todoProjection 清空语义一致）
+    }
     else if (ev.type === 'assistant/chunk') chunk(ev.text);
     else if (ev.type === 'assistant/message') finishAssistant(ev.text);
     else if (ev.type === 'tool/call') {
       if (ev.toolName === 'ask_user') questionCard(ev);
       else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev);
+      else if (ev.toolName === 'todo_write') todoCard(ev);
       else toolCall(ev);
     } else if (ev.type === 'tool/result') toolResult(ev);
+    else if (ev.type === 'todo/write') todoPanel.update(ev.text);
     else if (ev.type === 'approval/requested') {
       // 计划复核双留痕去重（BUG-20260917-04 后续）：同会话内 tool/call 已渲染计划卡时，
       // 审计事件不再重复渲染；跨会话场景（CLI 发起、Web 作答）本会话无 tool/call，照常渲染
