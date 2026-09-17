@@ -228,4 +228,25 @@ class PresenterAssemblyTest {
                 () -> PresenterAssembly.parseMaxParallelToolCalls(config("{\"maxParallelToolCalls\":0}")),
                 "非正点名拒绝");
     }
+
+    @Test
+    void pipelineTimeoutMsDefaultsTo120sAndBindsStrictly() throws IOException {
+        // ADR-0018：管线缺省超时可配——缺省 120s；严格绑定
+        assertEquals(120_000L, PresenterAssembly.parsePipelineTimeoutMs(null), "config 缺失取缺省");
+        assertEquals(120_000L, PresenterAssembly.parsePipelineTimeoutMs(config("{\"port\":8080}")),
+                "字段缺席取缺省（不配置兜底照常生效）");
+        assertEquals(30_000L, PresenterAssembly.parsePipelineTimeoutMs(config("{\"pipelineTimeoutMs\":30000}")),
+                "显式值生效");
+
+        PluginException fractional = assertThrows(PluginException.class,
+                () -> PresenterAssembly.parsePipelineTimeoutMs(config("{\"pipelineTimeoutMs\":1.5}")),
+                "小数点名拒绝");
+        assertTrue(fractional.getMessage().contains("pipelineTimeoutMs"), "异常点名字段");
+        assertThrows(PluginException.class,
+                () -> PresenterAssembly.parsePipelineTimeoutMs(config("{\"pipelineTimeoutMs\":\"120000\"}")),
+                "字符串点名拒绝");
+        assertThrows(PluginException.class,
+                () -> PresenterAssembly.parsePipelineTimeoutMs(config("{\"pipelineTimeoutMs\":0}")),
+                "非正点名拒绝");
+    }
 }

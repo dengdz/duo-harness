@@ -55,6 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <pre>{@code config:
  *   maxIterations: 30 # 单轮对话迭代上限（省略默认 10；计划模式等探索型任务建议调高）
  *   maxParallelToolCalls: 10 # 单轮并发安全工具并行上限（省略默认 10；=1 即完全串行，排障用）
+ *   pipelineTimeoutMs: 120000 # 工具执行管线缺省超时毫秒（省略默认 120s）
  *   governance: {}    # 上下文治理阈值段（省略即缺省常量）}</pre></p>
  */
 public final class CliPlugin implements Plugin<JsonNode> {
@@ -133,6 +134,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         int maxIterations = PresenterAssembly.parseMaxIterations(config);
         // 并发度（ADR-0018）：config.maxParallelToolCalls 可省，缺省 10；=1 即完全串行
         int maxParallelToolCalls = PresenterAssembly.parseMaxParallelToolCalls(config);
+        // 管线缺省超时（ADR-0018）：config.pipelineTimeoutMs 可省，缺省 120s——挂工具执行段兜底
+        PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         // 会话标题生成（精简版，工单 M13-06）：首条消息后异步一次，/new 换绑的新会话同源触发
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
@@ -145,6 +148,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
             plan.active = false;
             disposeGuidance(plan);
         });
+        // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
+        PresenterAssembly.registerTodoWriteTool(ctx, tools, holder::current);
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, llm, governanceTuning, holder::current);

@@ -14,6 +14,7 @@ import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.AskUserTool;
 import dev.duo.harness.tools.InteractionService;
+import dev.duo.harness.tools.PipelineTimeout;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolsService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -208,6 +209,36 @@ public final class PresenterAssembly {
     }
 
     /**
+     * 解析呈现位 config 的可选管线超时（{@code config.pipelineTimeoutMs}，ADR-0018）：
+     * 缺席或 null 返回缺省（{@link PipelineTimeout#DEFAULT_TIMEOUT_MS} = 120s）；
+     * 在场必须是正整数。非整数 / 非正一律异常点名（与 {@link #parseMaxIterations} 同规）。
+     *
+     * @throws PluginException 值非正整数
+     */
+    public static long parsePipelineTimeoutMs(JsonNode config) {
+        if (config == null || !config.hasNonNull("pipelineTimeoutMs")) {
+            return PipelineTimeout.DEFAULT_TIMEOUT_MS;
+        }
+        JsonNode value = config.get("pipelineTimeoutMs");
+        if (!value.isIntegralNumber() || !value.canConvertToLong()) {
+            throw new PluginException("pipelineTimeoutMs 必须是整数: " + value);
+        }
+        long parsed = value.asLong();
+        if (parsed <= 0) {
+            throw new PluginException("pipelineTimeoutMs 必须为正: " + parsed);
+        }
+        return parsed;
+    }
+
+    /**
+     * 挂载管线缺省超时（ADR-0018）：tools/execute 段超时监听器随呈现位装配挂上——
+     * 挂载点在装配方 Context（插件作用域），本方法是呈现位共享装配的单点封装。
+     */
+    public static void mountPipelineTimeout(Context ctx, ToolsService tools, long defaultTimeoutMs) {
+        PipelineTimeout.mount(ctx, tools, defaultTimeoutMs);
+    }
+
+    /**
      * HITL 交互工具注册（查重先到先得）：ask_user 与计划呈交随呈现位装配注册——
      * 任意单呈现位部署下 HITL 完整；多呈现位共存（如 cli + web 双开）时先到方胜出，
      * 不触发内核重复注册拒绝。计划退出的状态清理回调由呈现位给出（Web 无计划指导
@@ -220,6 +251,16 @@ public final class PresenterAssembly {
         registerIfAbsent(tools, ctx, "ask_user", () -> new AskUserTool(answers));
         registerIfAbsent(tools, ctx, "exit_plan_mode",
                 () -> new ExitPlanModeTool(answers, currentSession, onPlanExited));
+    }
+
+    /**
+     * todo_write 注册（ADR-0018，查重先到先得）：任务分解抓手随呈现位装配注册，
+     * 会话供给与交互工具同模式（换绑后留新会话）。
+     */
+    public static void registerTodoWriteTool(Context ctx, ToolsService tools,
+                                             Supplier<Session> currentSession) {
+        registerIfAbsent(tools, ctx, dev.duo.harness.agent.todo.TodoWriteTool.NAME,
+                () -> new dev.duo.harness.agent.todo.TodoWriteTool(currentSession));
     }
 
     /** 同名已注册则跳过——多呈现位共存时先到方胜出。 */

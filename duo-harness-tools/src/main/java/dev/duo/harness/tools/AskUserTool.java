@@ -40,6 +40,12 @@ public final class AskUserTool implements ToolDefinition {
                 + "给出具体明确的问题，可用 options 提供预设选项（用户也可自由输入）。调用会阻塞直到用户回答。";
     }
 
+    /** 等人类回答不限时（ADR-0018）：人慢是常态不是故障，超时杀提问是误伤。 */
+    @Override
+    public boolean exemptFromPipelineTimeout(JsonNode args) {
+        return true;
+    }
+
     @Override
     public JsonNode parameters() {
         try {

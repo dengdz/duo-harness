@@ -51,6 +51,13 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     public static final String TITLE = "session/title";
 
     /**
+     * todo 清单写入（M17；text = todos 数组 JSON——每项 content + status，会话层透明往返）。
+     * 投影 latest-wins 经 {@code Session.todoProjection()} 读取（新 user/message 清空、终版回复后保留），
+     * 不进对话消息——清单是呈现状态不是对话内容（ADR-0018）。
+     */
+    public static final String TODO_WRITE = "todo/write";
+
+    /**
      * 子代理已派生（M15；text = 载荷 JSON——任务描述、模式、fork 源引用，
      * toolCallId = 子 agent id，toolName = 模板名。投影跳过——呈现卡片专用）。
      */
@@ -154,6 +161,11 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：会话标题（生成器一次写入；重写即投影 latest-wins 自然覆盖）。 */
     public static SessionEvent title(String text) {
         return new SessionEvent(TITLE, System.currentTimeMillis(), text);
+    }
+
+    /** 便捷工厂：todo 清单写入（整表替换语义；todosJson 为规范化后的清单数组 JSON）。 */
+    public static SessionEvent todoWrite(String todosJson) {
+        return new SessionEvent(TODO_WRITE, System.currentTimeMillis(), todosJson);
     }
 
     /**
