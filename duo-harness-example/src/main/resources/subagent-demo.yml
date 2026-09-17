@@ -42,15 +42,17 @@ plugins:
     config:
       templates:
         - name: researcher
-          # 调研型：收集类工具 + write + bash（bash 需审批——M16 起子代理审批钉死，
-          # 子代理调用 bash 会收到确定性拒绝并回退父代理；钉死演示用）
+          # 调研型：收集类工具为主。M16 起子代理审批钉死：凡声明需审批的工具
+          # （bash / write / edit）子代理调用一律确定性拒绝、理由回传——产出以
+          # 文本回传父代理落盘，不由子代理直接写文件。bash/write 留在清单里
+          # 是钉死演示（子代理会收到拒绝并在结论中说明）
           tools: [echo, read, glob, grep, write, bash]
           # 专属提示只写"角色与领域约束"——通用纪律（无记忆、不深挖范围外、结果被截断
           # 改精确查询、结论即交付）由框架基线 SubagentBaseline 统一承载，不必每个模板重写
-          prompt: "你是调研助手：只做信息收集与核实，结论须有文件路径等证据支撑；write 仅用于写你自己的产出文件，不改动仓库既有文件。"
+          prompt: "你是调研助手：只做信息收集与核实，结论须有文件路径等证据支撑；产出以文本形式随结论回传，由父代理落盘。"
           maxIterations: 40                        # 多步收集型子任务轮次需求高（缺省 30）
         - name: worker
-          tools: [echo, read, write]               # 执行型：可写（写操作仍受父侧审批管辖）
+          tools: [echo, read]                      # 执行型：只读收集（write 被审批钉死，产出回传父代理落盘）
 
   # 技能发现：CliPlugin 声明依赖它（软件包内有 .agents/skills 时可用 /技能名 直调）
   - id: skills

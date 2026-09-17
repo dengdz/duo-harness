@@ -1,5 +1,11 @@
 package dev.duo.harness.agent.subagent;
 
+import dev.duo.harness.agent.subagent.tools.ForkTool;
+import dev.duo.harness.agent.subagent.tools.InterruptAgentTool;
+import dev.duo.harness.agent.subagent.tools.ListAgentsTool;
+import dev.duo.harness.agent.subagent.tools.SendMessageTool;
+import dev.duo.harness.agent.subagent.tools.SpawnTool;
+
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -33,11 +39,8 @@ public record SubagentTemplate(String name, List<String> tools, String prompt, I
     public static final Set<String> FORBIDDEN_TOOLS = Set.of(
             dev.duo.harness.tools.AskUserTool.NAME,
             dev.duo.harness.agent.plan.ExitPlanModeTool.NAME,
-            dev.duo.harness.agent.subagent.tools.SpawnTool.NAME,
-            dev.duo.harness.agent.subagent.tools.ForkTool.NAME,
-            dev.duo.harness.agent.subagent.tools.SendMessageTool.NAME,
-            dev.duo.harness.agent.subagent.tools.InterruptAgentTool.NAME,
-            dev.duo.harness.agent.subagent.tools.ListAgentsTool.NAME);
+            SpawnTool.NAME, ForkTool.NAME,
+            SendMessageTool.NAME, InterruptAgentTool.NAME, ListAgentsTool.NAME);
 
     /** 构造时校验非空与防御性拷贝——错误前移到构造点。 */
     public SubagentTemplate {
@@ -77,3 +80,4 @@ public record SubagentTemplate(String name, List<String> tools, String prompt, I
         return List.copyOf(allowed);
     }
 }
+
