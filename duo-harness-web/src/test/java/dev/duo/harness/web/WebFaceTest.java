@@ -49,7 +49,8 @@ class WebFaceTest {
         System.out.println("\n=== 套件：WebFaceTest —— Web 面：静态资源（拆分件/vendor 库/白名单 404）、"
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
                 + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
-                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限、子任务回放端点（33 用例，含标题字段） ===");
+                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限、"
+                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）（36 用例） ===");
     }
 
     interface ToolsView {
@@ -548,6 +549,89 @@ class WebFaceTest {
                     "新连接回放应含 approval/requested（审批卡数据源）: "
                             + replay.get().substring(0, Math.min(300, replay.get().length())));
         }
+    }
+
+    /** HITL 语义用例装配：在虚拟线程发起一条提问（ask_user 形态），阻塞等待作答。 */
+    private Thread askQuestion(WebAnswerer webAnswerer,
+                               AtomicReference<dev.duo.harness.tools.InteractionAnswer> got,
+                               CountDownLatch done) throws InterruptedException {
+        dev.duo.harness.tools.InteractionService answers = faceCtx.as(AnswersView.class).answers();
+        Thread thread = Thread.ofVirtual().start(() -> {
+            got.set(answers.ask(dev.duo.harness.tools.InteractionRequest.question(
+                    "文件存哪？", List.of("A", "B"), false)));
+            done.countDown();
+        });
+        while (webAnswerer.currentPending() == null) {
+            Thread.sleep(20);
+        }
+        return thread;
+    }
+
+    @Test
+    void answerEndpointDecisionCompletesApproval() throws Exception {
+        // 结构化协议（M16 工单 07）：审批卡 {decision: approve|reject} → InteractionAnswer.approved
+        Session session = Session.create(tempDir.resolve("sessions"));
+        WebAnswerer webAnswerer = new WebAnswerer(60_000);
+        start(session, scriptedAgent(session, "ok"), null, webAnswerer);
+
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> approveGot = new AtomicReference<>();
+        CountDownLatch approveDone = new CountDownLatch(1);
+        askApproval(webAnswerer, approveGot, approveDone);
+        HttpResponse<String> approve = post("/api/answer", "{\"decision\":\"approve\"}");
+        assertEquals(200, approve.statusCode());
+        assertEquals("{\"completed\":true}", approve.body());
+        assertTrue(approveDone.await(2, TimeUnit.SECONDS));
+        assertTrue(approveGot.get().approved(), "approve → approved=true");
+
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> rejectGot = new AtomicReference<>();
+        CountDownLatch rejectDone = new CountDownLatch(1);
+        askApproval(webAnswerer, rejectGot, rejectDone);
+        assertEquals(200, post("/api/answer", "{\"decision\":\"reject\"}").statusCode());
+        assertTrue(rejectDone.await(2, TimeUnit.SECONDS));
+        assertFalse(rejectGot.get().approved(), "reject → approved=false");
+        assertEquals(List.of(), rejectGot.get().values(), "审批形态不带 answers");
+    }
+
+    @Test
+    void answerEndpointRefusalTextIsPlainAnswer() throws Exception {
+        // 回归（质量审查 M5 / M16 工单 07）：自由文本"拒绝"是普通回答——旧协议按魔法串
+        // 判定会把提问答成审批拒绝；结构化协议下提问形态 approved 恒 true、文本原样传递
+        Session session = Session.create(tempDir.resolve("sessions"));
+        WebAnswerer webAnswerer = new WebAnswerer(60_000);
+        start(session, scriptedAgent(session, "ok"), null, webAnswerer);
+
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> got = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        askQuestion(webAnswerer, got, done);
+
+        HttpResponse<String> response = post("/api/answer", "{\"answers\":[\"拒绝\"]}");
+        assertEquals(200, response.statusCode());
+        assertEquals("{\"completed\":true}", response.body());
+        assertTrue(done.await(2, TimeUnit.SECONDS));
+        assertTrue(got.get().approved(), "提问的\"拒绝\"文本 → approved=true（不误判为审批拒绝）");
+        assertEquals(List.of("拒绝"), got.get().values(), "文本原样传递");
+    }
+
+    @Test
+    void answerEndpointRejectsMalformedAndLegacyBodies() throws Exception {
+        // 无兼容层（工单 07 裁定直接切）：旧协议体、非法 decision 值、空 answers、无字段
+        // 一律 400，且不完成悬空请求（判定只看结构化字段，不做字符串嗅探）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        WebAnswerer webAnswerer = new WebAnswerer(60_000);
+        start(session, scriptedAgent(session, "ok"), null, webAnswerer);
+
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> got = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        askApproval(webAnswerer, got, done);
+
+        for (String body : List.of("{\"approved\":true}", "{\"decision\":\"maybe\"}",
+                "{\"answers\":[]}", "{}")) {
+            assertEquals(400, post("/api/answer", body).statusCode(), "非法体应 400: " + body);
+        }
+        assertTrue(webAnswerer.currentPending() != null, "非法作答不完成悬空请求");
+        assertTrue(webAnswerer.complete(true, List.of()), "悬空请求仍可正常作答");
+        assertTrue(done.await(2, TimeUnit.SECONDS));
+        assertTrue(got.get().approved());
     }
 
     /**

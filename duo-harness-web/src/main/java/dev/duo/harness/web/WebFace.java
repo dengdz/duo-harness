@@ -284,338 +284,390 @@ public final class WebFace {
         }
     }
 
+    /** 端点处理器：与 HttpHandler 同形，经 {@link #route} 挂上路由表。 */
+    @FunctionalInterface
+    private interface Endpoint {
+
+        void handle(HttpExchange exchange) throws IOException;
+    }
+
+    /**
+     * 端点路由表（M16 工单 07）：本方法只管"路径 → 处理器"的声明，
+     * 每个端点的行为在各自的 handleXxx 方法内；响应写入统一走 respond 系列。
+     */
     private void registerEndpoints() {
-        // 静态单页
-        server.createContext("/", exchange -> {
-            byte[] page = readClasspage();
-            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
-            exchange.sendResponseHeaders(200, page.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(page);
-            }
-        });
-        // 静态资源（样式/脚本/vendor 库同路）：/web/ 前缀 + 单段已知后缀文件名白名单——
-        // 多段路径、.. 与未知后缀一律 404，资源缺失也 404（不落回单页，坏引用不伪装成功）
-        server.createContext("/web/", exchange -> {
-            String name = exchange.getRequestURI().getPath().substring("/web/".length());
-            String type = name.isEmpty() || name.contains("/") || name.contains("..")
-                    ? null : STATIC_TYPES.get(suffixOf(name));
-            byte[] body = type == null ? null : readClassResource("/web/" + name);
-            if (body == null) {
-                exchange.sendResponseHeaders(404, -1);
-                return;
-            }
-            exchange.getResponseHeaders().set("Content-Type", type + "; charset=utf-8");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(body);
-            }
-        });
-        // 状态面 JSON
-        server.createContext("/api/status", exchange -> {
-            byte[] body = statusJson().getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(body);
-            }
-        });
-        // 对话入口：立即 202，虚拟线程异步执行 agent.send；
-        // user/message、tool/call、tool/result、assistant/message 由 agent 侧追加（经会话监听器广播），
-        // assistant/chunk 由本端 AgentListener 追加（Web 面只补这一种会话事件）。
-        server.createContext("/api/message", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-            byte[] raw = readBodyLimited(exchange);
-            if (raw == null) {
-                exchange.sendResponseHeaders(413, -1);
-                return;
-            }
-            String body = new String(raw, StandardCharsets.UTF_8);
-            String text;
+        route("/", this::handleIndexPage);
+        route("/web/", this::handleStatic);
+        route("/api/status", this::handleStatus);
+        route("/api/message", this::handleMessage);
+        route("/api/session/new", this::handleSessionNew);
+        route("/api/sessions", this::handleSessions);
+        route("/api/session/switch", this::handleSessionSwitch);
+        route("/api/answer", this::handleAnswer);
+        route("/api/session/page", this::handleSessionPage);
+        route("/api/subagent/events", this::handleSubagentEvents);
+        route("/api/events", this::handleEvents);
+    }
+
+    /** 挂载单个端点（路径前缀匹配语义同 HttpServer.createContext，按注册序匹配）。 */
+    private void route(String path, Endpoint endpoint) {
+        server.createContext(path, endpoint::handle);
+    }
+
+    /** 静态单页（/）。 */
+    private void handleIndexPage(HttpExchange exchange) throws IOException {
+        respondNoCache(exchange, 200, "text/html; charset=utf-8", readClasspage());
+    }
+
+    /**
+     * 静态资源（样式/脚本/vendor 库同路）：/web/ 前缀 + 单段已知后缀文件名白名单——
+     * 多段路径、.. 与未知后缀一律 404，资源缺失也 404（不落回单页，坏引用不伪装成功）。
+     */
+    private void handleStatic(HttpExchange exchange) throws IOException {
+        String name = exchange.getRequestURI().getPath().substring("/web/".length());
+        String type = name.isEmpty() || name.contains("/") || name.contains("..")
+                ? null : STATIC_TYPES.get(suffixOf(name));
+        byte[] body = type == null ? null : readClassResource("/web/" + name);
+        if (body == null) {
+            respondEmpty(exchange, 404);
+            return;
+        }
+        respondNoCache(exchange, 200, type + "; charset=utf-8", body);
+    }
+
+    /** 状态面 JSON。 */
+    private void handleStatus(HttpExchange exchange) throws IOException {
+        respondJson(exchange, 200, statusJson());
+    }
+    /**
+     * 对话入口：立即 202，虚拟线程异步执行 agent.send；
+     * user/message、tool/call、tool/result、assistant/message 由 agent 侧追加（经会话监听器广播），
+     * assistant/chunk 由本端 AgentListener 追加（Web 面只补这一种会话事件）。
+     */
+    private void handleMessage(HttpExchange exchange) throws IOException {
+        if (!requirePost(exchange)) {
+            return;
+        }
+        byte[] raw = readBodyLimited(exchange);
+        if (raw == null) {
+            respondEmpty(exchange, 413);
+            return;
+        }
+        String text;
+        try {
+            JsonNode node = JSON.readTree(new String(raw, StandardCharsets.UTF_8));
+            text = node.path("text").asText("");
+        } catch (Exception e) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        if (text.isBlank()) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        ChatAgent current = agent;
+        if (current == null) {
+            respondText(exchange, 503, "对话面未就绪（agent 未装配）");
+            return;
+        }
+        if (!busy.compareAndSet(false, true)) {
+            respondText(exchange, 409, "已有对话在执行中（单入口串行）");
+            return;
+        }
+        exchange.sendResponseHeaders(202, -1);
+        Thread.ofVirtual().start(() -> {
             try {
-                JsonNode node = JSON.readTree(body);
-                text = node.path("text").asText("");
-            } catch (Exception e) {
-                exchange.sendResponseHeaders(400, -1);
-                return;
-            }
-            if (text.isBlank()) {
-                exchange.sendResponseHeaders(400, -1);
-                return;
-            }
-            ChatAgent current = agent;
-            if (current == null) {
-                byte[] msg = "对话面未就绪（agent 未装配）".getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-                exchange.sendResponseHeaders(503, msg.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
-                return;
-            }
-            if (!busy.compareAndSet(false, true)) {
-                byte[] msg = "已有对话在执行中（单入口串行）".getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-                exchange.sendResponseHeaders(409, msg.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
-                return;
-            }
-            exchange.sendResponseHeaders(202, -1);
-            Thread.ofVirtual().start(() -> {
-                try {
-                    current.send(text, new dev.duo.harness.agent.AgentListener() {
-                        @Override
-                        public void onChunk(String chunk) {
-                            session.append(SessionEvent.assistantChunk(chunk));
-                        }
-                    });
-                } catch (Exception e) {
-                    // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
-                    // 帧内只给通用文案——异常细节服务端日志留痕，不外推（M10-02 脱敏口径）
-                    log.warn("消息处理失败", e);
-                    pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
-                } finally {
-                    busy.set(false);
-                }
-            });
-        });
-        // 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）
-        server.createContext("/api/session/new", exchange -> {
-            byte[] discarded = readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
-            if (discarded == null) {
-                exchange.sendResponseHeaders(413, -1);
-                return;
-            }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-            try {
-                newSession();
-            } catch (Exception e) {
-                // 异常细节仅服务端日志留痕——错误响应不回显内部消息（M10-02 脱敏）
-                log.warn("新会话创建失败", e);
-                byte[] msg = "新会话创建失败".getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-                exchange.sendResponseHeaders(500, msg.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
-                return;
-            }
-            byte[] body = ("{\"id\":\"" + session.id() + "\"}").getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
-        });
-        // 会话列表（侧栏）：修改时间倒序
-        server.createContext("/api/sessions", exchange -> {
-            byte[] body = sessionsJson().getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) { out.write(body); }
-        });
-        // 切换会话：{id} → 加载该会话并换绑（SSE 推送新会话存量回放）；
-        // 会话变更回调重建 agent——不重建即分脑（agent 写旧会话、页面看新会话）。
-        // id 按生成形态白名单校验：路径分隔符/穿越串一律 400，不进路径解析
-        server.createContext("/api/session/switch", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-            byte[] raw = readBodyLimited(exchange);
-            if (raw == null) {
-                exchange.sendResponseHeaders(413, -1);
-                return;
-            }
-            try {
-                String id = JSON.readTree(new String(raw, StandardCharsets.UTF_8)).path("id").asText("");
-                if (id.isBlank() || !SESSION_ID.matcher(id).matches()) {
-                    exchange.sendResponseHeaders(400, -1);
-                    return;
-                }
-                if (id.equals(session.id())) {
-                    // 切到当前会话：幂等成功——重新 load 自己必撞独占锁（OverlappingFileLockException），
-                    // 而语义上本就无需动作（侧栏点当前项、重复提交切换请求都不该失败）
-                    byte[] ok = "{\"switched\":true}".getBytes(StandardCharsets.UTF_8);
-                    exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-                    exchange.sendResponseHeaders(200, ok.length);
-                    try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
-                    return;
-                }
-                Session loaded = Session.load(sessionsDir.resolve(id + ".jsonl"));
-                bindSession(loaded);
-                sessionChangedCallback.accept(loaded);
-                byte[] ok = "{\"switched\":true}".getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-                exchange.sendResponseHeaders(200, ok.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
-            } catch (dev.duo.harness.session.SessionLockedException e) {
-                // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
-                log.info("会话切换被拒（占用冲突）: {}", e.getMessage());
-                byte[] msg = e.brief().getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-                exchange.sendResponseHeaders(409, msg.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
-            } catch (Exception e) {
-                // 异常细节（含文件系统路径）仅服务端日志留痕，不回显给响应体（M10-02 脱敏）
-                log.warn("会话切换失败", e);
-                byte[] msg = "切换失败：会话不存在或不可读".getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-                exchange.sendResponseHeaders(404, msg.length);
-                try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
-            }
-        });
-        // HITL 回答端点：{approved: bool} 或 {values: ["..."]} → 完成 WebAnswerer 悬空请求
-        server.createContext("/api/answer", exchange -> {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-            if (webAnswerer == null) {
-                exchange.sendResponseHeaders(503, -1);
-                return;
-            }
-            byte[] raw = readBodyLimited(exchange);
-            if (raw == null) {
-                exchange.sendResponseHeaders(413, -1);
-                return;
-            }
-            String body = new String(raw, StandardCharsets.UTF_8);
-            boolean completed;
-            try {
-                JsonNode node = JSON.readTree(body);
-                // 审批：{approved: true/false}；提问/计划：{values: ["..."]}；混合兼容
-                if (node.has("values") && node.get("values").isArray()) {
-                    List<String> values = new java.util.ArrayList<>();
-                    node.get("values").forEach(n -> values.add(n.asText()));
-                    completed = webAnswerer.complete(!values.isEmpty() && !"拒绝".equals(values.get(0)), values);
-                } else {
-                    boolean approved = node.path("approved").asBoolean(false);
-                    completed = webAnswerer.complete(approved, List.of());
-                }
-            } catch (Exception e) {
-                exchange.sendResponseHeaders(400, -1);
-                return;
-            }
-            byte[] resp = ("{\"completed\":" + completed + "}").getBytes(StandardCharsets.UTF_8);
-            log.debug("/api/answer completed={}", completed);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, resp.length);
-            try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
-        });
-        // 历史分页（ADR-0013）：before（事件序号）之前的尾页事件——响应携 startEvent（窗口首事件
-        // 下标，前端更新加载锚点）、events、hasMore、earlierCount；服务端每次全量投影定消息边界
-        server.createContext("/api/session/page", exchange -> {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-            int before;
-            try {
-                before = Integer.parseInt(queryParam(exchange, "before"));
-            } catch (NumberFormatException e) {
-                exchange.sendResponseHeaders(400, -1);
-                return;
-            }
-            Session bound = session;
-            List<SessionEvent> events = bound.events();
-            if (before < 0 || before > events.size()) {
-                exchange.sendResponseHeaders(400, -1);
-                return;
-            }
-            Session.TailWindow window = bound.windowBefore(before, TAIL_WINDOW_MESSAGES); // 首屏/每页同值（ADR-0013）
-            var root = JSON.createObjectNode()
-                    .put("startEvent", window.startEvent())
-                    .put("hasMore", window.earlierMessages() > 0)
-                    .put("earlierCount", window.earlierMessages());
-            var arr = root.putArray("events");
-            for (int i = window.startEvent(); i < before; i++) {
-                arr.add(JSON.valueToTree(events.get(i)));
-            }
-            byte[] body = root.toString().getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(body);
-            }
-        });
-        // 子任务回放（M15 工单 05，ADR-0015 决策 3）：子会话事件只读回放——静态逐行读
-        // **不持锁**（活跃子会话读到部分文件即所见，不与子代理写者争锁）；id 白名单
-        // 防路径穿越（与侧栏切换同一 SESSION_ID 形态）；坏行跳过（回放是锦上添花，
-        // 不因单行损坏失败）
-        server.createContext("/api/subagent/events", exchange -> {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-            String id = queryParam(exchange, "id");
-            if (id == null || !SESSION_ID.matcher(id).matches()) {
-                exchange.sendResponseHeaders(400, -1);
-                return;
-            }
-            Path jsonl = sessionsDir.resolve(dev.duo.harness.agent.subagent.SubagentManager.SUBDIRECTORY)
-                    .resolve(id + ".jsonl");
-            var root = JSON.createObjectNode();
-            var arr = root.putArray("events");
-            root.put("found", Files.isRegularFile(jsonl));
-            if (Files.isRegularFile(jsonl)) {
-                try {
-                    for (String line : Files.readAllLines(jsonl)) {
-                        if (line.isBlank()) {
-                            continue;
-                        }
-                        try {
-                            arr.add(JSON.readTree(line));
-                        } catch (Exception ignored) {
-                            // 单行损坏跳过（探测语义宽松）
-                        }
+                current.send(text, new dev.duo.harness.agent.AgentListener() {
+                    @Override
+                    public void onChunk(String chunk) {
+                        session.append(SessionEvent.assistantChunk(chunk));
                     }
-                } catch (IOException e) {
-                    exchange.sendResponseHeaders(500, -1);
+                });
+            } catch (Exception e) {
+                // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
+                // 帧内只给通用文案——异常细节服务端日志留痕，不外推（M10-02 脱敏口径）
+                log.warn("消息处理失败", e);
+                pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
+            } finally {
+                busy.set(false);
+            }
+        });
+    }
+    /** 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）。 */
+    private void handleSessionNew(HttpExchange exchange) throws IOException {
+        byte[] discarded = readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
+        if (discarded == null) {
+            respondEmpty(exchange, 413);
+            return;
+        }
+        if (!requirePost(exchange)) {
+            return;
+        }
+        try {
+            newSession();
+        } catch (Exception e) {
+            // 异常细节仅服务端日志留痕——错误响应不回显内部消息（M10-02 脱敏）
+            log.warn("新会话创建失败", e);
+            respondText(exchange, 500, "新会话创建失败");
+            return;
+        }
+        respondJson(exchange, 200, "{\"id\":\"" + session.id() + "\"}");
+    }
+
+    /** 会话列表（侧栏）：修改时间倒序。 */
+    private void handleSessions(HttpExchange exchange) throws IOException {
+        respondJson(exchange, 200, sessionsJson());
+    }
+
+    /**
+     * 切换会话：{id} → 加载该会话并换绑（SSE 推送新会话存量回放）；
+     * 会话变更回调重建 agent——不重建即分脑（agent 写旧会话、页面看新会话）。
+     * id 按生成形态白名单校验：路径分隔符/穿越串一律 400，不进路径解析。
+     */
+    private void handleSessionSwitch(HttpExchange exchange) throws IOException {
+        if (!requirePost(exchange)) {
+            return;
+        }
+        byte[] raw = readBodyLimited(exchange);
+        if (raw == null) {
+            respondEmpty(exchange, 413);
+            return;
+        }
+        try {
+            String id = JSON.readTree(new String(raw, StandardCharsets.UTF_8)).path("id").asText("");
+            if (id.isBlank() || !SESSION_ID.matcher(id).matches()) {
+                respondEmpty(exchange, 400);
+                return;
+            }
+            if (id.equals(session.id())) {
+                // 切到当前会话：幂等成功——重新 load 自己必撞独占锁（OverlappingFileLockException），
+                // 而语义上本就无需动作（侧栏点当前项、重复提交切换请求都不该失败）
+                respondJson(exchange, 200, "{\"switched\":true}");
+                return;
+            }
+            Session loaded = Session.load(sessionsDir.resolve(id + ".jsonl"));
+            bindSession(loaded);
+            sessionChangedCallback.accept(loaded);
+            respondJson(exchange, 200, "{\"switched\":true}");
+        } catch (dev.duo.harness.session.SessionLockedException e) {
+            // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
+            log.info("会话切换被拒（占用冲突）: {}", e.getMessage());
+            respondText(exchange, 409, e.brief());
+        } catch (Exception e) {
+            // 异常细节（含文件系统路径）仅服务端日志留痕，不回显给响应体（M10-02 脱敏）
+            log.warn("会话切换失败", e);
+            respondText(exchange, 404, "切换失败：会话不存在或不可读");
+        }
+    }
+
+    /**
+     * HITL 回答端点（M16 工单 07 结构化协议）：审批 {@code {"decision":"approve"|"reject"}}；
+     * 提问与计划 {@code {"answers":["..."]}}——两形态互斥，缺失或取值非法一律 400。
+     * 不做字符串嗅探：自由文本答案里的"拒绝"二字是普通回答，不改变判定语义。
+     */
+    private void handleAnswer(HttpExchange exchange) throws IOException {
+        if (!requirePost(exchange)) {
+            return;
+        }
+        if (webAnswerer == null) {
+            respondEmpty(exchange, 503);
+            return;
+        }
+        byte[] raw = readBodyLimited(exchange);
+        if (raw == null) {
+            respondEmpty(exchange, 413);
+            return;
+        }
+        boolean completed;
+        try {
+            JsonNode node = JSON.readTree(new String(raw, StandardCharsets.UTF_8));
+            if (node.hasNonNull("decision")) {
+                String decision = node.get("decision").asText("");
+                if (!"approve".equals(decision) && !"reject".equals(decision)) {
+                    respondEmpty(exchange, 400);
                     return;
                 }
+                completed = webAnswerer.complete("approve".equals(decision), List.of());
+            } else if (node.hasNonNull("answers") && node.get("answers").isArray()) {
+                List<String> answers = new java.util.ArrayList<>();
+                node.get("answers").forEach(n -> answers.add(n.asText()));
+                if (answers.isEmpty()) {
+                    respondEmpty(exchange, 400);
+                    return;
+                }
+                completed = webAnswerer.complete(true, answers);
+            } else {
+                respondEmpty(exchange, 400);
+                return;
             }
-            byte[] body = root.toString().getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(body);
-            }
-        });
-        // SSE 会话事件流：连接帧 + 回放（尾部快照/增量）+ 实时广播（断开摘除输出流）。
-        // 首连（无 Last-Event-ID）发尾部窗口快照（ADR-0013）；断线重连带游标只补其后事件（ADR-0010）
-        server.createContext("/api/events", exchange -> {
-            exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
-            exchange.getResponseHeaders().set("Cache-Control", "no-cache");
-            exchange.sendResponseHeaders(200, 0);
-            SseClient client = new SseClient(exchange.getResponseBody());
-            sseOutputs.add(client);
+        } catch (Exception e) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        log.debug("/api/answer completed={}", completed);
+        respondJson(exchange, 200, "{\"completed\":" + completed + "}");
+    }
+    /**
+     * 历史分页（ADR-0013）：before（事件序号）之前的尾页事件——响应携 startEvent（窗口首事件
+     * 下标，前端更新加载锚点）、events、hasMore、earlierCount；服务端每次全量投影定消息边界。
+     */
+    private void handleSessionPage(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            respondEmpty(exchange, 405);
+            return;
+        }
+        int before;
+        try {
+            before = Integer.parseInt(queryParam(exchange, "before"));
+        } catch (NumberFormatException e) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        Session bound = session;
+        List<SessionEvent> events = bound.events();
+        if (before < 0 || before > events.size()) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        Session.TailWindow window = bound.windowBefore(before, TAIL_WINDOW_MESSAGES); // 首屏/每页同值（ADR-0013）
+        var root = JSON.createObjectNode()
+                .put("startEvent", window.startEvent())
+                .put("hasMore", window.earlierMessages() > 0)
+                .put("earlierCount", window.earlierMessages());
+        var arr = root.putArray("events");
+        for (int i = window.startEvent(); i < before; i++) {
+            arr.add(JSON.valueToTree(events.get(i)));
+        }
+        respondJson(exchange, 200, root.toString());
+    }
+
+    /**
+     * 子任务回放（M15 工单 05，ADR-0015 决策 3）：子会话事件只读回放——静态逐行读
+     * **不持锁**（活跃子会话读到部分文件即所见，不与子代理写者争锁）；id 白名单
+     * 防路径穿越（与侧栏切换同一 SESSION_ID 形态）；坏行跳过（回放是锦上添花，
+     * 不因单行损坏失败）。
+     */
+    private void handleSubagentEvents(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            respondEmpty(exchange, 405);
+            return;
+        }
+        String id = queryParam(exchange, "id");
+        if (id == null || !SESSION_ID.matcher(id).matches()) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        Path jsonl = sessionsDir.resolve(dev.duo.harness.agent.subagent.SubagentManager.SUBDIRECTORY)
+                .resolve(id + ".jsonl");
+        var root = JSON.createObjectNode();
+        var arr = root.putArray("events");
+        root.put("found", Files.isRegularFile(jsonl));
+        if (Files.isRegularFile(jsonl)) {
             try {
-                // 连接帧是 SSE 注释（冒号行），不是 data 帧——前端 JSON.parse 不消费它
-                client.send(": connected\n\n");
-                // 回放窗口：replay/start 告知模式与窗口头（前端据此整窗替换或保留存量）→ 事件帧（带
-                // 日志序号 id）→ replay/done 边界帧（前端回放结束钩子：EmptyHero 判定与侧栏刷新）
-                String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
-                Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
-                List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
-                ReplayWindow window = resolveReplayWindow(cursor, events, bound);
-                // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
-                log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
-                var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
-                if (window.tailSnapshot()) {
-                    header.put("hasMore", window.hasMore()).put("earlierCount", window.earlierCount());
+                for (String line : Files.readAllLines(jsonl)) {
+                    if (line.isBlank()) {
+                        continue;
+                    }
+                    try {
+                        arr.add(JSON.readTree(line));
+                    } catch (Exception ignored) {
+                        // 单行损坏跳过（探测语义宽松）
+                    }
                 }
-                client.send(dataFrame(header.toString()));
-                for (int i = window.from(); i < events.size(); i++) {
-                    client.send(dataFrameWithId(i, toJson(events.get(i))));
-                }
-                client.send(dataFrame("{\"type\":\"replay/done\"}"));
-            } catch (Exception e) {
-                // 回放中断（含运行时异常）即摘除断连——客户端经 EventSource 重连重新回放
-                removeClient(client);
-                exchange.close();
+            } catch (IOException e) {
+                respondEmpty(exchange, 500);
+                return;
             }
-        });
+        }
+        respondJson(exchange, 200, root.toString());
+    }
+
+    /**
+     * SSE 会话事件流：连接帧 + 回放（尾部快照/增量）+ 实时广播（断开摘除输出流）。
+     * 首连（无 Last-Event-ID）发尾部窗口快照（ADR-0013）；断线重连带游标只补其后事件（ADR-0010）。
+     */
+    private void handleEvents(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        exchange.sendResponseHeaders(200, 0);
+        SseClient client = new SseClient(exchange.getResponseBody());
+        sseOutputs.add(client);
+        try {
+            // 连接帧是 SSE 注释（冒号行），不是 data 帧——前端 JSON.parse 不消费它
+            client.send(": connected\n\n");
+            // 回放窗口：replay/start 告知模式与窗口头（前端据此整窗替换或保留存量）→ 事件帧（带
+            // 日志序号 id）→ replay/done 边界帧（前端回放结束钩子：EmptyHero 判定与侧栏刷新）
+            String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
+            Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
+            List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
+            ReplayWindow window = resolveReplayWindow(cursor, events, bound);
+            // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
+            log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
+            var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
+            if (window.tailSnapshot()) {
+                header.put("hasMore", window.hasMore()).put("earlierCount", window.earlierCount());
+            }
+            client.send(dataFrame(header.toString()));
+            for (int i = window.from(); i < events.size(); i++) {
+                client.send(dataFrameWithId(i, toJson(events.get(i))));
+            }
+            client.send(dataFrame("{\"type\":\"replay/done\"}"));
+        } catch (Exception e) {
+            // 回放中断（含运行时异常）即摘除断连——客户端经 EventSource 重连重新回放
+            removeClient(client);
+            exchange.close();
+        }
+    }
+
+    /** 统一响应写入：状态 + Content-Type + body（body 为 null = 无体响应）。 */
+    private static void respond(HttpExchange exchange, int status, String contentType, byte[] body)
+            throws IOException {
+        if (contentType != null) {
+            exchange.getResponseHeaders().set("Content-Type", contentType);
+        }
+        if (body == null) {
+            exchange.sendResponseHeaders(status, -1);
+            return;
+        }
+        exchange.sendResponseHeaders(status, body.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+        }
+    }
+
+    /** 无体响应（错误码形态：400/404/405/413/503 等）。 */
+    private static void respondEmpty(HttpExchange exchange, int status) throws IOException {
+        respond(exchange, status, null, null);
+    }
+
+    /** 文本响应（text/plain，错误文案形态）。 */
+    private static void respondText(HttpExchange exchange, int status, String text) throws IOException {
+        respond(exchange, status, "text/plain; charset=utf-8", text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 静态形态响应并禁缓存（`Cache-Control: no-cache`）：单页与脚本随版本频繁演进、
+     * 又无 ETag/Last-Modified 可协商，浏览器启发式缓存会让用户拿到旧脚本（M16 工单 07
+     * 实测：去重补丁上线后旧缓存仍渲染双计划卡）；loopback 本地服务重新拉取成本可忽略。
+     */
+    private static void respondNoCache(HttpExchange exchange, int status, String contentType,
+                                       byte[] body) throws IOException {
+        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        respond(exchange, status, contentType, body);
+    }
+
+    /** JSON 响应（application/json）。 */
+    private static void respondJson(HttpExchange exchange, int status, String json) throws IOException {
+        respond(exchange, status, "application/json; charset=utf-8", json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** POST 校验：非 POST 回 405 并返回 false（写端点的统一入口判据）。 */
+    private static boolean requirePost(HttpExchange exchange) throws IOException {
+        if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            return true;
+        }
+        respondEmpty(exchange, 405);
+        return false;
     }
 
     /** 回放窗口：起点下标 + 模式；尾部快照模式头帧额外携带 hasMore 与更早计数。 */

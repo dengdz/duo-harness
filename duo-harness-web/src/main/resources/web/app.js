@@ -39,11 +39,12 @@ const api = {
       body: JSON.stringify({ text })
     });
   },
-  async answer(approved, values) {
-    const body = values ? { approved, values } : { approved };
+  // 结构化回答协议（M16 工单 07）：审批 {decision}，提问/计划 {answers}——两形态互斥，
+  // 服务端不做字符串嗅探（自由文本里的"拒绝"是普通回答，不是判定语义）
+  async answer(payload) {
     const res = await fetch('/api/answer', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(payload)
     });
     return res.json();
   }
@@ -458,7 +459,13 @@ const render = (() => {
       else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev);
       else toolCall(ev);
     } else if (ev.type === 'tool/result') toolResult(ev);
-    else if (ev.type === 'approval/requested') interactiveCard(ev);
+    else if (ev.type === 'approval/requested') {
+      // 计划复核双留痕去重（BUG-20260917-04 后续）：同会话内 tool/call 已渲染计划卡时，
+      // 审计事件不再重复渲染；跨会话场景（CLI 发起、Web 作答）本会话无 tool/call，照常渲染
+      if (ev.toolName === 'exit_plan_mode' &&
+          t.container.querySelector('.interactive[data-tool-name="exit_plan_mode"]')) return;
+      interactiveCard(ev);
+    }
     else if (ev.type === 'approval/decided') approvalDecided(ev);
     else if (ev.type === 'subagent/spawned') subagentSpawned(ev);
     else if (ev.type === 'subagent/completed') subagentCompleted(ev);
@@ -610,28 +617,28 @@ const app = (() => {
       if (action === 'answer') {
         const approved = btn.dataset.approved === 'true';
         render.resolveCard(card, approved ? '✓ 已批准' : '✗ 已拒绝', approved);
-        await api.answer(approved);
+        await api.answer({ decision: approved ? 'approve' : 'reject' });
       } else if (action === 'answer-value') {
         const value = btn.dataset.value || '';
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        await api.answer(true, [value]);
+        await api.answer({ answers: [value] });
       } else if (action === 'answer-free') {
         const input = $('.free-input input', card);
         const value = input ? input.value.trim() : '';
         if (!value) return;
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        await api.answer(true, [value]);
+        await api.answer({ answers: [value] });
       } else if (action === 'plan-approve') {
-        // ExitPlanModeTool 口径：approved=true 且 values[0] 精确等于批准选项
+        // ExitPlanModeTool 口径：values[0] 精确等于批准选项
         render.resolveCard(card, '✓ 已批准，开始执行', true);
-        await api.answer(true, ['批准，开始执行']);
+        await api.answer({ answers: ['批准，开始执行'] });
       } else if (action === 'plan-reject') {
         const input = $('.free-input input', card);
         const feedback = input ? input.value.trim() : '';
         const verdict = feedback || '继续计划（可直接输入你的修改意见）';
         render.resolveCard(card, feedback ? '✗ 已打回，反馈：' + feedback : '✗ 已打回', false);
-        // 打回也是 approved=true + 反馈文本（approved=false 会落 fail-closed 文案）
-        await api.answer(true, [verdict]);
+        // 打回走 answers 形态（批准选项文本即"继续计划"语义；decision 形态属审批卡专用）
+        await api.answer({ answers: [verdict] });
       } else if (action === 'open-subagent') {
         // 子任务回放入口（M15 工单 05）：完成态子任务卡 → 右侧抽屉只读回放
         await openSubagentReplay(btn.dataset.agentId || '', btn.dataset.task || '');
