@@ -106,6 +106,12 @@ public final class WebFace {
         this.session = session;
         this.webAnswerer = webAnswerer;
         this.sessionsDir = sessionsDir;
+        // 入口栅栏白名单按实际绑定端口生成（端口 0 = 系统分配，测试用）
+        String port = Integer.toString(server.getAddress().getPort());
+        this.allowedHosts = java.util.Set.of(
+                "127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port);
+        this.allowedOrigins = java.util.Set.of(
+                "http://127.0.0.1:" + port, "http://localhost:" + port, "http://[::1]:" + port);
     }
 
     /**
@@ -309,9 +315,45 @@ public final class WebFace {
         route("/api/events", this::handleEvents);
     }
 
-    /** 挂载单个端点（路径前缀匹配语义同 HttpServer.createContext，按注册序匹配）。 */
+    /** 挂载单个端点：统一前置入口栅栏（Host/Origin 校验），通过才交端点处理器。 */
     private void route(String path, Endpoint endpoint) {
-        server.createContext(path, endpoint::handle);
+        server.createContext(path, exchange -> {
+            if (entryGate(exchange)) {
+                endpoint.handle(exchange);
+            }
+        });
+    }
+
+    /** 入口栅栏 Host 白名单（按绑定端口生成）：回环地址 + 本服务端口。 */
+    private final java.util.Set<String> allowedHosts;
+    /** 入口栅栏 Origin 白名单（同源形态：http + 回环地址 + 本服务端口）。 */
+    private final java.util.Set<String> allowedOrigins;
+
+    /**
+     * 入口栅栏（M16 工单 02，术语"入口栅栏"）：两级校验——
+     * ① 全请求 Host 头必须在白名单内（127.0.0.1 / localhost / [::1] 带本服务端口）：
+     *    DNS rebinding 攻击把恶意域名解析到 127.0.0.1，浏览器自动带的 Host 头是
+     *    攻击域名而非回环地址，白名单直接封死；缺失也拒（fail-closed）。
+     * ② 写端点（POST）额外校验 Origin：缺席（curl/本地脚本）或同源放行，非空且
+     *    不同源 → 403——浏览器发起的跨站 POST 必带 Origin，拦它即拦 CSRF；
+     *    GET/SSE 无副作用不校验 Origin，Host 校验已兜底。无配置开关：白名单随
+     *    绑定地址派生，未来 bind 配置化时一并放宽。
+     */
+    private boolean entryGate(HttpExchange exchange) throws IOException {
+        String host = exchange.getRequestHeaders().getFirst("Host");
+        if (host == null || !allowedHosts.contains(host.strip().toLowerCase(java.util.Locale.ROOT))) {
+            respondEmpty(exchange, 403);
+            return false;
+        }
+        if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            String origin = exchange.getRequestHeaders().getFirst("Origin");
+            if (origin != null && !origin.isBlank()
+                    && !allowedOrigins.contains(origin.strip().toLowerCase(java.util.Locale.ROOT))) {
+                respondEmpty(exchange, 403);
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 静态单页（/）。 */

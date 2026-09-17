@@ -6,6 +6,7 @@
 
 ### Added
 
+- **Web 入口栅栏**（工单 02）：Web 面全部端点前置两级校验——全请求 Host 头白名单（回环地址+端口，封死 DNS rebinding）+ POST 端点 Origin 空/同源校验（跨站 POST 一律 403）；本地 curl 与同源浏览器不受影响，GET/SSE 不校验 Origin；静态资源补 `Cache-Control: no-cache`（旧启发式缓存曾致前端更新不生效）
 - **迭代上限呈现位可配**（BUG-20260917-03）：`web` / `cli` 插件 config 新增可选 `maxIterations`（正整数，缺省 10 不变）——单轮对话的 LLM 往返上限从此可按部署调节；非正整数启动即 FAILED 点名
 
 ### Fixed

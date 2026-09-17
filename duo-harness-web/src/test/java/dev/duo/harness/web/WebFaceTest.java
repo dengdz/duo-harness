@@ -49,8 +49,8 @@ class WebFaceTest {
         System.out.println("\n=== 套件：WebFaceTest —— Web 面：静态资源（拆分件/vendor 库/白名单 404）、"
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
                 + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
-                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏）、会话锁冲突与幂等切换、fail-closed 宽限、"
-                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）（36 用例） ===");
+                + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏/入口栅栏 Host 与 Origin）、会话锁冲突与幂等切换、fail-closed 宽限、"
+                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）（38 用例） ===");
     }
 
     interface ToolsView {
@@ -144,9 +144,17 @@ class WebFaceTest {
     }
 
     private HttpResponse<String> post(String path, String jsonBody) throws IOException, InterruptedException {
-        return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + path))
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8)).build(),
+        return post(path, jsonBody, null);
+    }
+
+    /** 带显式 Origin 头的 POST（栅栏用例伪造跨站/同源 Origin；null = 不带）。 */
+    private HttpResponse<String> post(String path, String jsonBody, String origin) throws IOException, InterruptedException {
+        var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + path))
+                .header("Content-Type", "application/json");
+        if (origin != null) {
+            builder.header("Origin", origin);
+        }
+        return client.send(builder.POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8)).build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
@@ -157,9 +165,15 @@ class WebFaceTest {
     }
 
     private HttpResponse<String> fetch(String path) throws IOException, InterruptedException {
-        return client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + path)).GET().build(),
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return fetch(path, null);
+    }
+
+    private HttpResponse<String> fetch(String path, String origin) throws IOException, InterruptedException {
+        var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + path)).GET();
+        if (origin != null) {
+            builder.header("Origin", origin);
+        }
+        return client.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     @Test
@@ -632,6 +646,56 @@ class WebFaceTest {
         assertTrue(webAnswerer.complete(true, List.of()), "悬空请求仍可正常作答");
         assertTrue(done.await(2, TimeUnit.SECONDS));
         assertTrue(got.get().approved());
+    }
+
+    @Test
+    void entryGateBlocksForgedHostAndCrossOriginPosts() throws Exception {
+        // 入口栅栏（M16 工单 02）：DNS rebinding（伪造 Host）→ 403；跨站 POST（恶意
+        // Origin）→ 403；本地 curl 形态（无 Origin）与同源请求不受影响。
+        // 伪造 Host 用 raw socket——java.net.http.HttpClient 的 Host 头受限不可伪造
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        String forged = rawGet("evil.com", "/api/status");
+        assertTrue(forged.startsWith("HTTP/1.1 403"), "伪造 Host → 403: " + forged.split("\r\n", 2)[0]);
+        String localhost = rawGet("localhost:" + face.port(), "/api/status");
+        assertTrue(localhost.startsWith("HTTP/1.1 200"), "白名单内 localhost Host 放行");
+
+        // Origin 矩阵用非异步端点（/api/session/new），避免 /api/message 单飞 409 噪声
+        assertEquals(403, post("/api/session/new", "{}", "http://evil.com").statusCode(),
+                "跨站 Origin 拒绝");
+        assertEquals(200, post("/api/session/new", "{}").statusCode(),
+                "无 Origin（本地 curl 形态）放行");
+        assertEquals(200, post("/api/session/new", "{}",
+                "http://127.0.0.1:" + face.port()).statusCode(), "同源 Origin 放行");
+        assertEquals(202, post("/api/message", "{\"text\":\"hi\"}").statusCode(),
+                "对话入口无 Origin 放行");
+    }
+
+    @Test
+    void entryGateDoesNotCheckOriginOnGet() throws Exception {
+        // GET/SSE 无副作用不校验 Origin——带恶意 Origin 的 GET 照常放行（Host 已兜底）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, scriptedAgent(session, "ok"));
+
+        assertEquals(200, fetch("/api/status", "http://evil.com").statusCode(),
+                "GET 不校验 Origin");
+    }
+
+    /**
+     * 原始 socket GET（栅栏用例专用）：java.net.http.HttpClient 的 Host 头属受限头
+     * 不可伪造，伪造 Host 的攻击形态只能经裸 socket 发送；Connection: close 由
+     * 服务端在响应后关连接，readAllBytes 到 EOF 即完整响应。
+     */
+    private String rawGet(String hostHeader, String path) throws IOException {
+        try (var socket = new java.net.Socket("127.0.0.1", face.port())) {
+            socket.setSoTimeout(5_000);
+            var out = socket.getOutputStream();
+            out.write(("GET " + path + " HTTP/1.1\r\nHost: " + hostHeader
+                    + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     /**

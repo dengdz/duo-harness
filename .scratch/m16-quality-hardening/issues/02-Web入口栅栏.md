@@ -10,11 +10,32 @@ Web 面入站两级校验（术语：入口栅栏）：所有请求 Host 头白�
 
 ## Status
 
-ready-for-agent
+done（2026-09-17 实现与 agent 实测完成：curl 矩阵 5/5 + 浏览器同源全链路；用户可按对照表复跑）
 
 ## Checklist
 
-- [ ] 全请求 Host 头白名单校验，违者 403
-- [ ] POST 端点 Origin 空/同源校验；GET/SSE 不校验 Origin
-- [ ] WebFaceTest 放行/拒绝矩阵用例（Host 伪造、Origin 跨站、无 Origin 放行、SSE 与静态资源不误伤）
-- [ ] 实测三对照：curl 无 Origin 放行、curl 伪造 Origin 403、浏览器全功能正常
+- [x] 全请求 Host 头白名单校验（127.0.0.1 / localhost / [::1] 带端口），违者 403——封死 DNS rebinding
+- [x] POST 端点 Origin 空/同源校验；GET/SSE 不校验 Origin
+- [x] WebFaceTest 放行/拒绝矩阵用例（raw socket 伪造 Host、跨站 Origin、无 Origin 放行、SSE 与静态资源不误伤）
+- [x] 实测三对照：curl 无 Origin 放行（200）、curl 伪造 Origin 403、伪造 Host 403；浏览器同源全功能正常（截图留档）
+
+## Comments
+
+- 2026-09-17：实现落点为 `route()` 统一前置 `entryGate`（全部 11 个端点一次覆盖）；白名单按实际绑定端口生成（端口 0 测试形态同样成立），无配置开关。
+- 2026-09-17 顺手修复：静态单页与 /web/ 资源响应补 `Cache-Control: no-cache`（此前无缓存头，浏览器启发式缓存曾致旧 app.js 渲染双计划卡——BUG-20260917-04 验收期实测）。
+- curl 对照矩阵（真实运行演示取证）：①无 Origin 200 ②伪造 Origin POST 403 ③同源 Origin POST 202 ④伪造 Host 403 ⑤恶意 Origin GET 200。
+- 实现期勘误：`java.net.http.HttpClient` 的 Host 头属受限头不可伪造，栅栏用例的伪造 Host 走 raw socket 发送（`rawGet` 夹具）。
+
+### 用户复验对照表（可选）
+
+```
+# ① 本地 curl（无 Origin）→ 200
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18080/api/status
+# ② 伪造 Origin 的 POST → 403
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:18080/api/message \
+  -H "Content-Type: application/json" -H "Origin: http://evil.com" -d '{"text":"hi"}'
+# ③ 伪造 Host → 403
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18080/api/status -H "Host: evil.com"
+```
+
+浏览器打开 http://127.0.0.1:18080 全功能正常即同源放行验证。
