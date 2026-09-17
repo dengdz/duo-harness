@@ -1,26 +1,27 @@
-package dev.duo.harness.agent.subagent;
+package dev.duo.harness.agent.subagent.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.agent.subagent.SubagentManager;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolExecution;
 
 import java.util.Objects;
 
 /**
- * send_message 工具（ADR-0015 决策 2 控制面）：给运行中的子代理补充指示
- * （写入子会话，下一轮生效——中途纠偏不推倒重来）；给空闲/失败的子代理开启
- * 新一轮（指示即新任务）。不进子模板可用集（治理权归父，工单 02 强制过滤）。
+ * interrupt_agent 工具（ADR-0015 决策 2 控制面）：中止跑偏的子代理——置中断
+ * 标志并打断后台线程（协作式中止），终局在子会话留可审计的中止痕迹、父会话
+ * 收到"已被中止"回流。不进子模板可用集（工单 02 强制过滤）。
  */
-public final class SendMessageTool implements ToolDefinition {
+public final class InterruptAgentTool implements ToolDefinition {
 
     /** 工具名（模型侧调用名，DSH 同款词汇）。 */
-    public static final String NAME = "send_message";
+    public static final String NAME = "interrupt_agent";
 
     private final SubagentManager manager;
     private final java.util.function.Supplier<dev.duo.harness.session.Session> currentSession;
 
-    public SendMessageTool(SubagentManager manager,
+    public InterruptAgentTool(SubagentManager manager,
               java.util.function.Supplier<dev.duo.harness.session.Session> currentSession) {
         this.manager = Objects.requireNonNull(manager, "manager");
         this.currentSession = java.util.Objects.requireNonNull(currentSession, "currentSession");
@@ -33,8 +34,8 @@ public final class SendMessageTool implements ToolDefinition {
 
     @Override
     public String description() {
-        return "给子代理补充指示：运行中的子代理会在下一轮看到该指示（中途纠偏）；"
-                + "空闲或失败的子代理则以该指示为新任务立即开启新一轮（后台运行）。";
+        return "中止一个正在运行的子代理（跑偏或不再需要时止损）。子代理会尽快停止，"
+                + "不产出结果；已完成或已中止的子代理无需也无法中止。";
     }
 
     @Override
@@ -42,20 +43,18 @@ public final class SendMessageTool implements ToolDefinition {
         try {
             return new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
                     {"type":"object","properties":{
-                      "agentId":{"type":"string","description":"目标子代理 id（spawn/fork 返回，或 list_agents 查询）"},
-                      "message":{"type":"string","description":"要补充的指示或新一轮任务描述，具体明确"}},
-                     "required":["agentId","message"]}""");
+                      "agentId":{"type":"string","description":"要中止的子代理 id"}},
+                     "required":["agentId"]}""");
         } catch (Exception e) {
-            throw new IllegalStateException("send_message 参数 schema 内置错误", e);
+            throw new IllegalStateException("interrupt_agent 参数 schema 内置错误", e);
         }
     }
 
     @Override
     public Object execute(ToolExecution execution) {
         String agentId = requireText(execution.args(), "agentId");
-        String message = requireText(execution.args(), "message");
         requireCurrentSession(agentId);
-        return manager.sendMessage(agentId, message);
+        return manager.interrupt(agentId);
     }
 
     /** 会话归属校验：长驻呈现位换绑后，旧会话的子代理对新会话不可达（治理边界）。 */

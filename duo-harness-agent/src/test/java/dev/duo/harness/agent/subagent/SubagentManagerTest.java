@@ -1,5 +1,8 @@
 package dev.duo.harness.agent.subagent;
 
+import dev.duo.harness.agent.subagent.backend.SubagentBackend;
+import dev.duo.harness.agent.subagent.tools.ListAgentsTool;
+import dev.duo.harness.agent.subagent.tools.SendMessageTool;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;

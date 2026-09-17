@@ -132,14 +132,6 @@ public final class Session {
     }
 
     /**
-     * 取得会话文件独占锁并构造实例：**单写者检测**——同进程第二实例由
-     * OverlappingFileLockException 拒绝，跨进程由 tryLock 返回 null 拒绝
-     * （锁是协商式：别人不用锁硬写仍能写，本机制防的是"双方都以为自己独占"）。
-     *
-     * @throws SessionLockedException 锁已被占用
-     * @throws PluginException        文件无法打开（权限、路径等）
-     */
-    /**
      * JVM 内已持锁会话注册表（绝对路径 → 持有标记）。同进程第二实例在**打开 fd 之前**
      * 即被拒绝——若先 open 再 tryLock，失败路径关闭探测 fd 会触发 POSIX 陷阱：
      * 进程关闭同一文件的任意 fd，内核会释放该进程在此文件上的**全部**锁（包括
@@ -155,6 +147,14 @@ public final class Session {
      */
     private static final Object LOCK_GATE = new Object();
 
+    /**
+     * 取得会话文件独占锁并构造实例：**单写者检测**——同进程第二实例由
+     * OverlappingFileLockException 拒绝，跨进程由 tryLock 返回 null 拒绝
+     * （锁是协商式：别人不用锁硬写仍能写，本机制防的是"双方都以为自己独占"）。
+     *
+     * @throws SessionLockedException 锁已被占用
+     * @throws PluginException        文件无法打开（权限、路径等）
+     */
     private static Session lock(String id, Path jsonl) {
         Path key = jsonl.toAbsolutePath().normalize();
         synchronized (LOCK_GATE) {
@@ -240,7 +240,6 @@ public final class Session {
         listeners.clear();
     }
 
-    /** 目录内最近活动的会话（按文件修改时间，即最后被创建/写入的）；无会话返回 null。 */
     /** 会话摘要（M8 会话侧栏数据源：id + 最近修改时间）。 */
     public record SessionSummary(String id, Path jsonl, long lastModifiedMs) {
 
@@ -281,6 +280,7 @@ public final class Session {
                 .toList();
     }
 
+    /** 目录内最近活动的会话（按文件修改时间，即最后被创建/写入的）；无会话返回 null。 */
     public static Session latest(Path sessionsDir) {
         Path latest = null;
         FileTime latestTime = null;
@@ -610,22 +610,25 @@ public final class Session {
         if (!Files.isRegularFile(jsonl)) {
             return null;
         }
-        try {
-            List<String> lines = Files.readAllLines(jsonl);
-            for (int i = lines.size() - 1; i >= 0; i--) {
+        // 逐行流式扫描（大会话不做全量驻留）：标题事件极少（精简版只生成一次），
+        // 顺序扫到最后一个标题即为所求（latest-wins 语义）
+        String latest = null;
+        try (var reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
                 try {
-                    JsonNode node = JSON.readTree(lines.get(i));
+                    JsonNode node = JSON.readTree(line);
                     if (SessionEvent.TITLE.equals(node.path("type").asText())) {
-                        return node.path("text").asText();
+                        latest = node.path("text").asText();
                     }
                 } catch (IOException ignored) {
-                    // 单行损坏跳过（探测语义宽松）
+                    // 坏行跳过（标题是锦上添花）
                 }
             }
-            return null;
         } catch (IOException e) {
             return null;
         }
+        return latest;
     }
 
     /** 新会话 id：启动时间 + 4 位十六进制随机后缀（补零保证同秒内字典序与生成序一致）。 */

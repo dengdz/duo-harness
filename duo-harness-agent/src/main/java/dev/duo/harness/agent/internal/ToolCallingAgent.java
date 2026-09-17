@@ -40,6 +40,10 @@ import java.util.Objects;
  */
 public final class ToolCallingAgent implements ChatAgent {
 
+    /** 参数解析共享实例：ObjectMapper 创建重量级，热路径（每次工具调用）复用。 */
+    private static final com.fasterxml.jackson.databind.ObjectMapper TOOLS_ARGS_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** 最大迭代轮数（每轮 = 一次 LLM 调用往返；防异常任务无限循环烧 token）。 */
     public static final int MAX_ITERATIONS = 10;
 
@@ -164,7 +168,7 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */
     private JsonNode argumentsAsJson(String argumentsJson) {
         try {
-            return new ObjectMapper().readTree(argumentsJson);
+            return TOOLS_ARGS_MAPPER.readTree(argumentsJson);
         } catch (Exception e) {
             throw new IllegalArgumentException("工具参数不是合法 JSON: " + argumentsJson, e);
         }

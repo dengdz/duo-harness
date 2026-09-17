@@ -1,4 +1,4 @@
-package dev.duo.harness.agent.subagent;
+package dev.duo.harness.agent.subagent.backend;
 
 import dev.duo.harness.tools.ToolDefinition;
 
@@ -13,21 +13,21 @@ import dev.duo.harness.tools.ToolDefinition;
  * 与工具域 DENY 文案同形（工具 "X" 执行被拒绝: 理由（策略: 来源）），并附把
  * 步骤交回父代理的指引——子代理在最终回答里转述限制，父 agent 据此接管。</p>
  */
-final class PinnedApprovalPolicy {
+public final class PinnedApprovalPolicy {
 
     /** 恒否实例（子代理审批钉死的唯一策略形态）。 */
-    static final PinnedApprovalPolicy ALWAYS_DENY = new PinnedApprovalPolicy();
+    public static final PinnedApprovalPolicy ALWAYS_DENY = new PinnedApprovalPolicy();
 
     private PinnedApprovalPolicy() {
     }
 
     /** 是否放行该工具：声明了需审批（requiresApproval）即不放行，其余原样放行。 */
-    boolean allows(ToolDefinition definition) {
+    public boolean allows(ToolDefinition definition) {
         return !definition.requiresApproval();
     }
 
     /** 标准格式拒绝理由：与工具域 DENY 文案同形，附交回父代理的指引。 */
-    String denialReason(String toolName) {
+    public String denialReason(String toolName) {
         return "工具 \"" + toolName + "\" 执行被拒绝: 需要用户审批，但子代理没有审批通道"
                 + "（策略: 子代理审批钉死）。请把该步骤交回父代理处理，或改用无需审批的工具。";
     }

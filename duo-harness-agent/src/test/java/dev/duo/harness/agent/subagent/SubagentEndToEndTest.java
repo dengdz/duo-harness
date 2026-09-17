@@ -2,6 +2,10 @@ package dev.duo.harness.agent.subagent;
 
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
+import dev.duo.harness.agent.subagent.backend.EmbeddedSubagentBackend;
+import dev.duo.harness.agent.subagent.backend.PinnedApprovalPolicy;
+import dev.duo.harness.agent.subagent.tools.SpawnTool;
+import dev.duo.harness.agent.subagent.tools.ForkTool;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;

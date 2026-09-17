@@ -1,5 +1,6 @@
-package dev.duo.harness.agent.subagent;
+package dev.duo.harness.agent.subagent.backend;
 
+import dev.duo.harness.agent.subagent.SubagentTemplate;
 import dev.duo.harness.session.Session;
 
 /**

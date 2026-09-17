@@ -1,5 +1,12 @@
 package dev.duo.harness.agent.subagent;
 
+import dev.duo.harness.agent.subagent.backend.EmbeddedSubagentBackend;
+import dev.duo.harness.agent.subagent.backend.PinnedApprovalPolicy;
+import dev.duo.harness.agent.subagent.tools.SpawnTool;
+import dev.duo.harness.agent.subagent.tools.ForkTool;
+import dev.duo.harness.agent.subagent.tools.SendMessageTool;
+import dev.duo.harness.agent.subagent.tools.InterruptAgentTool;
+import dev.duo.harness.agent.subagent.tools.ListAgentsTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;

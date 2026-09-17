@@ -1,5 +1,6 @@
-package dev.duo.harness.agent.subagent;
+package dev.duo.harness.agent.subagent.backend;
 
+import dev.duo.harness.agent.subagent.SubagentManager;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.ToolInvocation;
 import dev.duo.harness.agent.internal.ToolCallingAgent;

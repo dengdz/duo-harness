@@ -605,15 +605,17 @@ public final class WebFace {
         var arr = root.putArray("events");
         root.put("found", Files.isRegularFile(jsonl));
         if (Files.isRegularFile(jsonl)) {
-            try {
-                for (String line : Files.readAllLines(jsonl)) {
+            // 逐行流式读（长会话不做全量驻留）；坏行跳过（探测语义宽松）
+            try (var reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
                     if (line.isBlank()) {
                         continue;
                     }
                     try {
                         arr.add(JSON.readTree(line));
                     } catch (Exception ignored) {
-                        // 单行损坏跳过（探测语义宽松）
+                        // 单行损坏跳过
                     }
                 }
             } catch (IOException e) {

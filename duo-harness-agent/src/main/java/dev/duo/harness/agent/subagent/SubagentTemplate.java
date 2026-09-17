@@ -33,8 +33,11 @@ public record SubagentTemplate(String name, List<String> tools, String prompt, I
     public static final Set<String> FORBIDDEN_TOOLS = Set.of(
             dev.duo.harness.tools.AskUserTool.NAME,
             dev.duo.harness.agent.plan.ExitPlanModeTool.NAME,
-            SpawnTool.NAME, ForkTool.NAME,
-            SendMessageTool.NAME, InterruptAgentTool.NAME, ListAgentsTool.NAME);
+            dev.duo.harness.agent.subagent.tools.SpawnTool.NAME,
+            dev.duo.harness.agent.subagent.tools.ForkTool.NAME,
+            dev.duo.harness.agent.subagent.tools.SendMessageTool.NAME,
+            dev.duo.harness.agent.subagent.tools.InterruptAgentTool.NAME,
+            dev.duo.harness.agent.subagent.tools.ListAgentsTool.NAME);
 
     /** 构造时校验非空与防御性拷贝——错误前移到构造点。 */
     public SubagentTemplate {

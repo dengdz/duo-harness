@@ -1,5 +1,6 @@
 package dev.duo.harness.agent.subagent;
 
+import dev.duo.harness.agent.subagent.backend.SubagentBackend;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;

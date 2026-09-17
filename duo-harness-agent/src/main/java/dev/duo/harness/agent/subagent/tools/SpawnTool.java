@@ -1,8 +1,9 @@
-package dev.duo.harness.agent.subagent;
+package dev.duo.harness.agent.subagent.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.session.Session;
+import dev.duo.harness.agent.subagent.SubagentManager;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolExecution;
 
