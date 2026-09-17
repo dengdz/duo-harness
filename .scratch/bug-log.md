@@ -8,6 +8,16 @@
 
 ---
 
+## BUG-20260917-01 · CI 慢机上 MCP 重连测试超时——夹具握手预算×重连次数不足以覆盖冷启动
+
+- **日期**：2026-09-17（M16 工单 01：0.11.0 首推 CI 首跑失败）
+- **症状**：CI 上 `McpToolSyncTest.dropKeepsToolsUntilReconnectRefreshes` 等待超时；`McpSyncClient.initialize` 抛 TimeoutException（CI 1000ms / 本机满载复现 2000ms）；mcp 模块 35.4s 失败（本机 13.4s）。
+- **根因**：夹具 `requestTimeoutMs=2_000` 经 SDK 会话层同时约束握手请求，CI 慢机冷启动 JVM 超预算每次尝试必败；`maxAttempts=3` 约 6s 耗尽即 giveUp，awaitTrue 余下 9s 轮询永不恢复的工具。测试基建预算缺陷，产品默认（20s×10）不受影响。
+- **修复**：夹具 `requestTimeoutMs` 2s→5s、drop-test `maxAttempts` 3→10，产品零改动。
+- **防复发**：CI 门禁即捕获与回归防线；夹具预算注释钉住现实依据。状态 fixing（CI 重跑绿后 done）。档案见 .scratch/bugs/BUG-20260917-01.md。
+
+---
+
 ## BUG-20260916-02 · 会话标题生成后侧栏不同步——title 帧只接了标签页路径
 
 - **日期**：2026-09-16（M13 里程碑验收发现）

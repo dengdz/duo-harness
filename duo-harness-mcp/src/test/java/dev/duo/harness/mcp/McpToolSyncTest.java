@@ -83,8 +83,9 @@ class McpToolSyncTest {
                 .put("serverName", serverName)
                 .put("command", javaCommand())
                 .put("failOnStartupError", failFast)
-                // 断连窗口内的探活调用不能吊死用例：请求超时收到秒级
-                .put("requestTimeoutMs", 2_000);
+                // 请求超时需覆盖慢机（CI 双核冷启动 server JVM）的握手耗时——SDK 会话层对
+                // initialize 请求同样应用此超时；探活在进程死后沿 EOF 快速失败，不依赖它
+                .put("requestTimeoutMs", 5_000);
         var args = config.putArray("args").add("-cp").add(System.getProperty("java.class.path"))
                 .add(MinimalStdioServer.class.getName()).add(mode);
         for (String extra : extraArgs) {
@@ -216,7 +217,7 @@ class McpToolSyncTest {
 
     @Test
     void dropKeepsToolsUntilReconnectRefreshes() throws Exception {
-        PluginHandle mcp = mount("drop-test", "normal", false, 3);
+        PluginHandle mcp = mount("drop-test", "normal", false, 10);
         mcp.awaitStartup();
         assertTrue(registered("mcp__drop-test__ping"));
 
