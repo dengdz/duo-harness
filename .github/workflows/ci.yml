@@ -37,13 +37,13 @@ jobs:
       - name: 失败诊断（用例详情）
         if: failure()
         run: |
-          DETAIL=$(grep -h -A6 "<<< (FAILURE|ERROR)!" */target/surefire-reports/*.txt 2>/dev/null | head -40 | tr '%' '_' | sed ':a;N;$!ba;s/\n/%0A/g')
+          DETAIL=$(grep -hE -B1 -A8 "<<< (FAILURE|ERROR)!" */target/surefire-reports/*.txt 2>/dev/null | head -50 | tr '%' '_' | sed ':a;N;$!ba;s/\n/%0A/g')
           [ -n "$DETAIL" ] && printf '::error title=用例详情::%s\n' "${DETAIL:0:3500}"
           true
       - name: 失败诊断（构建尾部）
         if: failure()
         run: |
-          TAIL=$(tail -n 30 /tmp/build.log | tr '%' '_' | sed ':a;N;$!ba;s/\n/%0A/g')
+          TAIL=$(tail -n 60 /tmp/build.log | tr '%' '_' | sed ':a;N;$!ba;s/\n/%0A/g')
           printf '::error title=构建尾部::%s\n' "${TAIL:0:3500}"
       - name: 上传测试报告工件
         if: failure()
