@@ -6,6 +6,8 @@ import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -28,6 +30,8 @@ import java.util.concurrent.TimeoutException;
  * 双侧——provider 侧无输出上限契约可传，超长输出靠截断兜底。</p>
  */
 public final class SessionTitles {
+
+    private static final Logger log = LoggerFactory.getLogger(SessionTitles.class);
 
     /** 标题最大字符数（落日志前截断，降级截断同口径）。 */
     public static final int MAX_TITLE_CHARS = 20;
@@ -86,14 +90,14 @@ public final class SessionTitles {
         } catch (TimeoutException e) {
             future.cancel(true);
             title = null;
-            System.out.println("[会话标题] 生成超时，降级截断（会话 " + session.id() + "）");
+            log.warn("会话标题生成超时，降级截断（会话 {}）", session.id());
         } catch (InterruptedException e) {
             future.cancel(true);
             Thread.currentThread().interrupt();
             title = null;
         } catch (ExecutionException e) {
             title = null;
-            System.out.println("[会话标题] 生成失败，降级截断: " + e.getCause());
+            log.warn("会话标题生成失败，降级截断", e.getCause());
         }
         appendTitle(session, truncate(title != null ? title : firstMessage));
     }
@@ -113,7 +117,7 @@ public final class SessionTitles {
             session.append(SessionEvent.title(title));
         } catch (RuntimeException e) {
             // 会话已关闭（生成期间用户退出）或落盘失败：标题是锦上添花，放弃并留痕
-            System.out.println("[会话标题] 落日志失败（会话 " + session.id() + "）: " + e.getMessage());
+            log.warn("会话标题落日志失败（会话 {}）", session.id(), e);
         }
     }
 

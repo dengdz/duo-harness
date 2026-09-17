@@ -10,6 +10,8 @@ import dev.duo.harness.session.SessionEvent;
 import dev.duo.harness.tools.ToolsService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -39,6 +41,8 @@ import java.util.function.Consumer;
  * ADR-0008 / ADR-0010 延伸——判定语义是"是否仍有人能看见该审批"，刷新断旧立新不误杀）。</p>
  */
 public final class WebFace {
+
+    private static final Logger log = LoggerFactory.getLogger(WebFace.class);
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final long HEARTBEAT_INTERVAL_MS = 15_000;
@@ -368,8 +372,8 @@ public final class WebFace {
                     });
                 } catch (Exception e) {
                     // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
-                    // 帧内只给通用文案——异常细节服务端控制台留痕，不外推（M10-02 脱敏口径）
-                    System.out.println("[web] 消息处理失败: " + e);
+                    // 帧内只给通用文案——异常细节服务端日志留痕，不外推（M10-02 脱敏口径）
+                    log.warn("消息处理失败", e);
                     pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
                 } finally {
                     busy.set(false);
@@ -390,8 +394,8 @@ public final class WebFace {
             try {
                 newSession();
             } catch (Exception e) {
-                // 异常细节仅服务端控制台留痕——错误响应不回显内部消息（M10-02 脱敏）
-                System.out.println("[web] 新会话创建失败: " + e);
+                // 异常细节仅服务端日志留痕——错误响应不回显内部消息（M10-02 脱敏）
+                log.warn("新会话创建失败", e);
                 byte[] msg = "新会话创建失败".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
                 exchange.sendResponseHeaders(500, msg.length);
@@ -447,14 +451,14 @@ public final class WebFace {
                 try (OutputStream out = exchange.getResponseBody()) { out.write(ok); }
             } catch (dev.duo.harness.session.SessionLockedException e) {
                 // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
-                System.out.println("[web] 会话切换被拒（占用冲突）: " + e.getMessage());
+                log.info("会话切换被拒（占用冲突）: {}", e.getMessage());
                 byte[] msg = e.brief().getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
                 exchange.sendResponseHeaders(409, msg.length);
                 try (OutputStream out = exchange.getResponseBody()) { out.write(msg); }
             } catch (Exception e) {
-                // 异常细节（含文件系统路径）仅服务端控制台留痕，不回显给响应体（M10-02 脱敏）
-                System.out.println("[web] 会话切换失败: " + e);
+                // 异常细节（含文件系统路径）仅服务端日志留痕，不回显给响应体（M10-02 脱敏）
+                log.warn("会话切换失败", e);
                 byte[] msg = "切换失败：会话不存在或不可读".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
                 exchange.sendResponseHeaders(404, msg.length);
@@ -494,7 +498,7 @@ public final class WebFace {
                 return;
             }
             byte[] resp = ("{\"completed\":" + completed + "}").getBytes(StandardCharsets.UTF_8);
-            System.out.println("[web] /api/answer completed=" + completed);
+            log.debug("/api/answer completed={}", completed);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.sendResponseHeaders(200, resp.length);
             try (OutputStream out = exchange.getResponseBody()) { out.write(resp); }
@@ -596,8 +600,7 @@ public final class WebFace {
                 List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
                 ReplayWindow window = resolveReplayWindow(cursor, events, bound);
                 // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
-                System.out.println("[web] SSE 连接：模式=" + window.mode()
-                        + "，游标=" + cursor + "，事件数=" + events.size());
+                log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
                 var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
                 if (window.tailSnapshot()) {
                     header.put("hasMore", window.hasMore()).put("earlierCount", window.earlierCount());

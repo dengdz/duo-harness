@@ -7,6 +7,8 @@ import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.session.Message;
 import dev.duo.harness.session.SessionEvent;
 import dev.duo.harness.session.TokenUsage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -28,6 +30,8 @@ import java.util.List;
  * <p>线程约定：实例非线程安全——随 agent 循环串行使用。</p>
  */
 public final class ContextGovernance {
+
+    private static final Logger logger = LoggerFactory.getLogger(ContextGovernance.class);
 
     /** spill 触发阈值（字符）：超大工具结果卸载落盘，给模型预览 + 定位符。 */
     public static final int SPILL_THRESHOLD_CHARS = 50_000;
@@ -306,7 +310,7 @@ public final class ContextGovernance {
             result.addAll(recent);
             return result;
         } catch (Exception e) {
-            System.out.println("[上下文治理] 压缩摘要生成失败，本次请求原样透出: " + e.getMessage());
+            logger.warn("压缩摘要生成失败，本次请求原样透出", e);
             return messages;
         }
     }
