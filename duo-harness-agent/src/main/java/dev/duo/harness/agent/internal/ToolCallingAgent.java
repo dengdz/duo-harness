@@ -19,16 +19,24 @@ import dev.duo.harness.session.Message;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
 import dev.duo.harness.session.TokenUsage;
+import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolsService;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 
 /**
  * agent 循环实现：会话记录 + LLM 流式调用 + Function Calling 工具执行桥——
- * 模型发起 tool_calls 时逐个经工具域三段管线与治理链执行，结果以 TOOL 消息回填并继续循环，
+ * 模型发起 tool_calls 时按并发安全性分组执行（ADR-0018）：连续并发安全调用
+ * 成组进虚拟线程滚动池并行执行，独占调用（未通过安全判定 / 需审批 / 未知工具）
+ * 作为顺序屏障单独执行；无论完成先后，结果以 TOOL 消息按 model 序回填并继续循环，
  * 直至模型给出最终回答或迭代上限触发。
  *
  * <p>治理链在此激活：工具执行走 {@code ToolsService.execute}（三段瀑布管线，
@@ -36,7 +44,9 @@ import java.util.Objects;
  * 审批拒绝 / guard 拦截 / 违约已由管线收敛为 error 结果——原样回填给 LLM，
  * 模型看到拒绝原因后自行调整行为（换方案 / 向用户解释），而非 harness 层终止。</p>
  *
- * <p>线程约定：实例非线程安全——单会话内串行使用。</p>
+ * <p>线程约定：实例非线程安全——单会话内串行使用。{@code send} 仍是单线程入口；
+ * 并发只发生在安全组的工具执行段（虚拟线程 fan-out），事件日志写入收敛回
+ * {@code send} 线程单点提交（model 序成对提交，会话单写者约定不变）。</p>
  */
 public final class ToolCallingAgent implements ChatAgent {
 
@@ -47,11 +57,15 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 最大迭代轮数（每轮 = 一次 LLM 调用往返；防异常任务无限循环烧 token）。 */
     public static final int MAX_ITERATIONS = 10;
 
+    /** 单轮并行池缺省同时在飞上限（ADR-0018；DSH 同款缺省，配置为 1 即完全串行）。 */
+    public static final int DEFAULT_MAX_PARALLEL_TOOL_CALLS = 10;
+
     private final LlmAdapter llm;
     private final ToolsService tools;
     private final Session session;
     private final PromptRegistry prompts;
     private final int maxIterations;
+    private final int maxParallelToolCalls;
     /** 上下文治理管线（M9；null = 未装配，投影直通——治理可选零残留）。 */
     private final ContextGovernance governance;
 
@@ -90,6 +104,18 @@ public final class ToolCallingAgent implements ChatAgent {
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             PromptRegistry prompts, int maxIterations,
                             ContextGovernance governance) {
+        this(llm, tools, session, prompts, maxIterations, DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance);
+    }
+
+    /**
+     * 完整构造：并发度显式版（ADR-0018）。
+     *
+     * @param maxParallelToolCalls 单轮并行池同时在飞上限（配置为 1 即完全串行，
+     *                             兼排障开关——执行回到调用线程，行为与串行时代一致）
+     */
+    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
+                            PromptRegistry prompts, int maxIterations,
+                            int maxParallelToolCalls, ContextGovernance governance) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
@@ -97,7 +123,11 @@ public final class ToolCallingAgent implements ChatAgent {
         if (maxIterations < 1) {
             throw new IllegalArgumentException("maxIterations 至少为 1: " + maxIterations);
         }
+        if (maxParallelToolCalls < 1) {
+            throw new IllegalArgumentException("maxParallelToolCalls 至少为 1: " + maxParallelToolCalls);
+        }
         this.maxIterations = maxIterations;
+        this.maxParallelToolCalls = maxParallelToolCalls;
         this.governance = governance;
     }
 
@@ -128,20 +158,13 @@ public final class ToolCallingAgent implements ChatAgent {
                 break;
             }
 
-            // 工具执行桥：tool_calls 逐个经三段管线与治理链执行，结果以 TOOL 消息回填。
+            // 工具执行桥：tool_calls 按并发安全性分组执行（ADR-0018）——连续并发安全
+            // 调用成组进虚拟线程滚动池并行执行，独占调用作为顺序屏障单独执行；
+            // 无论完成先后，tool/call 与 tool/result 严格按 model 序成对提交——
+            // 事件日志形态与串行执行同构，游标回放 / 尾窗 / 投影零特判。
             // 思考内容随 tool/call 事件持久化——会话投影重建的请求历史天然完整
             // （思考模式 provider 要求历史工具调用消息回传 reasoning，ADR 见 BUG-20260913-03）
-            for (ToolCallRequest call : turn.toolCalls()) {
-                session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson(),
-                        turn.reasoningContent()));
-                listener.onToolCall(call.name(), call.argumentsJson());
-                ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()));
-                String resultText = String.valueOf(result.value());
-                session.append(SessionEvent.toolResult(call.id(), call.name(), resultText));
-                invocations.add(new ToolInvocation(call.name(), call.argumentsJson(),
-                        resultText, result.isError()));
-                listener.onToolResult(call.name(), resultText, result.isError());
-            }
+            executeToolCalls(turn, listener, invocations);
         }
 
         if (!completed) {
@@ -152,8 +175,116 @@ public final class ToolCallingAgent implements ChatAgent {
         return new AgentReply(finalReply.toString(), invocations, true);
     }
 
-    /** 请求构造：组装 system 提示 + 会话投影历史（过治理管线）+ 工具清单（Function Calling）。 */
-    private ChatRequest buildRequest() {
+    /**
+     * 单轮 tool_calls 的分组调度（ADR-0018）：按 model 序扫描，连续并发安全调用
+     * 成组进池；撞独占调用即屏障——排空当前组、独占调用单独执行、再继续分组。
+     */
+    private void executeToolCalls(LlmTurn turn, AgentListener listener,
+                                  List<ToolInvocation> invocations) {
+        List<ToolCallRequest> calls = turn.toolCalls();
+        int i = 0;
+        while (i < calls.size()) {
+            if (isConcurrentSafe(calls.get(i))) {
+                int j = i + 1;
+                while (j < calls.size() && isConcurrentSafe(calls.get(j))) {
+                    j++;
+                }
+                executeToolGroup(calls.subList(i, j), turn, listener, invocations);
+                i = j;
+            } else {
+                executeOneToolCall(calls.get(i), turn, listener, invocations);
+                i++;
+            }
+        }
+    }
+
+    /**
+     * 并发安全组的滚动池执行：虚拟线程 fan-out（信号量限在飞上限，完成一个补一个），
+     * 提交收敛回本线程按 model 序成对写入——前序就绪即提交，不等全组。
+     */
+    private void executeToolGroup(List<ToolCallRequest> group, LlmTurn turn,
+                                  AgentListener listener, List<ToolInvocation> invocations) {
+        if (group.size() == 1 || maxParallelToolCalls <= 1) {
+            // 快速路径：单元素组或并发度为 1 时无并行收益，退回调用线程执行——
+            // 行为与串行时代一致（含执行线程不变，排障语义忠实）
+            for (ToolCallRequest call : group) {
+                executeOneToolCall(call, turn, listener, invocations);
+            }
+            return;
+        }
+        List<Future<ToolResult>> futures = new ArrayList<>(group.size());
+        Semaphore permits = new Semaphore(maxParallelToolCalls);
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (ToolCallRequest call : group) {
+                JsonNode args = argumentsAsJson(call.argumentsJson());
+                futures.add(pool.submit(() -> {
+                    permits.acquire();
+                    try {
+                        return tools.execute(call.name(), args);
+                    } finally {
+                        permits.release();
+                    }
+                }));
+            }
+            for (int k = 0; k < group.size(); k++) {
+                ToolCallRequest call = group.get(k);
+                commitToolCall(call, awaitResult(futures.get(k), call), turn, listener, invocations);
+            }
+        }
+    }
+
+    /** 独占调用：当前线程执行 + 成对提交（屏障语义下池已排空，独享执行期）。 */
+    private void executeOneToolCall(ToolCallRequest call, LlmTurn turn,
+                                    AgentListener listener, List<ToolInvocation> invocations) {
+        ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()));
+        commitToolCall(call, result, turn, listener, invocations);
+    }
+
+    /** 成对有序提交：tool/call 与 tool/result 相邻落日志 + 回调 + 调用台账（model 序）。 */
+    private void commitToolCall(ToolCallRequest call, ToolResult result, LlmTurn turn,
+                                AgentListener listener, List<ToolInvocation> invocations) {
+        session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson(),
+                turn.reasoningContent()));
+        listener.onToolCall(call.name(), call.argumentsJson());
+        String resultText = String.valueOf(result.value());
+        session.append(SessionEvent.toolResult(call.id(), call.name(), resultText));
+        invocations.add(new ToolInvocation(call.name(), call.argumentsJson(),
+                resultText, result.isError()));
+        listener.onToolResult(call.name(), resultText, result.isError());
+    }
+
+    /** 并行组的等待收敛：执行异常已由工具域收敛为 error 结果，这里兜住等待自身的异常。 */
+    private ToolResult awaitResult(Future<ToolResult> future, ToolCallRequest call) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.error("工具执行等待被中断: " + call.name());
+        } catch (ExecutionException e) {
+            return ToolResult.error("工具执行异常: " + call.name() + " — " + e.getCause());
+        }
+    }
+
+    /**
+     * 并发安全判定（fail-closed，ADR-0018）：未知工具、需审批、判定抛错
+     * （含参数非法）、非严格 true 一律独占——独占路径保留既有报错行为。
+     */
+    private boolean isConcurrentSafe(ToolCallRequest call) {
+        ToolDefinition def = tools.list().stream()
+                .filter(d -> d.name().equals(call.name()))
+                .findFirst()
+                .orElse(null);
+        if (def == null || def.requiresApproval()) {
+            return false;
+        }
+        try {
+            return def.isConcurrencySafe(argumentsAsJson(call.argumentsJson()));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 请求构造：组装 system 提示 + 会话投影历史（过治理管线）+ 工具清单（Function Calling）。 */    private ChatRequest buildRequest() {
         List<ToolSpec> specs = tools.list().stream()
                 .map(def -> new ToolSpec(def.name(), def.description(),
                         def.parameters() == null ? "{}" : def.parameters().toString()))

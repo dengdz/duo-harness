@@ -39,6 +39,9 @@ public final class FsReadTool implements ToolDefinition {
                 + "},\"required\":[\"path\"]}");
         } catch (Exception e) { throw new IllegalStateException(e); }
     }
+    /** 纯只读且读前写闸门登记为并发安全集（ADR-0018 首批标注）。 */
+    @Override public boolean isConcurrencySafe(JsonNode args) { return true; }
+
     @Override public String execute(ToolExecution exec) {
         JsonNode args = exec.args();
         String raw = args.path("path").asText("");

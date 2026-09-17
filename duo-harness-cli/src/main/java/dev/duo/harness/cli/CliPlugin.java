@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>配置（块内字段可省）：
  * <pre>{@code config:
  *   maxIterations: 30 # 单轮对话迭代上限（省略默认 10；计划模式等探索型任务建议调高）
+ *   maxParallelToolCalls: 10 # 单轮并发安全工具并行上限（省略默认 10；=1 即完全串行，排障用）
  *   governance: {}    # 上下文治理阈值段（省略即缺省常量）}</pre></p>
  */
 public final class CliPlugin implements Plugin<JsonNode> {
@@ -130,10 +131,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
         ContextGovernance governance = PresenterAssembly.governance(llm, governanceTuning);
         // 迭代上限（BUG-20260917-03）：config.maxIterations 可省，缺省内核常量（10）
         int maxIterations = PresenterAssembly.parseMaxIterations(config);
+        // 并发度（ADR-0018）：config.maxParallelToolCalls 可省，缺省 10；=1 即完全串行
+        int maxParallelToolCalls = PresenterAssembly.parseMaxParallelToolCalls(config);
         // 会话标题生成（精简版，工单 M13-06）：首条消息后异步一次，/new 换绑的新会话同源触发
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
-        ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts, maxIterations, governance);
+        ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
+                maxIterations, maxParallelToolCalls, governance);
         answererRegistration = answers.register(ctx,
                 new AuditingAnswerer(holder::current, new ConsoleAnswerer(in, out)));
         PlanHolder plan = new PlanHolder();
@@ -156,7 +160,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         out.flush();
 
         replThread = Thread.ofVirtual().name("cli-repl").start(() ->
-                replLoop(ctx, llm, tools, prompts, governance, maxIterations, skills, holder, plan, agent, workspacePolicy));
+                replLoop(ctx, llm, tools, prompts, governance, maxIterations, maxParallelToolCalls,
+                        skills, holder, plan, agent, workspacePolicy));
         return this::stop;
     }
 
@@ -235,8 +240,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
     /** REPL 主循环（交互沿 AgentReplMain 既有形态）：读行 → 命令分发 → agent 执行。 */
     private void replLoop(Context ctx, LlmAdapter llm, ToolsService tools, PromptRegistry prompts,
-                          ContextGovernance governance, int maxIterations, SkillRegistry skills,
-                          SessionHolder holder, PlanHolder plan, ChatAgent agent,
+                          ContextGovernance governance, int maxIterations, int maxParallelToolCalls,
+                          SkillRegistry skills, SessionHolder holder, PlanHolder plan, ChatAgent agent,
                           WorkspacePolicy workspacePolicy) {
         Path sessionsDir = sessionsDir();
         try {
@@ -253,7 +258,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 if (line.strip().equals("/new")) {
                     Session previous = holder.session;
                     holder.session = Session.create(sessionsDir);
-                    agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts, maxIterations, governance);
+                    agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
+                            maxIterations, maxParallelToolCalls, governance);
                     SessionTitles.attach(holder.session, llm);
                     attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                     previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）

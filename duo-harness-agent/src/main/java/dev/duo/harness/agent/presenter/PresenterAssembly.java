@@ -173,6 +173,41 @@ public final class PresenterAssembly {
     }
 
     /**
+     * 对话执行者（并发度显式版，ADR-0018）：呈现位经 {@link #parseMaxParallelToolCalls}
+     * 传入——单轮并发安全工具的并行池在飞上限。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      int maxParallelToolCalls, ContextGovernance governance) {
+        return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
+                maxParallelToolCalls, governance);
+    }
+
+    /**
+     * 解析呈现位 config 的可选并发度（{@code config.maxParallelToolCalls}，ADR-0018）：
+     * 缺席或 null 返回内核缺省（{@link ToolCallingAgent#DEFAULT_MAX_PARALLEL_TOOL_CALLS}，
+     * 不配置行为照旧——并发即生效）；在场必须是正整数，配置为 1 即完全串行
+     * （兼排障开关：怀疑并发引发问题时一键退回串行时代行为）。非整数 / 非正
+     * 一律异常点名——配置错误不做静默纠正（与 {@link #parseMaxIterations} 同规）。
+     *
+     * @throws PluginException 值非正整数
+     */
+    public static int parseMaxParallelToolCalls(JsonNode config) {
+        if (config == null || !config.hasNonNull("maxParallelToolCalls")) {
+            return ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS;
+        }
+        JsonNode value = config.get("maxParallelToolCalls");
+        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            throw new PluginException("maxParallelToolCalls 必须是整数: " + value);
+        }
+        int parsed = value.asInt();
+        if (parsed < 1) {
+            throw new PluginException("maxParallelToolCalls 必须为正: " + parsed);
+        }
+        return parsed;
+    }
+
+    /**
      * HITL 交互工具注册（查重先到先得）：ask_user 与计划呈交随呈现位装配注册——
      * 任意单呈现位部署下 HITL 完整；多呈现位共存（如 cli + web 双开）时先到方胜出，
      * 不触发内核重复注册拒绝。计划退出的状态清理回调由呈现位给出（Web 无计划指导

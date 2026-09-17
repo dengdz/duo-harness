@@ -41,6 +41,9 @@ public final class FsGrepTool implements ToolDefinition {
                 + "},\"required\":[\"pattern\"]}");
         } catch (Exception e) { throw new IllegalStateException(e); }
     }
+    /** 纯只读、无共享可变状态（ADR-0018 首批标注）。 */
+    @Override public boolean isConcurrencySafe(JsonNode args) { return true; }
+
     @Override public String execute(ToolExecution exec) {
         JsonNode args = exec.args();
         String regex = args.path("pattern").asText("");

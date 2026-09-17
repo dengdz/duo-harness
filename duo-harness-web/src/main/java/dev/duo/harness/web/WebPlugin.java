@@ -38,6 +38,7 @@ import java.util.Set;
  * <pre>{@code config:
  *   port: 8080        # 监听端口（省略默认 8080；只绑 127.0.0.1）
  *   maxIterations: 30 # 单轮对话迭代上限（省略默认 10；计划模式等探索型任务建议调高）
+ *   maxParallelToolCalls: 10 # 单轮并发安全工具并行上限（省略默认 10；=1 即完全串行，排障用）
  *   governance: {}    # 上下文治理阈值段（省略即缺省常量）}</pre>
  */
 public final class WebPlugin implements Plugin<JsonNode> {
@@ -88,8 +89,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
         ContextGovernance governance = PresenterAssembly.governance(adapter, governanceTuning);
         // 迭代上限（BUG-20260917-03）：config.maxIterations 可省，缺省内核常量（10）
         int maxIterations = PresenterAssembly.parseMaxIterations(config);
+        // 并发度（ADR-0018）：config.maxParallelToolCalls 可省，缺省 10；=1 即完全串行
+        int maxParallelToolCalls = PresenterAssembly.parseMaxParallelToolCalls(config);
         ChatAgent agent = PresenterAssembly.chatAgent(
-                adapter, tools, session, prompts, maxIterations, governance);
+                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -120,7 +123,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // attach，双开时与 CLI 共享静态去重表
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
-                    adapter, tools, fresh, prompts, maxIterations, governance));
+                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance));
             SessionTitles.attach(fresh, adapter);
         });
         SessionTitles.attach(session, adapter);
