@@ -22,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -36,7 +37,7 @@ class ExitPlanModeToolTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：ExitPlanModeToolTest —— 计划呈交：批准写事件并回调、"
-                + "打回携带反馈不退模式、fail-closed 保持计划模式（3 用例） ===");
+                + "打回携带反馈不退模式、fail-closed 保持计划模式、复核请求身份键（4 用例） ===");
     }
 
     interface ToolsView {
@@ -141,5 +142,26 @@ class ExitPlanModeToolTest {
         assertTrue(text.contains("未获批准"), text);
         assertEquals(0, approvals.get());
         assertTrue(PlanMode.isActive(session), "fail-closed 保持计划模式（对齐 DSH）");
+    }
+
+    @Test
+    void planRequestCarriesToolIdentityAndPlanBody() throws IOException {
+        // BUG-20260917-04 回归锁：复核请求必须是 KIND_PLAN + subject=工具名（审计桥与
+        // 呈现位的渲染身份键），detail=计划全文——缺任一项则双呈现位下卡不可达
+        Session session = newSession();
+        session.append(PlanMode.enteredEvent());
+        AtomicReference<InteractionRequest> captured = new AtomicReference<>();
+        ToolsService tools = assemble(request -> {
+            captured.set(request);
+            return InteractionAnswer.answered(List.of(ExitPlanModeTool.APPROVE_OPTION), "console");
+        }, session, new AtomicInteger());
+
+        tools.execute(ExitPlanModeTool.NAME, args("1. 加文件 2. 改文档"));
+
+        assertEquals(InteractionRequest.KIND_PLAN, captured.get().kind());
+        assertEquals(ExitPlanModeTool.NAME, captured.get().subject(), "subject = 工具名（呈现身份键）");
+        assertEquals("1. 加文件 2. 改文档", captured.get().detail(), "detail = 计划全文");
+        assertEquals(ExitPlanModeTool.APPROVE_OPTION, captured.get().options().get(0), "首选项 = 批准");
+        assertEquals(2, captured.get().options().size(), "批准 / 打回两个选项");
     }
 }

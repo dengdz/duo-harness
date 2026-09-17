@@ -26,7 +26,7 @@ class AuditingAnswererTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：AuditingAnswererTest —— 审计桥：审批请求/决定事件落会话、"
-                + "提问透传、null 透传（3 用例） ===");
+                + "提问透传、null 透传、计划复核同通道留痕与打回语义（5 用例） ===");
     }
 
     @TempDir
@@ -73,5 +73,40 @@ class AuditingAnswererTest {
                 "委托者放弃作答权时原样透传 null");
         assertEquals(1, session.events().size(), "仅 requested 事件（无决定可记）");
         assertEquals(SessionEvent.APPROVAL_REQUESTED, session.events().get(0).type());
+    }
+
+    @Test
+    void planRequestsAreAuditedLikeApprovals() throws IOException {
+        // BUG-20260917-04 回归锁：计划复核（KIND_PLAN）与审批同通道留痕——双呈现位
+        // 部署下浏览器计划卡的数据源；subject=工具名是前端渲染计划卡形态的身份键
+        Session session = Session.create(tempDir.resolve("sessions"));
+        AuditingAnswerer auditing = new AuditingAnswerer(() -> session,
+                request -> InteractionAnswer.answered(List.of("批准，开始执行"), "web"));
+
+        InteractionAnswer answer = auditing.answer(InteractionRequest.plan(
+                "exit_plan_mode", "# 计划：两步早餐清单", List.of("批准，开始执行")));
+
+        assertEquals(true, answer.approved());
+        assertEquals(2, session.events().size(), "请求与决定两个审计事件");
+        assertEquals(SessionEvent.APPROVAL_REQUESTED, session.events().get(0).type());
+        assertEquals("exit_plan_mode", session.events().get(0).toolName(), "身份键供呈现位渲染计划卡");
+        assertEquals("# 计划：两步早餐清单", session.events().get(0).text(), "计划全文作事件载荷");
+        assertEquals(SessionEvent.APPROVAL_DECIDED, session.events().get(1).type());
+        assertEquals("allow（回答者: web）", session.events().get(1).text(), "命中批准项记 allow");
+    }
+
+    @Test
+    void planRetypeIsRecordedAsDeny() throws IOException {
+        // 打回的决定语义：计划回答的 approved 恒真（answered），批准与否看值是否命中
+        // 批准项——旧实现按 approved 写 allow，卡冻结为"✓ 计划已获批准"（错判）
+        Session session = Session.create(tempDir.resolve("sessions"));
+        AuditingAnswerer auditing = new AuditingAnswerer(() -> session,
+                request -> InteractionAnswer.answered(List.of("把第二步拆细"), "web"));
+
+        auditing.answer(InteractionRequest.plan(
+                "exit_plan_mode", "# 计划草稿", List.of("批准，开始执行")));
+
+        assertEquals(SessionEvent.APPROVAL_DECIDED, session.events().get(1).type());
+        assertEquals("deny（回答者: web）", session.events().get(1).text(), "反馈文本（非批准项）记 deny");
     }
 }

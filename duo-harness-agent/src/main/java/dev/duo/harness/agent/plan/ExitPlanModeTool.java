@@ -76,9 +76,10 @@ public final class ExitPlanModeTool implements ToolDefinition {
             throw new PluginException(NAME + " 缺少必填参数 plan（完整计划内容）");
         }
         String plan = planNode.asText();
-        InteractionAnswer answer = answers.ask(InteractionRequest.question(
-                "请审阅以下计划：\n" + plan,
-                List.of(APPROVE_OPTION, RETYPE_OPTION), false));
+        // 计划复核走 KIND_PLAN（BUG-20260917-04）：subject 携工具名——审计桥据此把
+        // 请求/决定写进作答呈现位会话，浏览器计划卡与终端提示都以此身份键渲染
+        InteractionAnswer answer = answers.ask(InteractionRequest.plan(
+                NAME, plan, List.of(APPROVE_OPTION, RETYPE_OPTION)));
         if (answer == null || !answer.approved() || answer.values().isEmpty()) {
             // fail-closed：无回答者 / 未作答 → 计划不批准（对齐 DSH：保持计划模式，
             // 不写 exited——模型可继续修改计划或由用户 /plan off 手动退出）

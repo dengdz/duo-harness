@@ -35,7 +35,34 @@ public final class ConsoleAnswerer implements Answerer {
         if (InteractionRequest.KIND_QUESTION.equals(request.kind())) {
             return answerQuestion(request);
         }
+        if (InteractionRequest.KIND_PLAN.equals(request.kind())) {
+            return answerPlan(request);
+        }
         return null;
+    }
+
+    /**
+     * 计划复核呈现与作答（BUG-20260917-04）：计划全文 + 复核选项；输序号选
+     * 批准/继续计划，或直接输入修改意见。回答值走 options 解析（批准选项
+     * 精确匹配是工具的判据）。
+     */
+    private InteractionAnswer answerPlan(InteractionRequest request) {
+        out.println("  [计划呈交] 请审阅以下计划");
+        for (String planLine : request.detail().split("\n", -1)) {
+            out.println("    " + planLine);
+        }
+        List<String> options = request.options();
+        for (int i = 0; i < options.size(); i++) {
+            out.println("    " + (i + 1) + ". " + options.get(i));
+        }
+        out.print("  请选择（输序号；或直接输入你的修改意见）: ");
+        out.flush();
+        String line = readLine();
+        if (line == null || line.isBlank()) {
+            out.println("  （未作答）");
+            return InteractionAnswer.failClosed();
+        }
+        return InteractionAnswer.answered(resolveValues(line.strip(), options, false), SOURCE);
     }
 
     /** 审批呈现与作答：y = 允许本次，其余/EOF = 拒绝。 */
