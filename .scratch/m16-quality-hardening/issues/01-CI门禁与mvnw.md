@@ -10,7 +10,11 @@ ready-for-agent
 
 ## Checklist
 
-- [ ] `.github/workflows/ci.yml`：push（main + `0.*`）与 pull_request 触发，单 JDK 21，步骤 `mvn -B verify`，带依赖缓存
-- [ ] Maven wrapper（mvnw + 配套 wrapper 目录）入库，`./mvnw verify` 与本机 mvn 行为等效
-- [ ] `0.11.0` 分支 push 后工作流跑通全绿
-- [ ] 构建要求文档提及 mvnw 用法（如有 Maven 表述则同步）
+- [x] `.github/workflows/ci.yml`：push（main + `0.*`）与 pull_request 触发，单 JDK 21，步骤 `mvn -B verify`，带依赖缓存
+- [x] Maven wrapper（mvnw + 配套 wrapper 目录）入库，`./mvnw verify` 与本机 mvn 行为等效（本地全量 10 模块绿，46.7s）
+- [ ] `0.11.0` 分支 push 后工作流跑通全绿（待推送验证——推送需用户确认）
+- [x] 构建要求文档提及 mvnw 用法（README 构建要求行已更新）
+
+## Comments
+
+- 2026-09-17：实现完成，本地 `./mvnw -B -ntp verify` 全量绿；推送后 CI 首跑即本单最后一项验收（推送等用户指令）。

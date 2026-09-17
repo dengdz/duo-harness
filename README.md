@@ -27,4 +27,4 @@ mvn -pl duo-harness-example -am package exec:java
 
 入口在 [docs/index.md](docs/index.md)：入门（运行 Demo）、架构（模块划分与关键语义）、已知限制、术语表与 ADR。
 
-构建要求：JDK 21、Maven 3.9+。
+构建要求：JDK 21、Maven 3.9+（也可直接用入库的 `./mvnw`，首次运行自动获取 3.9.11 发行版）。
