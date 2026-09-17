@@ -7,8 +7,8 @@
 | # | 限制 | 说明与去向 |
 |---|---|---|
 | 1 | 运行时行级配置热重载不可用 | `Boot.from(yml)` 为一次性引导，改配置需重启进程；HMR 与 DSH 式 Entry.update 行对账属后续里程碑 |
-| 2 | `bail` 与 `serial` 语义等价 | 同步阻塞模型下无差异（DSH 的差异源于异步监听器），bail 保留词汇（ADR-0001 决策） |
-| 3 | recheck 的真并发路径未经多线程测试 | 六态迁移经 ReentrantLock 串行化 + LOADING dirty 标志兜底，单线程语义已测；跨线程同时 provide/remove/dispose 的深度竞态为已知未测区 |
+| 2 | `bail` 与 `serial` 语义等价 | 同步阻塞模型下无差异（DSH 的差异源于异步监听器），bail 保留词汇（ADR-0001 决策）；M17 工具并发落地后复审此等价是否仍成立（ADR-0018） |
+| 3 | recheck 的真并发路径未经多线程测试 | 六态迁移经 ReentrantLock 串行化 + LOADING dirty 标志兜底，单线程语义已测；跨线程同时 provide/remove/dispose 的深度竞态为已知未测区；M17 工具域引入真并发（虚拟线程执行工具，ADR-0018）后跨线程访问频率升高，该风险面落地后复审 |
 | 4 | isolate 多作用域隔离不可用 | 注册表二阶键已预留，Realm/作用域注入/迁移未实现（M1 决策） |
 | 5 | 独立 jar 热加载不可用 | 同 classpath + 配置声明模型（ADR-0001），child Classloader 动态加载保留为扩展点 |
 
