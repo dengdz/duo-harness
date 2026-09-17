@@ -32,7 +32,8 @@ class ContractGuardDemoMainTest {
         String output = buffer.toString(StandardCharsets.UTF_8);
         // 第一幕：契约合规放行、违约点名、未声明透传
         assertTrue(output.contains("调用 summarize"), output);
-        assertTrue(output.contains("输出违约: 已找到 integer，必须是 string"), output);
+        // 违约文案只锚定自家前缀——networknt 校验措辞随 JVM 缺省 locale 变化（CI en / 本机 zh）
+        assertTrue(output.contains("工具 \"search\" 输出违约"), output);
         assertTrue(output.contains("[放行] 任意形态都行"), output);
         // 第二幕：guard 拒绝署名（guard）、短路（第二道计数停在 1）
         assertTrue(output.contains("执行被拒绝: 目标文件含敏感词（guard）"), output);
