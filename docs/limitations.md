@@ -44,13 +44,13 @@
 |---|---|---|
 | 1 | CLI REPL idle 后无热恢复 | CLI 会话被 Web 侧打开（撞锁）后 REPL 转入 idle，无法在不重启进程的情况下回到终端交互（ADR-0011 决策 3 有意取舍）；热恢复属后续里程碑 |
 | 2 | 交互工具的会话绑定先到先得 | ask_user / exit_plan_mode 等交互工具查重注册时先注册方的会话绑定生效——多入口装配下 plan-mode 状态归属按注册序而非发起呈现位（M11 spec 留档，单入口常态不触发）；按发起呈现位亲和路由属后续 |
-| 3 | compaction 不可手动触发 | 历史折叠仅由窗口阈值自动驱动，无手动压缩入口（ADR-0013 裁定 /compact 出局）；手动压缩归 M16 斜杠命令注册表 |
+| 3 | compaction 不可手动触发 | 历史折叠仅由窗口阈值自动驱动，无手动压缩入口（ADR-0013 裁定 /compact 出局）；手动压缩归 M19 斜杠命令与运行中治理（ADR-0016） |
 
 ## M12（0.7.0）
 
 | # | 限制 | 说明与去向 |
 |---|---|---|
-| 1 | bash 写范围不受 workspace 约束 | 路径包含性是可信代码内的策略检查，非 OS 内核边界（ADR-0012 明示）；bash 的拦截点只有审批（非 danger 档一律 ask）。OS 级沙箱（Seatbelt/Landlock/bwrap）属后续里程碑 |
+| 1 | bash 写范围不受 workspace 约束 | 路径包含性是可信代码内的策略检查，非 OS 内核边界（ADR-0012 明示）；bash 的拦截点只有审批（非 danger 档一律 ask）。OS 级沙箱（Seatbelt/Landlock/bwrap）属 M22（Landlock/Seatbelt/e2b 三路研究先行，ADR-0016） |
 | 2 | glob/grep 无 .gitignore 语义 | 仅跳 VCS 元数据目录（.git/.svn/.hg/.bzr/.jj）；.gitignore 过滤、上下文行参数（-A/-B/-C）与 ripgrep 捆绑属后续（引擎留替换点） |
 | 3 | 权限预设切换不持久 | `/permission` 切运行时态，重启回 yml `mode` 缺省；切换的会话级持久化属后续 |
 
@@ -66,7 +66,7 @@
 | # | 限制 | 说明与去向 |
 |---|---|---|
 | 1 | 子代理同步等待不做 | spawn/fork 恒为后台异步 + 控制面治理（ADR-0015 决策 2 裁定）；对照 DSH（run_in_background 可选）与 ZCode（父阻塞等结果）为刻意不同形态 |
-| 2 | 子代理无跨任务记忆、禁嵌套（深度=1） | 子代理是短命一次性执行者（与 DSH/ZCode 同构，框架基线明文告知）；多层分解靠父 agent 拆分（DSH 的 todo_write/goal 类"分解抓手"属后续里程碑） |
+| 2 | 子代理无跨任务记忆、禁嵌套（深度=1） | 子代理是短命一次性执行者（与 DSH/ZCode 同构，框架基线明文告知）；多层分解靠父 agent 拆分（DSH 的 todo_write/goal 类"分解抓手"归 M17（ADR-0016）） |
 | 3 | 子代理审批未钉死 | 子代理工具调用走共享审批管线——模板若含需审批（requiresApproval）工具，子代理会挂起等待应答；DSH 形态是审批策略恒钉 'never' + 拒绝理由回传（三方对照结论，可作小改） |
 | 4 | 子代理不可见技能清单与 AGENTS.md | 子代理 system = 框架基线 + 模板专属提示，不含呈现位的 prompts 片段（技能目录/项目约定）；DSH 子代理继承父全部 prompt 段、ZCode 注入 skills 清单——补齐涉模板制边界（ADR-0015 决策 5 细化），先裁定再动手 |
 | 5 | 子代理无环境块 | 子代理不知道工作目录/平台等运行环境（ZCode 注入 `<env>` 块、DSH 持久化 cwd/lineage 进子会话 meta）；三方对照差距，属后续小改 |
