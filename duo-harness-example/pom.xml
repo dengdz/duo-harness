@@ -21,6 +21,11 @@
     </dependency>
     <dependency>
       <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-hooks</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
       <artifactId>duo-harness-core</artifactId>
       <version>${project.version}</version>
     </dependency>

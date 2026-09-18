@@ -14,6 +14,7 @@
   <modules>
     <module>duo-harness-core</module>
     <module>duo-harness-tools</module>
+    <module>duo-harness-hooks</module>
     <module>duo-harness-mcp</module>
     <module>duo-harness-llm</module>
     <module>duo-harness-session</module>
