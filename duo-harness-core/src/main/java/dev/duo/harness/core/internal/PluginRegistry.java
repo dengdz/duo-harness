@@ -49,7 +49,7 @@ final class PluginRegistry {
 
     private void recheckDependentsOf(String name) {
         for (PluginInstance instance : instances) {
-            if (instance.inject().contains(name)) {
+            if (instance.dependsOn(name)) {
                 try {
                     instance.recheck();
                 } catch (RuntimeException e) {

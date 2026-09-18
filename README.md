@@ -1,6 +1,6 @@
 # duo-harness
 
-Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / LLM / 会话与上下文治理 / 技能 / 计划模式 / 人机协同 / 子代理）以插件形式组装。已发布 0.1.0-0.12.0（并发工具调度、工具管线缺省超时、todo 任务分解抓手，及 CI 门禁、入口栅栏、审批钉死、崩溃恢复、流式空闲超时等加固）。
+Java 实现的插件化 AI agent harness：内核是自研轻量插件容器，所有能力（工具 / MCP / LLM / 会话与上下文治理 / 技能 / 计划模式 / 人机协同 / 子代理 / hooks）以插件形式组装。已发布 0.1.0-0.13.0（扩展机制：hooks 生态兼容、插件可选依赖、awaitStartup 超时，及并发工具调度、崩溃恢复、入口栅栏等加固）。
 
 ## 一条命令看它做什么
 
@@ -16,6 +16,7 @@ mvn -pl duo-harness-example -am package exec:java
 |---|---|
 | `duo-harness-core` | 插件容器内核：生命周期（六态 + epoch 依赖指纹）、服务注入（视图接口寻址）、事件（五种分派模式）、配置驱动 boot、DuoHome 目录约定 |
 | `duo-harness-tools` | 工具域：注册与三段执行管线，审批 / guard / 输出契约 / 管线缺省超时治理挂链生效；本机 fs 工具族与三档权限预设 |
+| `duo-harness-hooks` | hooks 扩展域：复用 Claude Code/Codex 配置格式的外部命令钩子（PreToolUse/PostToolUse），挂工具三段管线（fail-open，ADR-0019） |
 | `duo-harness-mcp` | MCP 接入：官方 Java SDK 连接 stdio 服务器，断连重连，远端工具自动同步进工具域 |
 | `duo-harness-llm` | LLM 适配：provider 中立流式调用契约 + OpenAI 兼容适配器（`~/.duo/config.yml` 配置） |
 | `duo-harness-session` | 会话域：事件溯源（append 单写 + JSONL 落盘）与多轮上下文投影、独占锁、崩溃恢复 |

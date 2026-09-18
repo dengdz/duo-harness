@@ -21,6 +21,16 @@ public interface Plugin<C> {
     }
 
     /**
+     * 声明可选依赖的服务名集合："就绪则用、缺失不拦"（ADR-0019）——缺失不阻塞
+     * 启动（区别于 {@link #inject()} 的全部就绪才启动）；在场时参与依赖指纹，
+     * 出现/消失经自动重载在升级↔降级间双向切换。读取许可与 inject 合并：
+     * 经 {@code ctx.as(...)} 读可选服务须在此声明。默认无可选依赖。
+     */
+    default Set<String> optionalInject() {
+        return Set.of();
+    }
+
+    /**
      * 声明 config 类型，内核据此把原始配置（Map / JsonNode）绑定到强类型 record。
      * 返回 {@code null} 表示该插件不接受配置。
      */

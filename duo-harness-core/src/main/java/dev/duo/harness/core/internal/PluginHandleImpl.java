@@ -23,6 +23,11 @@ final class PluginHandleImpl implements PluginHandle {
     }
 
     @Override
+    public void awaitStartup(java.time.Duration timeout) {
+        instance.await(timeout);
+    }
+
+    @Override
     public PluginState state() {
         return instance.state();
     }

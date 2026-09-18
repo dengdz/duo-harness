@@ -5,10 +5,16 @@ import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginState;
 import dev.duo.harness.core.api.events.PluginStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -20,10 +26,15 @@ import java.util.concurrent.locks.ReentrantLock;
  * 这同时系统性化解了"注销传导误停刚被新实例唤醒的依赖方"的竞态窗口：
  * 误停实为一次多余重启，最终一致。</p>
  *
+ * <p>可选依赖（optionalInject）只放宽一处：缺失不阻塞 PENDING——指纹跳过
+ * 缺失项、在场照常参与，升级↔降级重载与硬依赖同一套机制（ADR-0019）。</p>
+ *
  * <p>状态迁移统一"锁内改态、锁外广播 plugin/status 事件"；
  * scope 在每次启动时新建（ContextImpl 一次性），卸载即整体回滚。</p>
  */
 final class PluginInstance {
+
+    private static final Logger log = LoggerFactory.getLogger(PluginInstance.class);
 
     /**
      * 本实例的私有作用域（apply 的 ctx；每次启动新建，卸载即回滚其全部副作用）。
@@ -44,6 +55,10 @@ final class PluginInstance {
     private final String pluginName;
     /** 插件声明的依赖服务名集合（TreeSet：epoch 拼串顺序稳定）。 */
     private final TreeSet<String> inject;
+    /** 插件声明的可选依赖集合（缺失不阻塞启动；TreeSet 同为指纹顺序稳定）。 */
+    private final TreeSet<String> optionalInject;
+    /** 本作用域的读取许可（inject ∪ optionalInject，传入新建 scope）。 */
+    private final TreeSet<String> readPermission;
     /** 首次启动完成信号（激活或失败都放行等待者；重启经事件观测）。 */
     private final CountDownLatch started = new CountDownLatch(1);
     /** 状态锁。不用 synchronized：与内核锁惯例一致，虚拟线程不 pin（ADR-0002）。 */
@@ -59,7 +74,8 @@ final class PluginInstance {
     private boolean dirtyDuringLoading;
 
     PluginInstance(PluginRegistry registry, EventsImpl events, ServiceRegistry services,
-                   Plugin<?> plugin, Object config, String pluginName, Set<String> inject) {
+                   Plugin<?> plugin, Object config, String pluginName,
+                   Set<String> inject, Set<String> optionalInject) {
         this.registry = registry;
         this.events = events;
         this.services = services;
@@ -67,12 +83,15 @@ final class PluginInstance {
         this.config = config;
         this.pluginName = pluginName;
         this.inject = new TreeSet<>(inject);
+        this.optionalInject = new TreeSet<>(optionalInject);
+        this.readPermission = new TreeSet<>(this.inject);
+        this.readPermission.addAll(this.optionalInject);
         this.scope = newScope();
     }
 
     /** 新建私有作用域（构造与每次重启共用）。 */
     private ContextImpl newScope() {
-        return new ContextImpl(events, services, registry, inject);
+        return new ContextImpl(events, services, registry, readPermission);
     }
 
     /** 诊断显示名（报错点名用）。 */
@@ -81,8 +100,20 @@ final class PluginInstance {
     }
 
     /** 插件声明的依赖服务名集合（防御拷贝，防外部变更指纹输入）。 */
-    Set<String> inject() {
-        return java.util.Collections.unmodifiableSet(inject);
+    /** 是否依赖该服务（硬或可选）——服务变化传导的过滤口径（可选缺席者同样要复查重载）。 */
+    boolean dependsOn(String name) {
+        return inject.contains(name) || optionalInject.contains(name);
+    }
+
+    /** 硬依赖中尚未就绪的服务名（诊断点名：boot 审计与 awaitStartup 超时共用口径）。 */
+    List<String> missingHardDependencies() {
+        List<String> missing = new ArrayList<>();
+        for (String name : inject) {
+            if (services.resolve(name) == null) {
+                missing.add(name);
+            }
+        }
+        return missing;
     }
 
     /** 启动失败原因；未失败返回 null。 */
@@ -184,6 +215,7 @@ final class PluginInstance {
 
     /** 等待首次启动完成：PENDING 阻塞至激活或失败（虚拟线程友好）。 */
     void await() {
+        announceWaitIfPending();
         try {
             started.await();
         } catch (InterruptedException e) {
@@ -191,6 +223,59 @@ final class PluginInstance {
             throw new PluginException("等待插件 " + pluginName + " 启动被中断", e);
         }
         rethrowFailureIfAny();
+    }
+
+    /**
+     * 等待首次启动完成，最多 timeout：超时点名缺失服务（ADR-0019）。
+     * 插件保持 PENDING——服务就绪后照常激活，可再次等待；零时长即立即探测。
+     */
+    void await(Duration timeout) {
+        if (timeout.isNegative()) {
+            throw new IllegalArgumentException("timeout 不能为负: " + timeout);
+        }
+        announceWaitIfPending();
+        boolean completed;
+        try {
+            completed = started.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new PluginException("等待插件 " + pluginName + " 启动被中断", e);
+        }
+        if (!completed) {
+            List<String> missing = missingHardDependencies();
+            String detail = missing.isEmpty()
+                    ? "无缺失硬依赖（apply 可能仍在进行）"
+                    : "缺失服务: " + missing;
+            throw new PluginException("等待插件 " + pluginName + " 启动超时（已等 "
+                    + describe(timeout) + "），仍处 " + state() + "，" + detail
+                    + "。插件保持等待，服务就绪后自动激活，可再次 awaitStartup。");
+        }
+        rethrowFailureIfAny();
+    }
+
+    /** 进入阻塞前点名等待对象（静默卡死治理，ADR-0019）；仅确将阻塞时返回非 null。 */
+    String waitAnnouncement() {
+        if (started.getCount() > 0 && state() == PluginState.PENDING) {
+            return "等待插件 " + pluginName + " 首次启动：缺失服务 " + missingHardDependencies()
+                    + "（服务就绪后自动激活）";
+        }
+        return null;
+    }
+
+    private void announceWaitIfPending() {
+        String announcement = waitAnnouncement();
+        if (announcement != null) {
+            log.info(announcement);
+        }
+    }
+
+    /** 时长的可读形态（亚秒显毫秒，整秒显秒）。 */
+    private static String describe(Duration d) {
+        long ms = d.toMillis();
+        if (ms < 1000) {
+            return ms + "ms";
+        }
+        return ms % 1000 == 0 ? (ms / 1000) + "s" : ms + "ms";
     }
 
     /** 仅供日志与诊断输出。 */
@@ -271,7 +356,11 @@ final class PluginInstance {
         return ((Plugin<Object>) plugin).apply(scope, config);
     }
 
-    /** 依赖指纹：服务名排序后按 (名, 实例 identity) 拼串；任一缺失返回 null。 */
+    /**
+     * 依赖指纹：服务名排序后按 (名, 实例 identity) 拼串。硬依赖任一缺失返回
+     * null（PENDING 等待）；可选依赖缺失跳过（不阻塞启动也不进指纹）、在场
+     * 照常参与——出现/消失即指纹变化，驱动升级↔降级双向重载（ADR-0019）。
+     */
     private String computeEpochLocked() {
         StringBuilder sb = new StringBuilder();
         for (String name : inject) {
@@ -279,11 +368,21 @@ final class PluginInstance {
             if (impl == null) {
                 return null;
             }
-            // 类名 + identity 双因子：单因子碰撞会漏判换实现（epoch 不变）
-            sb.append(name).append('=').append(impl.getClass().getName())
-                    .append('@').append(System.identityHashCode(impl)).append(';');
+            appendFingerprint(sb, name, impl);
+        }
+        for (String name : optionalInject) {
+            Object impl = services.resolve(name);
+            if (impl != null) {
+                appendFingerprint(sb, name, impl);
+            }
         }
         return sb.toString();
+    }
+
+    private static void appendFingerprint(StringBuilder sb, String name, Object impl) {
+        // 类名 + identity 双因子：单因子碰撞会漏判换实现（epoch 不变）
+        sb.append(name).append('=').append(impl.getClass().getName())
+                .append('@').append(System.identityHashCode(impl)).append(';');
     }
 
     /** 启动失败收尾：FAILED 终态 + 回滚半启动 scope + 广播。 */

@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.duo</groupId>
     <artifactId>duo-harness</artifactId>
-    <version>0.12.0</version>
+    <version>0.13.0</version>
   </parent>
 
   <artifactId>duo-harness-example</artifactId>
@@ -17,6 +17,11 @@
     <dependency>
       <groupId>dev.duo</groupId>
       <artifactId>duo-harness-cli</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-hooks</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

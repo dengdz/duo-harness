@@ -48,6 +48,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * （绝不静默分脑）；`/new` 换绑即释放旧会话锁。LLM 未配置时插件 FAILED 并给出
  * 配置示例。</p>
  *
+ * <p><b>纯对话装配</b>（ADR-0019）：workspace 声明为可选依赖——boot yml 不装
+ * fs 工具插件行时本插件照常启动，`/permission` 降级提示"未挂载"。</p>
+ *
  * <p>线程约定：REPL 循环独占虚拟线程（cli-repl）；{@link #stop} 可从树 dispose
  * 线程并发调用（关输入流打断阻塞读 + 原子停止标志）；会话与回答者的清理在 idle
  * 收尾点单线程执行，stop 只负责打断。</p>
@@ -94,8 +97,16 @@ public final class CliPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
-                WorkspacePolicy.SERVICE_NAME,
                 InteractionService.SERVICE_NAME, SkillRegistry.SERVICE_NAME);
+    }
+
+    /**
+     * workspace 可选依赖（ADR-0019）：fs 插件缺席的纯对话装配照常启动，
+     * `/permission` 降级为"未挂载"提示；fs 插件在场时照常可用。
+     */
+    @Override
+    public Set<String> optionalInject() {
+        return Set.of(WorkspacePolicy.SERVICE_NAME);
     }
 
     @Override
@@ -109,7 +120,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         PromptRegistry prompts = ctx.as(CliPromptsView.class).prompts();
         InteractionService answers = ctx.as(CliAnswersView.class).answers();
         SkillRegistry skills = ctx.as(CliSkillsView.class).skills();
-        WorkspacePolicy workspacePolicy = ctx.as(CliWorkspaceView.class).workspace();
+        // workspace 是可选依赖（ADR-0019）：fs 插件缺席的纯对话装配照常启动——
+        // hasService 判存接线，缺席即 null，/permission 走降级提示
+        WorkspacePolicy workspacePolicy = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
+                ? ctx.as(CliWorkspaceView.class).workspace() : null;
 
         LlmAdapter llm = llmOverride != null ? llmOverride : loadLlm();
         Path sessionsDir = sessionsDir();
@@ -278,6 +292,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 String userText;
                 if (line.strip().equals("/permission") || line.strip().startsWith("/permission ")) {
                     String rest = line.strip().length() > 11 ? line.strip().substring(11).strip() : "";
+                    if (workspacePolicy == null) {
+                        out.println("workspace 服务未挂载（未装配 fs 工具插件），/permission 不可用。");
+                        out.flush();
+                        continue;
+                    }
                     if (rest.isEmpty()) {
                         out.println("当前预设: " + workspacePolicy.mode().configName()
                                 + "（可选: read-only / workspace-write / danger-full-access）");

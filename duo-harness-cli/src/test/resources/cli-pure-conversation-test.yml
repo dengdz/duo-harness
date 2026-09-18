@@ -1,0 +1,22 @@
+plugins:
+  # 纯对话装配（ADR-0019 可选依赖验收）：不装 fs 工具插件行——CliPlugin 的 workspace
+  # 为可选依赖，缺席照常启动；/permission 降级"未挂载"提示（CliPluginAssemblyTest 用例）
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  - id: prompts
+    name: dev.duo.harness.agent.prompt.PromptPlugin
+    config:
+      systemPrompt: "纯对话装配测试用 system 提示。"
+
+  - id: answers
+    name: dev.duo.harness.tools.InteractionPlugin
+
+  - id: skills
+    name: dev.duo.harness.agent.skills.SkillsPlugin
+    config:
+      disabled: []
+
+  - id: cli
+    name: dev.duo.harness.cli.CliPlugin
+    config: {}

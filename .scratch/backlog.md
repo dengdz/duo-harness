@@ -27,9 +27,9 @@
 
 ## 容器与测试基建（M12 衍生）
 
-- [ ] **插件可选依赖**：`inject()` 目前全是硬依赖（缺失即 PENDING 挂起/启动失败），CLI 想"不带 fs 工具"的纯对话装配无法表达——需要声明可选服务名与降级语义（如 `/permission` 在无 workspace 服务时提示未挂载）。来源：M12-02 审查修复（/permission 接线引入 CLI→fs 硬依赖）。→ 已入册 M18 扩展机制（ADR-0016）
-- [ ] **测试进程收割**：surefire fork 被强杀（或异常退出）时 MiniFileSystemServer 等 stdio 子进程不回收，机上是曾累计 150+ 僵尸进程； graceful dispose 路径正常。可考虑 McpClientPlugin 挂 shutdown hook 兜底杀子进程。来源：M12-02 回归排查（2026-09-15） 补充案例（M12-05）：cli 行的 REPL 线程非守护且阻塞在 System.in——单跑含 cli 行装配的测试类时测试本体已完成但 **JVM 退出挂起**（surefire forkedProcessTimeoutInSeconds=240 未兜住此形态，其只约束测试执行段）；修法=Boot 前 System.setIn 空流（ToolCatalogTest 已修），机制级收敛随 awaitStartup 超时语义一并评估。→ M16 已书面化兜底结论（CliPlugin.stop 的 in.close() 即 REPL 阻塞解除）；机制级收敛随 awaitStartup 超时语义一并评估
-- [ ] **awaitStartup 超时语义**：编程挂载 `Context.plugin(...).awaitStartup()` 缺依赖时无限等待且无日志，测试/演示易静默卡死（yml 路径有 Boot 校验点名报错）——评估加可配超时 + 点名缺失服务。来源：M12-02 回归排查（2026-09-15）。→ 已入册 M18 扩展机制（ADR-0016）
+- [x] **插件可选依赖**：`inject()` 目前全是硬依赖（缺失即 PENDING 挂起/启动失败），CLI 想"不带 fs 工具"的纯对话装配无法表达——需要声明可选服务名与降级语义（如 `/permission` 在无 workspace 服务时提示未挂载）。来源：M12-02 审查修复（/permission 接线引入 CLI→fs 硬依赖）。→ M18-01 已落地：`optionalInject()` + CLI 纯对话装配（ADR-0019 决策 7-9，2026-09-18）
+- [ ] **测试进程收割**：surefire fork 被强杀（或异常退出）时 MiniFileSystemServer 等 stdio 子进程不回收，机上是曾累计 150+ 僵尸进程； graceful dispose 路径正常。可考虑 McpClientPlugin 挂 shutdown hook 兜底杀子进程。来源：M12-02 回归排查（2026-09-15） 补充案例（M12-05）：cli 行的 REPL 线程非守护且阻塞在 System.in——单跑含 cli 行装配的测试类时测试本体已完成但 **JVM 退出挂起**（surefire forkedProcessTimeoutInSeconds=240 未兜住此形态，其只约束测试执行段）；修法=Boot 前 System.setIn 空流（ToolCatalogTest 已修），机制级收敛随 awaitStartup 超时语义一并评估。→ M16 已书面化兜底结论（CliPlugin.stop 的 in.close() 即 REPL 阻塞解除）；M18-02 评估结论（2026-09-18）：awaitStartup 超时与等待点名日志已消除"编程挂载静默卡死"这一测试挂起成因，与本条两形态（fork 强杀遗留 stdio 子进程、REPL 线程阻塞 IO）均正交；stdio 子进程兜底方案已明确（ConnectionSupervisor 持活动连接注册幂等 shutdown hook，JVM 退出时 destroyForcibly，约 40 行），但 fork 强杀路径无法在 surefire 内稳定复现、测试成本与收益不成比例——方案记档，继续挂账
+- [x] **awaitStartup 超时语义**：编程挂载 `Context.plugin(...).awaitStartup()` 缺依赖时无限等待且无日志，测试/演示易静默卡死（yml 路径有 Boot 校验点名报错）——评估加可配超时 + 点名缺失服务。来源：M12-02 回归排查（2026-09-15）。→ M18-02 已落地：`awaitStartup(Duration)` 超时点名缺失服务、无参版等待前点名日志（ADR-0019 决策 10，2026-09-18）
 
 ## 交互路由（M12-02 验收衍生）
 
@@ -40,7 +40,14 @@
 
 - [ ] **MCP 工具并发白名单**：MCP 远端工具现为恒独占（ADR-0018 决策 2）；yml 按 `服务器名/工具名` 点名放开并发（部署者裁量，与 ADR-0017 的 opt-in 精神同构）。来源：M17 grill Q2 裁定留后续。
 - [ ] **skill 工具并发放开**：技术上纯只读，M17 保守起步未标安全（fail-closed）；后续放开的第一候选。来源：M17 grill Q2 标注盘点。
-- [ ] **双呈现位叠挂管线超时监听器**：cli+web 双开共享 ToolsService 时 `mountPipelineTimeout` 各挂一次（嵌套超时、短者先生效，行为不破坏但配置语义含混且多一层线程跳换）——补查重先到先得（与 registerTodoWriteTool 同模式）。来源：M17 双轴审查 P2（2026-09-18）。
+- [x] **双呈现位叠挂管线超时监听器**：cli+web 双开共享 ToolsService 时 `mountPipelineTimeout` 各挂一次（嵌套超时、短者先生效，行为不破坏但配置语义含混且多一层线程跳换）——补查重先到先得（与 registerTodoWriteTool 同模式）。来源：M17 双轴审查 P2（2026-09-18）。→ M18-05 已修复：`PipelineTimeout.mount` 按 ToolsService 实例查重先到先得、摘除后可重挂（2026-09-18）
+
+## hooks 域（M18 衍生，2026-09-18，ADR-0019）
+
+- [ ] **项目级 hooks 配置**：仓库内 `.duo/hooks.json` 与用户级合并（团队共享钩子场景）——需先立"项目根"概念（git 定根或 cwd 锚定），M18 只做了用户级。来源：M18 grill Q1（2026-09-18）。
+- [ ] **钩子事件扩面（UserPromptSubmit / Stop 等）**：非工具事件需 agent 循环新增挂点，Stop 的 exit 2（禁止停止）语义重；M18 一期只做工具两事件。来源：M18 grill Q3（2026-09-18）。
+- [ ] **钩子 updatedInput 入参改写**：allow + 改写工具入参（格式化、脱敏类用法）——需 ToolExecution.args 可变与"改写后参数进日志"的语义钉子（M17 日志同构承诺不可轻动）。来源：M18 grill Q3（2026-09-18）。
+- [ ] **钩子载荷上下文透传（session_id / transcript_path / tool_use_id）**：Claude Code 的 stdin 载荷含此三字段（会话关联与日志检视用），duo 管线载荷（ToolExecution）无会话与调用标识——透传需执行入口携带上下文（签名或载荷对象扩展），与 M18"tools 域零改动"冲突故一期缺席。载荷一期实发：hook_event_name / tool_name / tool_input / cwd（PostToolUse 增 tool_response）+ DUO_HOME。来源：M18-03/04 实现裁定（2026-09-18）。
 
 ## 1.0 后菜单（DSH 全景复审补充，2026-09-17，ADR-0016 拒绝项对应池）
 

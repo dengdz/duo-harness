@@ -6,7 +6,7 @@
 
   <groupId>dev.duo</groupId>
   <artifactId>duo-harness</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
   <packaging>pom</packaging>
 
   <description>Java 插件化 AI agent harness：内核为自研轻量插件容器，能力以插件组装</description>
@@ -14,6 +14,7 @@
   <modules>
     <module>duo-harness-core</module>
     <module>duo-harness-tools</module>
+    <module>duo-harness-hooks</module>
     <module>duo-harness-mcp</module>
     <module>duo-harness-llm</module>
     <module>duo-harness-session</module>
