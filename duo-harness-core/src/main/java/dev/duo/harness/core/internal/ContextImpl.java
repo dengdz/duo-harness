@@ -54,7 +54,7 @@ public final class ContextImpl implements Context {
     private final ServiceRegistry services;
     /** 插件实例登记簿：根创建、全树共享，承担服务变化的传导。 */
     private final PluginRegistry pluginInstances;
-    /** 本作用域的 inject 声明（插件实例的读取许可）；根作用域为 null = 不限制。 */
+    /** 本作用域的读取许可（inject ∪ optionalInject，插件实例传入）；根作用域为 null = 不限制。 */
     private final Set<String> injectedServices;
 
     /**
@@ -87,8 +87,18 @@ public final class ContextImpl implements Context {
         C config = bindConfig(plugin, rawConfig, pluginName);
         Set<String> inject = Objects.requireNonNull(plugin.inject(),
                 "inject() 返回 null（无依赖请返回空集）");
+        Set<String> optionalInject = Objects.requireNonNull(plugin.optionalInject(),
+                "optionalInject() 返回 null（无可选依赖请返回空集）");
+        for (String name : optionalInject) {
+            if (inject.contains(name)) {
+                // 硬软同名时"缺失是否阻塞启动"二义，声明错误前移到加载时刻
+                throw new PluginException("插件 " + pluginName + " 的服务 \"" + name
+                        + "\" 同时声明在 inject 与 optionalInject（语义冲突，请二选一）");
+            }
+        }
         PluginInstance instance = new PluginInstance(
-                this.pluginInstances, this.events, this.services, plugin, config, pluginName, inject);
+                this.pluginInstances, this.events, this.services, plugin, config, pluginName,
+                inject, optionalInject);
         this.pluginInstances.register(instance);
         try {
             // 实例销毁作为本作用域副作用：父销毁级联停子（幂等）
@@ -239,11 +249,11 @@ public final class ContextImpl implements Context {
         };
     }
 
-    /** 服务寻址三检查：inject 许可 → 注册表命中 → 类型兼容，全部点名报错。 */
+    /** 服务寻址三检查：依赖声明许可 → 注册表命中 → 类型兼容，全部点名报错。 */
     private Object resolveService(String name, Class<?> expectedType) {
         if (injectedServices != null && !injectedServices.contains(name)) {
-            throw new PluginException("服务 \"" + name + "\" 未在 inject 中声明，拒绝读取"
-                    + "（错误前移：请补充 inject 声明）");
+            throw new PluginException("服务 \"" + name + "\" 未在依赖声明中（inject/optionalInject），"
+                    + "拒绝读取（错误前移：请补充声明）");
         }
         Object instance = services.resolve(name);
         if (instance == null) {

@@ -82,7 +82,8 @@ public interface Context {
      *
      * <p>类型窗口约定：视图方法名必须与注册的服务名一致，返回类型必须与
      * 服务实例类型兼容——错配在调用时点名报错。插件作用域内读取服务
-     * 须先在 {@link Plugin#inject()} 声明对应服务名（根作用域无此要求）。</p>
+     * 须先在 {@link Plugin#inject()} 或 {@link Plugin#optionalInject()} 声明
+     * 对应服务名（根作用域无此要求）。</p>
      *
      * @param viewInterface 视图接口（必须是接口类型）
      * @return 视图代理；不触发解析，首次方法调用才寻址

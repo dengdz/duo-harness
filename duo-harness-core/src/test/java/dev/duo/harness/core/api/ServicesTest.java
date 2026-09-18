@@ -136,7 +136,7 @@ class ServicesTest {
         }, null);
 
         assertEquals(1, denied.size());
-        assertTrue(denied.get(0).contains("未在 inject 中声明"), denied.get(0));
+        assertTrue(denied.get(0).contains("未在依赖声明中（inject/optionalInject）"), denied.get(0));
     }
 
     @Test
