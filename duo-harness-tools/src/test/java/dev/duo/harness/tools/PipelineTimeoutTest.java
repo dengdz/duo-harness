@@ -3,6 +3,7 @@ package dev.duo.harness.tools;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.Disposable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,7 +25,8 @@ class PipelineTimeoutTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：PipelineTimeoutTest —— 管线缺省超时：中断回流、豁免、覆盖优先（5 用例） ===");
+        System.out.println("\n=== 套件：PipelineTimeoutTest —— 管线缺省超时：中断回流、豁免、覆盖优先、"
+                + "双开挂载查重先到先得、摘除后可重挂（7 用例） ===");
     }
 
     /** 服务视图接口（方法名即服务名）。 */
@@ -88,6 +90,35 @@ class PipelineTimeoutTest {
                 return "interrupted";
             }
         }
+    }
+
+    @Test
+    void doubleMountDeduplicatedFirstWins() throws Exception {
+        // cli + web 双开共享 ToolsService：第二次挂载查重跳过（先到先得，返回空操作器），
+        // 不叠挂成嵌套超时——超时仍由首挂承担且恰触发一次（backlog M17 双挂债销账）
+        ProbeTool slow = new ProbeTool("slow", 300);
+        tools.register(root, slow);
+        PipelineTimeout.mount(root, tools, 100);
+        PipelineTimeout.mount(root, tools, 100).dispose(); // 空操作器：dispose 不影响首挂
+
+        ToolResult result = tools.execute("slow", JsonNodeFactory.instance.objectNode());
+        assertTrue(result.isError() && result.value().toString().contains("执行超时"),
+                "重复挂载跳过后超时仍由首挂承担: " + result.value());
+        assertTrue(slow.interrupted.await(1, TimeUnit.SECONDS), "执行线程被中断恰一次");
+    }
+
+    @Test
+    void mountRearmsAfterManualRemoval() throws Exception {
+        // 首个挂载手动摘除（标记随摘除清除）后可重新挂载，超时恢复生效
+        ProbeTool stuck = new ProbeTool("stuck2", 10_000);
+        tools.register(root, stuck);
+        Disposable first = PipelineTimeout.mount(root, tools, 100);
+        first.dispose();
+
+        PipelineTimeout.mount(root, tools, 100);
+        ToolResult result = tools.execute("stuck2", JsonNodeFactory.instance.objectNode());
+        assertTrue(result.isError() && result.value().toString().contains("执行超时"),
+                "摘除后重挂超时恢复生效: " + result.value());
     }
 
     @Test

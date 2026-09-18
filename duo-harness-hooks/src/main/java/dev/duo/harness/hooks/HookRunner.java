@@ -45,7 +45,7 @@ final class HookRunner {
             return new Outcome(-1, "", "", false, message);
         }
 
-        static Outcome timedOut(String command, Duration timeout) {
+        static Outcome ofTimedOut() {
             return new Outcome(-1, "", "", true, null);
         }
 
@@ -77,8 +77,9 @@ final class HookRunner {
         } catch (IOException e) {
             return Outcome.failedToStart("进程启动失败: " + rootMessage(e));
         }
-        feedStdin(process, payload);
-        // 先挂输出收集再限时等待：进程写满管道不再阻塞其退出
+        // stdin 与 stdout/stderr 同为后台收集：喂入不占主等待线程——不读 stdin 的钩子
+        // 遇到大载荷时写满管道的阻塞不蚕食超时预算，waitFor 覆盖进程全生命周期
+        STREAM_READERS.submit(() -> feedStdin(process, payload));
         Future<String> stdout = STREAM_READERS.submit(
                 () -> readAll(process.getInputStream()));
         Future<String> stderr = STREAM_READERS.submit(
@@ -93,7 +94,7 @@ final class HookRunner {
         }
         if (!finished) {
             process.destroyForcibly();
-            return Outcome.timedOut(handler.command(), handler.timeout());
+            return Outcome.ofTimedOut();
         }
         try {
             return new Outcome(process.exitValue(),

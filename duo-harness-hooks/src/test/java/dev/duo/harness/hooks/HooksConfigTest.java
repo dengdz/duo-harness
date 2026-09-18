@@ -24,7 +24,7 @@ class HooksConfigTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：HooksConfigTest —— hooks.json 解析：两家同形、宽容跳过、"
-                + "结构错误点名（7 用例） ===");
+                + "结构错误点名、非法正则与 PostToolUse 受支持（9 用例） ===");
     }
 
     @TempDir
@@ -155,7 +155,7 @@ class HooksConfigTest {
 
     @Test
     void postToolUseIsSupportedEvent() throws Exception {
-        // PostToolUse 已入受支持集（工单 04）：不再进 skippedEvents
+        // PostToolUse 属受支持事件集，不进 skippedEvents
         HooksConfig config = HooksConfig.load(write("""
                 {"hooks": {"PostToolUse": [{"command": "true"}]}}
                 """));

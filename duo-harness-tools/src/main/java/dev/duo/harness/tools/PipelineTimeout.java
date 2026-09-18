@@ -4,8 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.events.WaterfallListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.Objects;
+import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -24,9 +29,12 @@ import java.util.concurrent.TimeoutException;
  * ToolDefinition#exemptFromPipelineTimeout} 豁免（如 ask_user 等人回答）。</p>
  *
  * <p>挂载即注册方作用域副作用（呈现位装配处调用）；并发调度（工单 M17-01）下
- * 本监听器包裹的是并行池执行线程内的调用——组内任一工具挂死不再积压整轮提交。</p>
+ * 本监听器包裹的是并行池执行线程内的调用——组内任一工具挂死不再积压整轮提交。
+ * 同一 ToolsService 重复挂载查重先到先得（cli + web 双开不叠挂，backlog M17 双挂债）。</p>
  */
 public final class PipelineTimeout {
+
+    private static final Logger log = LoggerFactory.getLogger(PipelineTimeout.class);
 
     /** 管线缺省超时上限（与 bash 协作式缺省对齐，ADR-0018 grill Q5 裁定）。 */
     public static final long DEFAULT_TIMEOUT_MS = 120_000;
@@ -34,11 +42,20 @@ public final class PipelineTimeout {
     /** 执行承载：共享虚拟线程执行器（长生命周期，无核心线程成本）。 */
     private static final ExecutorService EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
+    /**
+     * 已挂载标记（按 ToolsService 实例，弱键随服务回收）：cli + web 双开共享同一
+     * ToolsService 时第二次挂载查重跳过——嵌套超时（短者先生效、语义含混）的
+     * 先到先得收敛（backlog M17 双挂债，与 registerTodoWriteTool 同哲学）。
+     */
+    private static final Map<ToolsService, Boolean> MOUNTED =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
     private PipelineTimeout() {
     }
 
     /**
-     * 挂载管线缺省超时监听器（tools/execute 段 around 终端）。
+     * 挂载管线缺省超时监听器（tools/execute 段 around 终端）。同一 ToolsService
+     * 重复挂载查重跳过（先到先得，返回空操作摘除器）；摘除首个挂载后可重新挂载。
      *
      * @param registrant      注册方 Context（监听器随其作用域自动摘除）
      * @param tools           工具域服务（查工具定义做豁免 / 覆盖判定）
@@ -51,7 +68,11 @@ public final class PipelineTimeout {
         if (defaultTimeoutMs <= 0) {
             throw new IllegalArgumentException("defaultTimeoutMs 必须为正: " + defaultTimeoutMs);
         }
-        return registrant.on(ToolsService.EXECUTE,
+        if (MOUNTED.putIfAbsent(tools, Boolean.TRUE) != null) {
+            log.info("管线缺省超时已挂载，跳过重复挂载（先到先得）：{}", tools);
+            return () -> { };
+        }
+        Disposable removal = registrant.on(ToolsService.EXECUTE,
                 (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
                     long timeoutMs = resolveTimeout(tools, exec.toolName(), exec.args(),
                             defaultTimeoutMs);
@@ -74,6 +95,13 @@ public final class PipelineTimeout {
                         throw e;
                     }
                 });
+        // 挂载标记随注册方作用域回收（scope 销毁即解锁重挂）——与"挂载即作用域副作用"
+        // 契约一致；呈现位停止后如需恢复超时须重新挂载（不自动补挂）
+        Disposable markerRelease = registrant.effect(() -> MOUNTED.remove(tools));
+        return () -> {
+            markerRelease.dispose();
+            removal.dispose();
+        };
     }
 
     /**

@@ -154,6 +154,23 @@ public final class HooksPlugin implements Plugin<Void> {
                         if (outcome.exitCode() != 0) {
                             log.warn("PostToolUse 钩子非零退出（非阻断，结果原样）: exit={} stderr={}",
                                     outcome.exitCode(), outcome.stderr().strip());
+                            continue;
+                        }
+                        // exit 0 stdout JSON：deny/block（legacy）在 Post 段与 exit 2 同义——结果改写
+                        PreDecision decision = parseDecision(outcome.stdout());
+                        if (decision.unparseable()) {
+                            log.warn("PostToolUse 钩子 stdout 非法 JSON（非阻断，结果原样）: 钩子={} stdout={}",
+                                    handler.command(), outcome.stdout().strip());
+                            continue;
+                        }
+                        if (decision.denied()) {
+                            String detail = decision.reason() != null && !decision.reason().isBlank()
+                                    ? decision.reason() : outcome.stderr().strip();
+                            log.info("钩子标记工具结果（JSON）: 工具={} 钩子={} 理由={}",
+                                    exec.toolName(), handler.command(), detail);
+                            exec.markError("被 PostToolUse 钩子阻断"
+                                    + (detail.isEmpty() ? "" : ": " + detail));
+                            return Boolean.TRUE;
                         }
                     }
                     return next.invoke(exec);

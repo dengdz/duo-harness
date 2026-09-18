@@ -29,7 +29,7 @@ Status: ready-for-agent
 7. 作为运维者，我想给每条钩子配 `timeout` 秒数（缺省 600s），所以慢脚本的上限由我定。
 8. 作为运维者，hooks.json 写错时 boot 不连坐其他插件、hooks 插件本身 FAILED 并点名文件与位置，所以配置错误一眼定位。
 9. 作为用户，boot yml 不装 hooks 插件行则一切零感知零开销，所以不用 hooks 时无负担。
-10. 作为 hooks 作者，我想让钩子进程从 stdin 拿到 session_id、transcript_path、cwd、hook_event_name、tool_name、tool_input、tool_use_id 载荷并拥有 `DUO_HOME` 环境变量，所以脚本能基于调用上下文判断。
+10. 作为 hooks 作者，我想让钩子进程从 stdin 拿到 session_id、transcript_path、cwd、hook_event_name、tool_name、tool_input、tool_use_id 载荷并拥有 `DUO_HOME` 环境变量，所以脚本能基于调用上下文判断。（2026-09-18 实现修正：一期实发 hook_event_name/tool_name/tool_input/cwd，PostToolUse 增 tool_response；三字段缺席缘由见实现决策与 ADR-0019 注记。）
 11. 作为模型，被钩子阻断时收到含原因的错误结果，所以能改道而不是反复撞墙。
 12. 作为运维者，hooks.json 里 duo 尚不支持的事件或处理器类型被跳过并留 WARN 点名，所以粘贴两家的完整配置不会炸启动。
 13. 作为部署者，我想在 boot yml 去掉 fs 插件行得到纯对话 CLI，所以精简装配不再整树起不来。
@@ -88,7 +88,7 @@ Status: ready-for-agent
 **接缝（已与用户确认，三缝两旧）**
 
 1. **Boot 双接缝（core 既有，LifecycleTest/BootTest 叙事）**：optionalInject 的缺失照常 ACTIVE、provide/unprovide 触发重载双向、yml 审计不误报；awaitStartup 重载超时点名异常、无参版语义不变。
-2. **ToolsService.execute 三段管线（tools 既有）**：hooks 拦截语义单测——假工具 + 直接注册钩子监听器，断言 deny/结果改写/放行/fail-open/matcher 命中。
+2. **ToolsService.execute 三段管线（tools 既有）**：hooks 拦截语义单测——假工具 + 直接注册钩子监听器，断言 deny/结果改写/放行/fail-open/matcher 命中。（2026-09-18 实现披露：拦截语义实际经缝 3 全链路真进程覆盖——覆盖面等价更强，监听器挂载保持插件私有；管线缝留作后续快速单测的结构选项。）
 3. **Boot 全链路端到端（复用缝 1，新用例）**：yml 挂 hooks 插件行 + `@TempDir` 注入 DUO_HOME + 真 hooks.json + 真外部进程（`sh -c` 调 echo/exit 类系统命令），经 execute 断言全链路；CI（Linux）可跑。
 
 **好测试标准**：只断言外部行为（工具结果形态、插件状态、异常消息点名、日志可见性），不测内部实现；钩子进程用真实系统命令，不 mock 进程 API。

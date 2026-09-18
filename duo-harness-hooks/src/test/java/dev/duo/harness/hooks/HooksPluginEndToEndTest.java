@@ -39,7 +39,7 @@ class HooksPluginEndToEndTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：HooksPluginEndToEndTest —— hooks 端到端（真进程）：exit 2 阻断、"
                 + "Pre/Post 阻断与改写、JSON 裁定三形、fail-open、超时放行、载荷送达、matcher 多选正则、"
-                + "空转、坏配置点名、事件跳过（13 用例） ===");
+                + "空转、坏配置点名、事件跳过、Post 段 JSON block（14 用例） ===");
     }
 
     @TempDir
@@ -248,6 +248,27 @@ class HooksPluginEndToEndTest {
                             && result.value().toString().contains("审计拦截"),
                     "错误结果应含 stderr: " + result.value());
             assertEquals(1, ProbeToolsPlugin.EXECUTIONS.get(), "工具本体已执行（不假装撤销副作用）");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void postToolUseJsonBlockRewritesResult() throws Exception {
+        // PostToolUse exit 0 的 legacy JSON block 与 exit 2 同义：结果改写为错误
+        ProbeToolsPlugin.EXECUTIONS.set(0);
+        writeHooksConfig("""
+                {"hooks": {"PostToolUse": [
+                  {"matcher": "probe_tool", "hooks": [{"type": "command",
+                    "command": "echo '{\\\"decision\\\": \\\"block\\\", \\\"reason\\\": \\\"post 否决\\\"}'"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertTrue(result.isError() && result.value().toString().contains("post 否决"),
+                    "Post 段 legacy block 应生效: " + result.value());
+            assertEquals(1, ProbeToolsPlugin.EXECUTIONS.get(), "本体已执行");
         } finally {
             root.dispose();
         }

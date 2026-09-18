@@ -2,6 +2,20 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.13.0（2026-09-18）
+
+### Added
+
+- **hooks 生态兼容扩展**（工单 03/04，ADR-0019）：复用 Claude Code/Codex 的 hooks 配置格式——`~/.duo/hooks.json` 与两家同形（Claude Code settings.json 整文件粘贴即用，未知键宽容、Codex 扁平条目兼容），`PreToolUse` / `PostToolUse` 两事件挂工具三段管线：exit 2 阻断且 stderr 回给模型（PostToolUse 为结果改写、不假装撤销副作用）、exit 0 stdout JSON 裁定三形兼容（`permissionDecision` / legacy `decision`）、matcher（全匹配 / 精确名多选 / 正则）、条目级 `timeout` 缺省 600s。失败语义 fail-open 全线（钩子超时/崩溃/起不来一律放行 + WARN）——**钩子不是执法边界**，硬闸门需求由 guard/审批承担；boot yml 装 `dev.duo.harness.hooks.HooksPlugin` 行即 opt-in，不装行零感知。载荷一期含 hook_event_name / tool_name / tool_input / cwd（PostToolUse 增 tool_response）
+- **插件可选依赖**（工单 01，ADR-0019）：插件新增 `optionalInject()` 声明"就绪则用、缺失不拦"——可选服务缺席不再永久 PENDING，服务出现/消失自动重载（升级↔降级双向对称）；CLI 支持纯对话装配：boot yml 不装 fs 工具行照常启动聊天，`/permission` 降级提示"未挂载"
+- **awaitStartup 可配超时**（工单 02）：编程挂载新增 `awaitStartup(Duration)` 重载——超时抛点名异常（含缺失服务清单）、零时长即立即探测；超时后插件保持 PENDING、服务到达照常激活；无参版语义不变（无限等待），但进入等待打 INFO 日志点名在等谁——编程挂载的静默卡死从根上消除
+- **duo-code-review 技能重写为"前置检查 + 覆盖台账"式审查流程**：开工前校验 ocr 可用性（`ocr llm test` 失败即找用户要凭证，不硬编码 key）与固定点可解析、diff 非空；降级阶梯细化为 分批 → `--resume` 续跑 → 换 provider/model 或 `--effort low` → 委托模式 → 手工兜底留痕；新增覆盖率台账——基数取 `git diff --stat` 全集，每个文件只有"已审 / 跳过(附理由)"两个终态（实测 OCR 默认不审 `src/test/**` 与文档，加自定义 rule 也捞不回来，测试与文档划归手工必查项）；原先并列的两套输出分级收敛为 阻断 / 建议 单一尺度，补齐报告模板、"无发现"收口句与收尾核对（`--max-tokens-budget` 耗尽时部分结果也 exit 0，退出码不等于全覆盖）；修正委托模式指向的插件缓存相对路径（带版本号会随插件升级失效，改为按技能名调用），并补 `-B` 传 spec 文件、`ocr scan`、`ocr session compare`、`ocr rules check` 等既有能力入口
+- **duo-code-review 技能新增"时间预算（实测基线）"一节**：沉淀 34 个 OCR 会话留痕的性能结论——墙钟由最慢一组的串行链决定（组数是并发硬上限，总改动 <200 行并成一组即完全串行），单轮延迟按模型差 6 倍，最贵单次调用是 plan_task（单文件 >50 行或组合计 >100 行触发，`ocr review` 无 `--no-plan`）；给出按让步顺序排列的六个提速抓手：排除 example 与 resources 面（排除件仍进覆盖率台账）、按提交/工单审、`--concurrency 3~4` 防 429 齐发、`--max-tools 50` 截长链、`--no-filter`、中断续跑不重跑；"顺手的杠杆与陷阱"补按请求超时 `OCR_LLM_TIMEOUT`（实测单请求挂死 24 分钟超出 `--timeout` 罩不住的盲区）
+
+### Fixed
+
+- **管线超时双呈现位叠挂**（M17 backlog 双挂债）：cli + web 双开共享工具域时管线超时监听器被各挂一次（嵌套超时、语义含混）——挂载查重先到先得，第二次挂载跳过
+
 ## 0.12.0（2026-09-18）
 
 ### Added
