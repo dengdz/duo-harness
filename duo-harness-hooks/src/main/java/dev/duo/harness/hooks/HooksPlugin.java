@@ -98,7 +98,7 @@ public final class HooksPlugin implements Plugin<Void> {
                         }
                         if (outcome.exitCode() == 2) {
                             String stderr = outcome.stderr().strip();
-                            return deny(exec, handler, HooksConfig.EVENT_PRE_TOOL_USE,
+                            return deny(exec, handler,
                                     "被 PreToolUse 钩子阻断" + (stderr.isEmpty() ? "" : ": " + stderr));
                         }
                         if (outcome.exitCode() != 0) {
@@ -116,8 +116,17 @@ public final class HooksPlugin implements Plugin<Void> {
                         if (decision.denied()) {
                             String detail = decision.reason() != null && !decision.reason().isBlank()
                                     ? decision.reason() : outcome.stderr().strip();
-                            return deny(exec, handler, HooksConfig.EVENT_PRE_TOOL_USE,
+                            return deny(exec, handler,
                                     "被 PreToolUse 钩子阻断" + (detail.isEmpty() ? "" : ": " + detail));
+                        }
+                        if (decision.asksApproval()) {
+                            // Claude Code 三值语义的 ask：声明需审批而非自行裁决——交审批段
+                            // 解析者（解析在 pre 瀑布结束后，注册序无关），无人解析按
+                            // "未配置即拒"，仍是只收不放
+                            log.info("PreToolUse 钩子转审批: 工具={} 钩子={}",
+                                    exec.toolName(), handler.command());
+                            exec.requestApproval();
+                            return next.invoke(exec);
                         }
                         // allow 与无裁定等价放行（不带改写，updatedInput 不在一期基线）
                     }
@@ -178,7 +187,7 @@ public final class HooksPlugin implements Plugin<Void> {
     }
 
     /** PreToolUse 否决：deny + 不调 next（审批段不执行——管线既有"deny 占先"约定）。 */
-    private Boolean deny(ToolExecution exec, HookHandler handler, String event, String reason) {
+    private Boolean deny(ToolExecution exec, HookHandler handler, String reason) {
         log.info("钩子阻断工具调用: 工具={} 钩子={} 理由={}", exec.toolName(), handler.command(), reason);
         exec.deny(reason);
         return Boolean.FALSE;
@@ -228,6 +237,11 @@ public final class HooksPlugin implements Plugin<Void> {
 
         boolean denied() {
             return "deny".equals(decision) || "block".equals(decision);
+        }
+
+        /** Claude Code 三值语义的 ask：声明需审批而非自行裁决。 */
+        boolean asksApproval() {
+            return "ask".equals(decision);
         }
     }
 

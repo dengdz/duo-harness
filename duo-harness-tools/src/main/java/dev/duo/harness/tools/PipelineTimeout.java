@@ -72,35 +72,49 @@ public final class PipelineTimeout {
             log.info("管线缺省超时已挂载，跳过重复挂载（先到先得）：{}", tools);
             return () -> { };
         }
-        Disposable removal = registrant.on(ToolsService.EXECUTE,
-                (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
-                    long timeoutMs = resolveTimeout(tools, exec.toolName(), exec.args(),
-                            defaultTimeoutMs);
-                    if (timeoutMs < 0) {
-                        return next.invoke(exec); // 豁免：不受限时约束
-                    }
-                    Future<Boolean> running = EXECUTOR.submit(() -> next.invoke(exec));
-                    try {
-                        return running.get(timeoutMs, TimeUnit.MILLISECONDS);
-                    } catch (TimeoutException e) {
-                        // interrupt 执行线程；不可中断的让它在后台跑完、结果丢弃
-                        running.cancel(true);
-                        exec.markTimeout("工具 \"" + exec.toolName() + "\" 执行超时（上限 "
-                                + timeoutMs + "ms），已中断；若操作不可中断则其结果被丢弃");
-                        return Boolean.TRUE;
-                    } catch (Exception e) {
-                        // 执行异常原样传播：保持工具域"异常收敛为 error 结果"的既有出口；
-                        // 等待自身被中断时同样取消执行线程，不留无主任务
-                        running.cancel(true);
-                        throw e;
-                    }
-                });
-        // 挂载标记随注册方作用域回收（scope 销毁即解锁重挂）——与"挂载即作用域副作用"
-        // 契约一致；呈现位停止后如需恢复超时须重新挂载（不自动补挂）
-        Disposable markerRelease = registrant.effect(() -> MOUNTED.remove(tools));
+        Disposable removal;
+        Disposable markerRelease;
+        try {
+            removal = registrant.on(ToolsService.EXECUTE,
+                    (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
+                        long timeoutMs = resolveTimeout(tools, exec.toolName(), exec.args(),
+                                defaultTimeoutMs);
+                        if (timeoutMs < 0) {
+                            return next.invoke(exec); // 豁免：不受限时约束
+                        }
+                        Future<Boolean> running = EXECUTOR.submit(() -> next.invoke(exec));
+                        try {
+                            return running.get(timeoutMs, TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException e) {
+                            // interrupt 执行线程；不可中断的让它在后台跑完、结果丢弃
+                            running.cancel(true);
+                            exec.markTimeout("工具 \"" + exec.toolName() + "\" 执行超时（上限 "
+                                    + timeoutMs + "ms），已中断；若操作不可中断则其结果被丢弃");
+                            return Boolean.TRUE;
+                        } catch (Exception e) {
+                            // 执行异常原样传播：保持工具域"异常收敛为 error 结果"的既有出口；
+                            // 等待自身被中断时同样取消执行线程，不留无主任务
+                            running.cancel(true);
+                            throw e;
+                        }
+                    });
+            // 挂载标记随注册方作用域回收（scope 销毁即解锁重挂）——与"挂载即作用域副作用"
+            // 契约一致；呈现位停止后如需恢复超时须重新挂载（不自动补挂）
+            markerRelease = registrant.effect(() -> MOUNTED.remove(tools));
+        } catch (RuntimeException e) {
+            // 注册失败回滚查重标记：作用域只补偿摘除已入表的监听器，不认识 MOUNTED——
+            // 不回滚则该 ToolsService 的后续挂载全部被静默跳过，超时保护永久缺席
+            MOUNTED.remove(tools);
+            throw e;
+        }
         return () -> {
-            markerRelease.dispose();
-            removal.dispose();
+            // 先摘监听器再清标记：清标记即解锁重挂，若先行则窗口期内并发挂载可与
+            // 尚未摘除的旧监听器叠挂；finally 保证标记必清（摘除异常不封锁重挂）
+            try {
+                removal.dispose();
+            } finally {
+                markerRelease.dispose();
+            }
         };
     }
 

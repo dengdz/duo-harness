@@ -39,7 +39,7 @@ class HooksPluginEndToEndTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：HooksPluginEndToEndTest —— hooks 端到端（真进程）：exit 2 阻断、"
                 + "Pre/Post 阻断与改写、JSON 裁定三形、fail-open、超时放行、载荷送达、matcher 多选正则、"
-                + "空转、坏配置点名、事件跳过、Post 段 JSON block（14 用例） ===");
+                + "空转、坏配置点名、事件跳过、Post 段 JSON block、ask 转审批（15 用例） ===");
     }
 
     @TempDir
@@ -307,6 +307,29 @@ class HooksPluginEndToEndTest {
             ToolResult result = execute(root, "probe_tool");
             assertTrue(result.isError() && result.value().toString().contains("legacy 否决"),
                     "legacy block 形应生效: " + result.value());
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void askDecisionRoutesToApprovalSegment() throws Exception {
+        // Claude Code 三值语义的 ask：交审批段裁决而非静默放行——夹具未装审批插件，
+        // 请求无人解析按"未配置即拒"（拒绝文案区别于钩子 deny，证明走了审批段）
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "probe_tool", "hooks": [{"type": "command",
+                    "command": "echo '{\\\"permissionDecision\\\": \\\"ask\\\"}'"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertTrue(result.isError(), "ask 不应静默放行: " + result.value());
+            assertTrue(result.value().toString().contains("审批策略未配置"),
+                    "应交审批段并以未配置即拒收场: " + result.value());
+            assertTrue(!result.value().toString().contains("PreToolUse 钩子阻断"),
+                    "拒绝来源是审批段而非钩子 deny: " + result.value());
         } finally {
             root.dispose();
         }

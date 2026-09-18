@@ -9,9 +9,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -97,18 +100,14 @@ final class PluginInstance {
     }
 
     /** 插件声明的依赖服务名集合（防御拷贝，防外部变更指纹输入）。 */
-    Set<String> inject() {
-        return java.util.Collections.unmodifiableSet(inject);
-    }
-
     /** 是否依赖该服务（硬或可选）——服务变化传导的过滤口径（可选缺席者同样要复查重载）。 */
     boolean dependsOn(String name) {
         return inject.contains(name) || optionalInject.contains(name);
     }
 
     /** 硬依赖中尚未就绪的服务名（诊断点名：boot 审计与 awaitStartup 超时共用口径）。 */
-    java.util.List<String> missingHardDependencies() {
-        java.util.List<String> missing = new java.util.ArrayList<>();
+    List<String> missingHardDependencies() {
+        List<String> missing = new ArrayList<>();
         for (String name : inject) {
             if (services.resolve(name) == null) {
                 missing.add(name);
@@ -237,13 +236,13 @@ final class PluginInstance {
         announceWaitIfPending();
         boolean completed;
         try {
-            completed = started.await(timeout.toNanos(), java.util.concurrent.TimeUnit.NANOSECONDS);
+            completed = started.await(timeout.toNanos(), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new PluginException("等待插件 " + pluginName + " 启动被中断", e);
         }
         if (!completed) {
-            java.util.List<String> missing = missingHardDependencies();
+            List<String> missing = missingHardDependencies();
             String detail = missing.isEmpty()
                     ? "无缺失硬依赖（apply 可能仍在进行）"
                     : "缺失服务: " + missing;
@@ -271,7 +270,7 @@ final class PluginInstance {
     }
 
     /** 时长的可读形态（亚秒显毫秒，整秒显秒）。 */
-    private static String describe(java.time.Duration d) {
+    private static String describe(Duration d) {
         long ms = d.toMillis();
         if (ms < 1000) {
             return ms + "ms";

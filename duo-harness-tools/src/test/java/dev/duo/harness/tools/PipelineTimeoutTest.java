@@ -26,7 +26,7 @@ class PipelineTimeoutTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：PipelineTimeoutTest —— 管线缺省超时：中断回流、豁免、覆盖优先、"
-                + "双开挂载查重先到先得、摘除后可重挂（7 用例） ===");
+                + "双开挂载查重先到先得、摘除后可重挂、注册失败回滚（8 用例） ===");
     }
 
     /** 服务视图接口（方法名即服务名）。 */
@@ -105,6 +105,23 @@ class PipelineTimeoutTest {
         assertTrue(result.isError() && result.value().toString().contains("执行超时"),
                 "重复挂载跳过后超时仍由首挂承担: " + result.value());
         assertTrue(slow.interrupted.await(1, TimeUnit.SECONDS), "执行线程被中断恰一次");
+    }
+
+    @Test
+    void mountFailureRollsBackMarker() throws Exception {
+        // 注册失败路径回滚查重标记：注册方作用域已销毁时 on/effect 抛出——不回滚则该
+        // ToolsService 的后续挂载全部被静默跳过、超时保护永久缺席（OCR 审查发现）
+        Context dead = Context.root();
+        dead.dispose();
+        org.junit.jupiter.api.Assertions.assertThrows(Exception.class,
+                () -> PipelineTimeout.mount(dead, tools, 100));
+
+        ProbeTool slow = new ProbeTool("slow2", 300);
+        tools.register(root, slow);
+        PipelineTimeout.mount(root, tools, 100); // 标记已回滚：此处不得被查重跳过
+        ToolResult result = tools.execute("slow2", JsonNodeFactory.instance.objectNode());
+        assertTrue(result.isError() && result.value().toString().contains("执行超时"),
+                "注册失败回滚后重新挂载应生效: " + result.value());
     }
 
     @Test
