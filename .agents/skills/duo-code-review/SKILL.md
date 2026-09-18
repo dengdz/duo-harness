@@ -16,13 +16,15 @@ description: 审查 duo-harness 仓库的代码变更、提交或分支对比时
 
 ## 审查目标 → 命令
 
-业务上下文一律传：本仓库的上下文就在文件里，**优先 `-B` 传 spec / 工单 Markdown**（`.scratch/<feature>/spec.md`、`.scratch/<feature>/issues/NN-*.md`），只有一句话背景才用 `-b`。`--audience agent` 恒用——`human` 会流式刷进度把输出冲烂。
+业务上下文一律传：本仓库的上下文就在文件里，**优先 `-B` 传 spec / 工单 Markdown**（`.scratch/<feature>/spec.md`、`.scratch/<feature>/issues/NN-*.md`），只有一句话背景才用 `-b`。`--audience agent` 恒用——`human` 会流式刷进度把输出冲烂。`-B` 内容**裁剪到 2000 字符内**（CLI 警告线）——超重背景每请求重复驮载，直接推高 token 与延迟（M18 实测：6438 字符 spec 全程拖带，两跑合计 ~1.85M token）；只传 spec 的"实现决策"节即可，不传全文。
+
+**缺省审查单元 = 单提交 / 单工单**（`-c`）；整期 range（`--from --to`）是例外形态，仅用于合并前终审或用户点名——成本量级见「时间预算」与「何时值得跑 OCR」。
 
 | 要审的东西 | 命令 |
 |---|---|
 | 工作区改动（含未跟踪） | `ocr review --audience agent -B <spec.md> --exclude '<批次外路径>'` |
-| 单个提交 | `ocr review --audience agent -B <工单.md> -c <commit>` |
-| 分支 / 提交区间对比 | `ocr review --audience agent -B <spec.md> --from <base> --to <HEAD>` |
+| 单个提交（**缺省**） | `ocr review --audience agent -B <工单.md> -c <commit>` |
+| 分支 / 提交区间对比（例外：终审或点名） | `ocr review --audience agent -B <spec.md> --from <base> --to <HEAD>` |
 | 先看会审哪些文件 | `ocr review --preview`（人读）/ `ocr delegate preview --format json`（机读，带 mode/ref/排除理由） |
 | 整文件（无 diff，如新模块） | `ocr scan` |
 | 某文件命中哪条规则 | `ocr rules check <path>` |
@@ -54,7 +56,7 @@ description: 审查 duo-harness 仓库的代码变更、提交或分支对比时
 
 墙钟由**最慢一组的串行链**决定，不是文件总数——组数是并发的硬上限（≥4 个文件才分组；总改动 <200 行并成一组 = 完全串行），`--concurrency` 调过组数没有用。实测锚点出自会话留痕（`ocr session show <id>`，原始数据在 `~/.opencodereview/sessions/`）：
 
-- 单轮延迟按端点/模型差 6 倍（kimi-k2.7-code 8.8s、qwen3.8-flash 16s、kimi-k3 55s）——快模型逐次显式指定，不依赖默认端点
+- 单轮延迟按端点/模型差 6 倍（kimi-k2.7-code 8.8s、qwen3.8-flash 16s、kimi-k3 55s）——快模型逐次显式指定，不依赖默认端点；glm-5.3-flash 为慢档（M18 实测：16 文件整期首跑 16m13s、resume 复跑 29m39s，planning 请求两度超 300s）
 - 最贵的单次调用是 plan_task（均 123s、最高 268s；单文件 >50 行或组合计 >100 行触发）；`ocr review` 没有 `--no-plan`，只有 `ocr scan` 有
 - 41 文件的 range 跑 30.3min，其中最慢一组（example 演示类 + yml）独占 28.2min；101 行的 app.js 单文件实测 9.9min；该 range 跑还有 13% 的工具调用是同参数重复（同一文件 file_read 5 次）
 - 端点突发失败每次空转约 22s；8 并发同秒打同一网关 → 全部 429，整轮白跑
@@ -75,6 +77,22 @@ ocr review --audience agent -B <spec.md> --from <base> --to HEAD \
   --provider <快端点> --concurrency 3 --max-tools 50 --no-filter \
   --exclude 'duo-harness-example/**,**/resources/**'
 ```
+
+## 何时值得跑 OCR（决策指引）
+
+**甜点区 = feat 提交的合并前门禁**：新鲜代码（未经双轴过筛）、单元小（单提交组少链短、planning 轻或不触发）、10 分钟级成本——此时 OCR 的行级规约面（并发、句柄、SLF4J 陷阱、死代码）是双轴之外的真增量。
+
+**已双轴审过的代码再跑 OCR，边际产出只有边缘与琐碎**（M18 实测，2026-09-19：双轴过筛后的 16 文件整期二遍审，46 分钟 / ~1.85M token，产出 7 条 = 1 条双轴近亲漏网的边缘 bug + 1 条生态盲区（上游格式三值语义，仓库内审查结构性看不到）+ 5 条 IDE 档琐碎）。二遍审的合理预期就这个量级——值不值按"是否还想赌边缘与生态盲区"定，而不是按"再审一遍更保险"定。
+
+**整期 range 仅两场景**：合并前终审（此时上述边际产出正是要买的东西）、用户点名。跑前按「时间预算」的组数 × 端点档估时，超 15 分钟量级先向用户报预算再开跑。
+
+## M18 实测补遗（2026-09-19：16 文件 resume 复跑 29m39s 完成）
+
+- **`--resume` 派生新会话 id**：旧 id 的 status 永久停在 failed/aborted，`session list` 的旧行是陈旧显示；判断存续以「进程存活 + 新会话 jsonl 增长」为准（本轮两度按旧 id 误报"进程已退出"）。新会话首事件带 `resumedFrom` 指回旧 id。
+- **进程树是两层**：node 外壳（`~/bin/ocr`）+ 原生二进制（`.../bin/opencodereview review`）。外壳可先于 worker 退出；`pgrep -f "ocr review"` 只命中外壳——监控 worker 用 `pgrep -f "opencodereview review"`（其命令行不含 "ocr" 子串）。
+- **首次尝试失败 ≠ 最终失败**：`llm_error`（context deadline exceeded）后内部立即重试并可能成功——本轮 21 请求 2 次首试失败（hooks 组 planning + core review），最终 16/16 全覆盖。判读覆盖以 `review_item_done` 清单为准，不以 retry 汇总的 "failed" 字样为准。
+- **参数实测**：`--concurrency 3 --max-tools 50 --no-filter --exclude '**/pom.xml,duo-harness-example/**'` 下 resume 复跑（复用 11 + 重试 5）29m39s 完成、产出 7 findings；`--no-filter` 未观察到假阳性放大。
+- **事件词汇表**：`review_item_reused`（缓存复用）/ `review_item_done`（本轮审毕，含 comments 摘要）/ `llm_error`（首试失败待重试）/ `session_end`（收尾）——监控进度按这四类算，不数 `session list` 的状态列。
 
 ## 覆盖率台账（防静默遗漏）
 
@@ -151,6 +169,7 @@ ocr review --audience agent -B <spec.md> --from <base> --to HEAD \
 
 ## 顺手的杠杆与陷阱
 
+- **输出别过管道缓冲**：`| tail` / `| head` 会把进度攒到进程退出才吐——中途黑盒直接导致误判挂死误杀（M18 首跑 14 分钟误判即此因）。长跑一律 `-o 落盘 + 输出直接重定向到日志文件`，进度判读走日志尾部与 `session show` 的事件流（见「M18 实测补遗」）。
 - workspace 模式把**未跟踪文件**也卷进来：`.scratch/` 下的草稿工单会被当新文件审，按目录 `--exclude` 或改用 `-c` / `--from --to` 收窄。
 - 大 diff 会被 token 上限截断：`--max-tokens` 调单组上限，`--max-tokens-budget` 限总量。
 - 时延与并发：`--timeout` 单位是**分钟**（默认 15，组级）——实测罩不住单请求挂死（曾有一次 plan_task 请求 24 分钟无响应），按请求设硬上限用环境变量 `OCR_LLM_TIMEOUT`（单位秒）；`--concurrency` 默认 8，`--max-tools` 最小 50 轮。
