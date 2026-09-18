@@ -64,6 +64,11 @@ public final class FsBashTool implements ToolDefinition {
     }
     @Override public boolean requiresApproval() { return true; }
 
+    /** 协作式超时优先：管线上限放宽到本调用 timeoutMs 之上 5s——杀进程树归协作式，管线只兜挂死（ADR-0018）。 */
+    @Override public Long pipelineTimeoutMs(JsonNode args) {
+        return timeoutFor(args) + 5_000L;
+    }
+
     @Override public String execute(ToolExecution exec) {
         JsonNode args = exec.args();
         String command = args.path("command").asText("");

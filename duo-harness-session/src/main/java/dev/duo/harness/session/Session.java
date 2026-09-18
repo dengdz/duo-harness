@@ -602,6 +602,27 @@ public final class Session {
     }
 
     /**
+     * todo 清单投影（ADR-0018）：最新一次 {@code todo/write} 的清单 JSON（latest-wins）。
+     * 其后出现新的 user/message 即清空（新轮开始——上一轮清单的使命结束，返回 null）；
+     * 终版 assistant/message 之后保留（用户读完答案还能看到完成的清单）。
+     * 尾部一趟扫描：先遇到的 user/message 在最后一条 todo/write 之后即空，
+     * 先遇到的 todo/write 即有效清单。重开会话经日志重放自然恢复。
+     */
+    public String todoProjection() {
+        List<SessionEvent> snapshot = events();
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            String type = snapshot.get(i).type();
+            if (SessionEvent.TODO_WRITE.equals(type)) {
+                return snapshot.get(i).text();
+            }
+            if (SessionEvent.USER_MESSAGE.equals(type)) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
      * 静态标题读取（侧栏列表用）：不持锁打开 JSONL 逐行找最新 title 事件——
      * 与 load 的严格解析不同，损坏行跳过不抛（标注是锦上添花，不因脏行失败）。
      * 文件缺失/不可读返回 null。

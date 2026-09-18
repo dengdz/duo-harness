@@ -3,8 +3,8 @@ package dev.duo.harness.tools;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * 工具定义：name / description / parameters 构成模型可见面
- * （M1 骨架不校验参数 schema；output 契约与并发分类等强化件属后续里程碑）。
+ * 工具定义：name / description / parameters 构成模型可见面，
+ * output / requiresApproval / isConcurrencySafe 构成执行治理面。
  */
 public interface ToolDefinition {
 
@@ -36,6 +36,46 @@ public interface ToolDefinition {
      */
     default boolean requiresApproval() {
         return false;
+    }
+
+    /**
+     * 本工具的某次调用可否与其他工具调用同时执行（并发安全声明，ADR-0018）。
+     *
+     * <p>fail-closed：默认 false，判定抛错或返回非严格 true 一律按独占处理——
+     * 宁可慢（退化为顺序执行），不可错（并发踩坏共享状态）。判定以本次调用
+     * 参数为据；仅返回严格 true 且 {@link #requiresApproval()} 为 false 的调用
+     * 才进入并行池（审批即独占）。</p>
+     *
+     * @param args 本次调用的参数（与 execute 收到的同一份）
+     */
+    default boolean isConcurrencySafe(JsonNode args) {
+        return false;
+    }
+
+    /**
+     * 本工具的某次调用是否豁免管线缺省超时（ADR-0018）。默认 false。
+     *
+     * <p>豁免面是"等待语义合理且时长不可预估"的工具——如 ask_user 等人回答。
+     * 返回 true 时该调用不受 {@code tools/execute} 段超时监听器的限时约束。</p>
+     *
+     * @param args 本次调用的参数（与 execute 收到的同一份）
+     */
+    default boolean exemptFromPipelineTimeout(JsonNode args) {
+        return false;
+    }
+
+    /**
+     * 本工具的某次调用的管线超时上限覆盖（ADR-0018）。默认 null——用管线缺省。
+     *
+     * <p>自带协作式超时的工具（如 bash 的模型可传 timeoutMs）应覆写本方法，
+     * 把上限放宽到协作式之上一档——协作式先到期、按工具自己的语义收场
+     * （如杀进程树），管线超时只兜协作式之外的挂死。</p>
+     *
+     * @param args 本次调用的参数（与 execute 收到的同一份）
+     * @return null = 用管线缺省；正值 = 本调用的超时上限（毫秒）
+     */
+    default Long pipelineTimeoutMs(JsonNode args) {
+        return null;
     }
 
     /**

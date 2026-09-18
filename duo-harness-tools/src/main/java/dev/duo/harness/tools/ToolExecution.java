@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.JsonNode;
  * 一次工具执行的全程载荷：贯穿三段管线（pre-execute / execute / post-execute），
  * 各段监听器经它读参数、否决与改写结果。
  *
- * <p>可变性与线程约定：单次执行内串行传递，不跨线程共享。</p>
+ * <p>可变性与线程约定：单次执行内串行传递，不跨线程共享——唯一例外是超时终局
+ * （{@link #markTimeout(String)} 由超时监听器线程写入，执行线程可能仍在跑并迟到地
+ * 写结果，冻结语义保证迟到的真实结果被丢弃，ADR-0018）。</p>
  */
 public final class ToolExecution {
 
@@ -25,6 +27,8 @@ public final class ToolExecution {
     private Object result;
     /** 结果是否为错误形态。 */
     private boolean resultIsError;
+    /** 超时终局标志：置位后迟到的 setResult 丢弃（超时监听器与执行线程的跨线程契约）。 */
+    private boolean resultFrozen;
 
     public ToolExecution(String toolName, JsonNode args) {
         // 公共类的 null 契约自足：不依赖唯一构造点（ToolsServiceImpl）的先行校验
@@ -86,8 +90,15 @@ public final class ToolExecution {
         return approvalDecision;
     }
 
-    /** execute 段写入执行结果（正常形态）。 */
-    public void setResult(Object value) {
+    /**
+     * execute 段写入执行结果（正常形态）。
+     * 超时终局（{@link #markTimeout}）之后的迟到写入一律丢弃——模型已收到超时错误，
+     * 迟到的真实结果不再采用；同步守护消除与超时监听器线程的竞态窗口。
+     */
+    public synchronized void setResult(Object value) {
+        if (resultFrozen) {
+            return;
+        }
         this.result = value;
         this.resultIsError = false;
     }
@@ -96,6 +107,17 @@ public final class ToolExecution {
     public void markError(String message) {
         this.result = message;
         this.resultIsError = true;
+    }
+
+    /**
+     * 超时终局：写入超时错误并冻结后续结果写入（ADR-0018）。
+     * 与 {@link #markError(String)} 的差别只在冻结——普通错误路径（工具抛错、
+     * post-execute 治理）保持串行时序无迟到竞争，不冻结以免剥夺 post 段修复语义。
+     */
+    public synchronized void markTimeout(String message) {
+        this.result = message;
+        this.resultIsError = true;
+        this.resultFrozen = true;
     }
 
     /** 当前结果值。 */

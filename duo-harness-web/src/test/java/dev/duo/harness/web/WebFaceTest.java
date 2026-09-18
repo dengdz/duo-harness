@@ -314,6 +314,49 @@ class WebFaceTest {
     }
 
     @Test
+    void iterationCapPushesRunErrorFrame() throws Exception {
+        // 迭代上限可见化（ADR-0018 搭车，BUG-20260917-03 验收 B 的缺口）：agent 返回
+        // completed=false 时 Web 面直推 run/error 错误卡——页面不再无提示地停住
+        Session session = Session.create(tempDir.resolve("sessions"));
+        ChatAgent capped = (userText, listener) -> new AgentReply(
+                "已达最大迭代轮数（10），共执行 9 次工具调用", List.of(), false);
+        start(session, capped);
+
+        String stream;
+        try (SseCollector sse = openSse(null)) {
+            HttpResponse<String> ack = post("/api/message", "{\"text\": \"做个大任务\"}");
+            assertEquals(202, ack.statusCode());
+            stream = sse.awaitText(800);
+        }
+
+        assertTrue(stream.contains("\"type\":\"run/error\""),
+                "未完成终止直推 run/error 帧: " + stream);
+        assertTrue(stream.contains("已达最大迭代轮数"),
+                "错误卡携带失败说明（页面可见原因）: " + stream);
+    }
+
+    @Test
+    void todoWriteEventStreamsToFrontend() throws Exception {
+        // todo/write 数据通道（ADR-0018，工单 04）：事件经 SSE 推送/回放给前端——
+        // 常驻面板与工具行摘要的单一数据源，前端无独立拉取端点
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("多步任务"));
+        session.append(SessionEvent.todoWrite(
+                "[{\"content\":\"调研现状\",\"status\":\"completed\"},{\"content\":\"写方案\",\"status\":\"in_progress\"}]"));
+        session.append(SessionEvent.assistantMessage("按清单推进"));
+        start(session, scriptedAgent(session, "ok"));
+
+        String stream;
+        try (SseCollector sse = openSse(null)) {
+            stream = sse.awaitText(800);
+        }
+
+        assertTrue(stream.contains("\"type\":\"todo/write\""),
+                "todo/write 事件帧在场（尾窗快照含非投影事件）: " + stream);
+        assertTrue(stream.contains("写方案"), "清单载荷完整往返: " + stream);
+    }
+
+    @Test
     void sessionNewCreatesFreshSession() throws Exception {
         Session first = Session.create(tempDir.resolve("sessions"));
         start(first, scriptedAgent(first, "ok"));
