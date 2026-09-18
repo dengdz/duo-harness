@@ -59,7 +59,7 @@ Status: ready-for-agent
 - PostToolUse 的"阻断" = 结果改写为错误形态（走管线 post 段既有 `markError` 能力），不假装撤销副作用。
 - matcher 两档：纯字母数字 `_ - | ,` = 精确名/多选；含其他字符 = 正则；`*`/省略 = 全匹配。
 - 条目级 `timeout`（秒）缺省 600s；超时 = 取消进程、丢弃输出、放行（fail-open）。
-- 进程形态：`args` 数组在场 = exec 直启，缺省 = `sh -c`；stdin 载荷最小七字段（session_id、transcript_path、cwd、hook_event_name、tool_name、tool_input、tool_use_id）+ `DUO_HOME` 环境变量；字段与 duo 对应物的映射关系写进配置参考文档。
+- 进程形态：`args` 数组在场 = exec 直启，缺省 = `sh -c`；stdin 载荷一期字段：hook_event_name、tool_name、tool_input、cwd，PostToolUse 增 tool_response（审计面），+ `DUO_HOME` 环境变量。session_id / transcript_path / tool_use_id 缺席（2026-09-18 实现修正：管线载荷无会话与调用标识，透传需执行入口携带上下文，与"tools 域零改动"冲突——backlog"钩子载荷上下文透传"条目记档）。
 
 **顺序与并发**
 

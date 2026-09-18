@@ -38,7 +38,8 @@ class HooksPluginEndToEndTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：HooksPluginEndToEndTest —— hooks 端到端（真进程）：exit 2 阻断、"
-                + "fail-open、空转、坏配置 FAILED 点名、事件跳过（5 用例） ===");
+                + "Pre/Post 阻断与改写、JSON 裁定三形、fail-open、超时放行、载荷送达、matcher 多选正则、"
+                + "空转、坏配置点名、事件跳过（13 用例） ===");
     }
 
     @TempDir
@@ -79,15 +80,19 @@ class HooksPluginEndToEndTest {
             return null;
         }
 
+        /** probe_tool 的执行计数（PostToolUse"工具已执行、仅结果改写"的实证面）。 */
+        static final java.util.concurrent.atomic.AtomicInteger EXECUTIONS =
+                new java.util.concurrent.atomic.AtomicInteger();
+
         @Override
         public Disposable apply(Context ctx, Void config) {
             ToolsService tools = ctx.as(ToolsView.class).tools();
-            tools.register(ctx, simpleTool("probe_tool", "probe-ok"));
-            tools.register(ctx, simpleTool("plain_tool", "plain-ok"));
+            tools.register(ctx, simpleTool("probe_tool", "probe-ok", true));
+            tools.register(ctx, simpleTool("plain_tool", "plain-ok", false));
             return null;
         }
 
-        private ToolDefinition simpleTool(String name, String reply) {
+        private ToolDefinition simpleTool(String name, String reply, boolean counted) {
             return new ToolDefinition() {
                 @Override
                 public String name() {
@@ -107,6 +112,9 @@ class HooksPluginEndToEndTest {
 
                 @Override
                 public Object execute(ToolExecution execution) {
+                    if (counted) {
+                        EXECUTIONS.incrementAndGet();
+                    }
                     return reply;
                 }
             };
@@ -218,6 +226,170 @@ class HooksPluginEndToEndTest {
         try {
             ToolResult result = execute(root, "probe_tool");
             assertTrue(result.isError(), "受支持事件照常生效");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void postToolUseExitTwoRewritesResultToError() throws Exception {
+        // PostToolUse 的"阻断" = 结果改写为错误回给模型；工具本体确实已执行（audit-only）
+        ProbeToolsPlugin.EXECUTIONS.set(0);
+        writeHooksConfig("""
+                {"hooks": {"PostToolUse": [
+                  {"matcher": "*", "hooks": [{"type": "command", "command": "echo 审计拦截 >&2; exit 2"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertTrue(result.isError(), "PostToolUse exit 2 应把结果改写为错误: " + result.value());
+            assertTrue(result.value().toString().contains("被 PostToolUse 钩子阻断")
+                            && result.value().toString().contains("审计拦截"),
+                    "错误结果应含 stderr: " + result.value());
+            assertEquals(1, ProbeToolsPlugin.EXECUTIONS.get(), "工具本体已执行（不假装撤销副作用）");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void preToolUseJsonDecisionDenyShowsReason() throws Exception {
+        // stdout JSON 裁定（扁平 permissionDecision 形）：deny 生效、reason 呈现给模型
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "probe_tool", "hooks": [{"type": "command",
+                    "command": "echo '{\\\"permissionDecision\\\": \\\"deny\\\", \\\"permissionDecisionReason\\\": \\\"JSON 否决\\\"}'"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertTrue(result.isError() && result.value().toString().contains("JSON 否决"),
+                    "JSON deny 应生效且 reason 呈现: " + result.value());
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void legacyDecisionShapeHonored() throws Exception {
+        // legacy 形 {decision: block, reason}：block 等价 deny
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "probe_tool", "hooks": [{"type": "command",
+                    "command": "echo '{\\\"decision\\\": \\\"block\\\", \\\"reason\\\": \\\"legacy 否决\\\"}'"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertTrue(result.isError() && result.value().toString().contains("legacy 否决"),
+                    "legacy block 形应生效: " + result.value());
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void jsonAllowProceeds() throws Exception {
+        // allow 与放行等价（不带改写）
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "*", "hooks": [{"type": "command",
+                    "command": "echo '{\\\"permissionDecision\\\": \\\"allow\\\"}'"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertFalse(result.isError(), "allow 应放行: " + result.value());
+            assertEquals("probe-ok", result.value());
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void malformedJsonStdoutProceedsNonBlocking() throws Exception {
+        // stdout 以 { 开头但非法 JSON = 非阻断错误（Claude Code 同款），调用继续
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "*", "hooks": [{"type": "command", "command": "echo '{broken'"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertFalse(result.isError(), "非法 JSON stdout 应放行: " + result.value());
+            assertEquals("probe-ok", result.value());
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void timeoutEntryCancelsAndFailsOpen() throws Exception {
+        // 条目级 timeout（秒，缺省 600s）：超时取消进程、丢弃输出、放行 + WARN
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "*", "hooks": [{"type": "command", "command": "sleep 30", "timeout": 1}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertFalse(result.isError(), "钩子超时应放行（fail-open）: " + result.value());
+            assertEquals("probe-ok", result.value());
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void payloadCarriesDeclaredFieldsViaStdin() throws Exception {
+        // 载荷经 stdin 送达且含一期声明字段：钩子 cat 落盘后 exit 2（确证钩子执行过）
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "probe_tool", "hooks": [{"type": "command",
+                    "command": "cat > \\\"$DUO_HOME/captured.json\\\"; echo 已捕获 >&2; exit 2"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult result = execute(root, "probe_tool");
+            assertTrue(result.isError() && result.value().toString().contains("已捕获"),
+                    "钩子确已执行: " + result.value());
+            Path captured = tempDir.resolve("home").resolve("captured.json");
+            assertTrue(Files.exists(captured), "钩子应已把 stdin 载荷落盘");
+            JsonNode payload = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(Files.readString(captured));
+            assertEquals("PreToolUse", payload.path("hook_event_name").asText());
+            assertEquals("probe_tool", payload.path("tool_name").asText());
+            assertTrue(payload.has("tool_input"), "tool_input 在场");
+            assertTrue(payload.has("cwd"), "cwd 在场");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void matcherMultiSelectAndRegexRouteToDifferentTools() throws Exception {
+        // 多选（|）与正则（^ 锚定）各命中各自工具
+        writeHooksConfig("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "plain_tool|never_exists", "hooks": [{"type": "command", "command": "echo plain 拦截 >&2; exit 2"}]},
+                  {"matcher": "^probe", "hooks": [{"type": "command", "command": "echo probe 拦截 >&2; exit 2"}]}
+                ]}}
+                """);
+        Context root = boot();
+        try {
+            ToolResult plain = execute(root, "plain_tool");
+            assertTrue(plain.isError() && plain.value().toString().contains("plain 拦截"),
+                    "多选命中 plain_tool: " + plain.value());
+            ToolResult probe = execute(root, "probe_tool");
+            assertTrue(probe.isError() && probe.value().toString().contains("probe 拦截"),
+                    "正则命中 probe_tool: " + probe.value());
         } finally {
             root.dispose();
         }

@@ -36,12 +36,12 @@ public final class HooksConfig {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** 钩子事件名（Claude Code 词汇）。PostToolUse 随工单 04 接入受支持集。 */
+    /** 钩子事件名（Claude Code 词汇）。 */
     public static final String EVENT_PRE_TOOL_USE = "PreToolUse";
     public static final String EVENT_POST_TOOL_USE = "PostToolUse";
 
     /** 本期受支持的事件集（其余事件跳过 + WARN 点名）。 */
-    private static final Set<String> SUPPORTED_EVENTS = Set.of(EVENT_PRE_TOOL_USE);
+    private static final Set<String> SUPPORTED_EVENTS = Set.of(EVENT_PRE_TOOL_USE, EVENT_POST_TOOL_USE);
 
     private final Map<String, List<HookRule>> rules;
     private final List<String> skippedEvents;
@@ -133,6 +133,17 @@ public final class HooksConfig {
                 ? matcherNode.asText() : null;
         if (matcherNode != null && !matcherNode.isNull() && !matcherNode.isTextual()) {
             log.warn("hooks 配置 [{}] 的 matcher 须为字符串，按全匹配处理: {}", event, source);
+        }
+        // 正则形态的 matcher 做编译校验（全匹配与精确形态除外）：非法正则条目级跳过（WARN），
+        // 不留"永不命中"的死规则
+        if (HookMatcher.isRegexForm(matcher)) {
+            try {
+                java.util.regex.Pattern.compile(matcher);
+            } catch (java.util.regex.PatternSyntaxException e) {
+                log.warn("hooks 配置 [{}] matcher 正则非法（{}），跳过条目: {}",
+                        event, e.getMessage(), source);
+                return null;
+            }
         }
         JsonNode handlers = group.get("hooks");
         if (handlers == null && group.has("command")) {

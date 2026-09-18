@@ -44,7 +44,7 @@
 
 ## hooks 域（M18 衍生，2026-09-18，ADR-0019）
 
-- [ ] **钩子载荷 tool_use_id 管线透传**：Claude Code 的 stdin 载荷含 tool_use_id，duo 管线载荷（ToolExecution）无调用标识——透传需动 ToolsService.execute 入口签名，与 M18"tools 域零改动"冲突故一期缺席（载荷现三字段：hook_event_name/tool_name/tool_input，其余字段随工单 04 补全）。来源：M18-03 实现裁定（2026-09-18）。
+- [ ] **钩子载荷上下文透传（session_id / transcript_path / tool_use_id）**：Claude Code 的 stdin 载荷含此三字段（会话关联与日志检视用），duo 管线载荷（ToolExecution）无会话与调用标识——透传需执行入口携带上下文（签名或载荷对象扩展），与 M18"tools 域零改动"冲突故一期缺席。载荷一期实发：hook_event_name / tool_name / tool_input / cwd（PostToolUse 增 tool_response）+ DUO_HOME。来源：M18-03/04 实现裁定（2026-09-18）。
 
 ## 1.0 后菜单（DSH 全景复审补充，2026-09-17，ADR-0016 拒绝项对应池）
 

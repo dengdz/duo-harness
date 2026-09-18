@@ -138,4 +138,28 @@ class HooksConfigTest {
         assertTrue(HooksConfig.load(tempDir.resolve("nope.json")).isEmpty());
         assertTrue(HooksConfig.load(write("   ")).isEmpty());
     }
+
+    @Test
+    void invalidRegexMatcherSkippedAtParseTime() throws Exception {
+        // 非精确形态的 matcher 按正则校验：非法正则条目级跳过（WARN），不留死规则
+        HooksConfig config = HooksConfig.load(write("""
+                {"hooks": {"PreToolUse": [
+                  {"matcher": "([unclosed", "hooks": [{"type": "command", "command": "true"}]},
+                  {"matcher": "^probe", "hooks": [{"type": "command", "command": "true"}]}
+                ]}}
+                """));
+        List<HookRule> rules = config.rulesFor(HooksConfig.EVENT_PRE_TOOL_USE);
+        assertEquals(1, rules.size(), "非法正则条目跳过、合法条目保留");
+        assertEquals("^probe", rules.get(0).matcher());
+    }
+
+    @Test
+    void postToolUseIsSupportedEvent() throws Exception {
+        // PostToolUse 已入受支持集（工单 04）：不再进 skippedEvents
+        HooksConfig config = HooksConfig.load(write("""
+                {"hooks": {"PostToolUse": [{"command": "true"}]}}
+                """));
+        assertTrue(config.skippedEvents().isEmpty(), () -> "PostToolUse 不应被跳过: " + config.skippedEvents());
+        assertEquals(1, config.rulesFor(HooksConfig.EVENT_POST_TOOL_USE).size());
+    }
 }
