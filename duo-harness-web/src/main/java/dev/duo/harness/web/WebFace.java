@@ -62,8 +62,16 @@ public final class WebFace {
     static final long FAIL_CLOSED_GRACE_MS = 2_000;
     /** SSE 游标请求头（浏览器重连自动携带，值为最后收到的 id）。 */
     private static final String LAST_EVENT_ID_HEADER = "Last-Event-ID";
-    /** 首屏尾部窗口的消息数（ADR-0013：常量起步不进 yml，页长配置化为已知限制）。 */
+    /** 首屏尾部窗口的消息数缺省（ADR-0013 常量起步；M19 起经 web 插件 config 可配）。 */
     static final int TAIL_WINDOW_MESSAGES = 50;
+
+    /** 首屏/每页消息数（config.pageSize 可配，M19 还账；缺省 50 不变）。 */
+    private final int pageSize;
+
+    /** 首屏/每页消息数（状态面与分页端点共用）。 */
+    int pageSize() {
+        return pageSize;
+    }
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
@@ -103,7 +111,8 @@ public final class WebFace {
             new AtomicReference<>();
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
-                    WebAnswerer webAnswerer, Path sessionsDir) {
+                    WebAnswerer webAnswerer, Path sessionsDir, int pageSize) {
+        this.pageSize = pageSize;
         this.server = server;
         this.ctx = ctx;
         this.tools = tools;
@@ -131,6 +140,18 @@ public final class WebFace {
                                 ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
                                 WebAnswerer webAnswerer, Path sessionsDir)
             throws IOException {
+        return start(port, ctx, tools, session, agent, governance, webAnswerer, sessionsDir,
+                TAIL_WINDOW_MESSAGES);
+    }
+
+    /**
+     * 启动（页长可配版，M19 还账）：{@code pageSize} 为首屏与每页消息数（ADR-0013
+     * 尾窗与分页同值语义不变），须为正——由 WebPlugin 的 config 解析把关。
+     */
+    public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
+                                ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
+                                WebAnswerer webAnswerer, Path sessionsDir, int pageSize)
+            throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
@@ -141,7 +162,7 @@ public final class WebFace {
         }
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir);
+        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize);
         face.governance = governance;
         face.bindSession(session);
         face.agent = agent;
@@ -661,7 +682,7 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
-        Session.TailWindow window = bound.windowBefore(before, TAIL_WINDOW_MESSAGES); // 首屏/每页同值（ADR-0013）
+        Session.TailWindow window = bound.windowBefore(before, pageSize); // 首屏/每页同值（ADR-0013）
         var root = JSON.createObjectNode()
                 .put("startEvent", window.startEvent())
                 .put("hasMore", window.earlierMessages() > 0)
@@ -734,7 +755,7 @@ public final class WebFace {
             String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
             Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
             List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
-            ReplayWindow window = resolveReplayWindow(cursor, events, bound);
+            ReplayWindow window = resolveReplayWindow(cursor, events, bound, pageSize);
             // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
             log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
             var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
@@ -810,11 +831,12 @@ public final class WebFace {
 
     /**
      * 解析重连游标决定回放窗口：游标合法且落在日志范围内 → 只补其后事件（增量，ADR-0010）；
-     * 无游标或游标非法/越界 → 尾部窗口快照（ADR-0013）——投影取尾部 {@link #TAIL_WINDOW_MESSAGES}
+     * 无游标或游标非法/越界 → 尾部窗口快照（ADR-0013）——投影取尾部页长（config.pageSize 可配，M19）
      * 条消息的事件区间，头帧带 hasMore（是否还有更早消息）与更早计数。日志 append-only、
      * 治理为纯读侧（不改编号），越界游标只见于跨会话误用——按首连同样兜底。
      */
-    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events, Session bound) {
+    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events,
+                                                    Session bound, int pageSize) {
         if (cursor != null && !cursor.isBlank()) {
             try {
                 int parsed = Integer.parseInt(cursor.strip());
@@ -825,7 +847,7 @@ public final class WebFace {
                 // 非法游标按无游标处理（尾部快照兜底）
             }
         }
-        Session.TailWindow tail = bound.tailWindow(TAIL_WINDOW_MESSAGES);
+        Session.TailWindow tail = bound.tailWindow(pageSize);
         return new ReplayWindow(tail.startEvent(), "tail-snapshot", true,
                 tail.earlierMessages() > 0, tail.earlierMessages());
     }

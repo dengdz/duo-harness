@@ -42,7 +42,7 @@ class CliPluginTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、命令注册表入口"
                 + "（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
-                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩（11 用例） ===");
+                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩、/permission 持久化、/title 改名（13 用例） ===");
     }
 
     interface ToolsView {
@@ -336,7 +336,7 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             String out = fx.output();
-            assertTrue(out.contains("未知命令: /nope（可用命令: exit, new, permission, compact, plan"),
+            assertTrue(out.contains("未知命令: /nope（可用命令: exit, new, permission, compact, title, plan"),
                     "四命令注册序即清单序: " + out);
         } finally {
             fx.dispose();
@@ -467,6 +467,44 @@ class CliPluginTest {
                     .filter(e -> SessionEvent.COMPACTION.equals(e.type())).findFirst().orElseThrow();
             assertEquals("manual", compacted.toolName(), "/compact 触发署名 manual");
             assertTrue(compacted.text().contains("压缩总结"), "总结全文随事件落盘");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void permissionModePersistsAcrossSessionReopen() throws Exception {
+        // 切档持久化（M19，ADR-0020 决策 10）：切档落 permission/mode 事件——重开该
+        // 会话恢复最后切定档（fixture 装配档为 read-only，重开应显示 workspace-write）
+        Path dir = tempDir.resolve("persist");
+        Fixture fx = new Fixture(dir, "/permission workspace-write\n/exit\n", fixedReply("答"));
+        try {
+            fx.awaitIdle();
+        } finally {
+            fx.dispose();
+        }
+
+        Fixture reopened = new Fixture(dir, "/permission\n/exit\n", fixedReply("答"));
+        try {
+            reopened.awaitIdle();
+            assertTrue(reopened.output().contains("当前预设: workspace-write"),
+                    "重开恢复最后切定档（非装配档 read-only）: " + reopened.output());
+        } finally {
+            reopened.dispose();
+        }
+    }
+
+    @Test
+    void titleCommandRenamesSessionViaLatestWins() throws Exception {
+        // /title（M19，ADR-0020 决策 11）：再 append title 事件即改名（latest-wins）
+        Path dir = tempDir.resolve("title");
+        Fixture fx = new Fixture(dir, "/title 我的重要会话\n/exit\n", fixedReply("答"));
+        try {
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("已改名: 我的重要会话"), fx.output());
+            Session latest = Session.latest(dir);
+            assertEquals("我的重要会话", latest.title(), "title 事件落盘（改名生效）");
             latest.close();
         } finally {
             fx.dispose();

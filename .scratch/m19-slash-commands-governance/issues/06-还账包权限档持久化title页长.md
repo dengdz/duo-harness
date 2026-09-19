@@ -8,7 +8,7 @@
 
 语义权威：ADR-0020 决策 10/11/12；spec 实现决策"还账四件"节。
 
-- [ ] 新增 `permission/mode` 会话事件（latest-wins 投影，plan/mode 同款先例）：/permission 切档时落事件；会话打开投影恢复最后档位（写回 WorkspacePolicy）；新会话/新部署回 yml 缺省（档位跟对话走，不跨会话惊吓）
-- [ ] /title 命令（busySafe=true，纯事件写）：再 append `session/title` 即改名（latest-wins 投影现成）；双面可用；标题自动演进不做
-- [ ] web 插件 config 增首屏/每页消息数（缺省 50 不变），WebFace 分页逻辑参数化；config 校验沿"未知字段/类型不符/越界一律异常点名"惯例
-- [ ] 测试：缝 2（permission/mode latest-wins 投影）+ 缝 3（切档→落事件→重开恢复的 CliPluginTest 脚本用例；/title 改名后侧栏标题事件断言；WebFaceTest 页长 config 生效）
+- [x] 新增 `permission/mode` 会话事件（latest-wins 投影，plan/mode 同款先例）：/permission 切档时落事件；会话打开投影恢复最后档位（写回 WorkspacePolicy）；新会话/新部署回 yml 缺省（档位跟对话走，不跨会话惊吓）
+- [x] /title 命令（busySafe=true，纯事件写）：再 append `session/title` 即改名（latest-wins 投影现成）；双面可用；标题自动演进不做
+- [x] web 插件 config 增首屏/每页消息数（缺省 50 不变），WebFace 分页逻辑参数化；config 校验沿"未知字段/类型不符/越界一律异常点名"惯例
+- [x] 测试：缝 2（permission/mode latest-wins 投影）+ 缝 3（切档→落事件→重开恢复的 CliPluginTest 脚本用例；/title 改名后侧栏标题事件断言；WebFaceTest 页长 config 生效）

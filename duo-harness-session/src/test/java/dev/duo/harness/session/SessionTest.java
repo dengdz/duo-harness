@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）（46 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null）（47 用例） ===");
     }
 
     @TempDir
@@ -768,6 +768,25 @@ class SessionTest {
         assertEquals(1, window.startEvent(), "替换头计入投影消息（窗口不含它时为 earlier）");
         assertEquals(1, window.earlierMessages());
         session.close();
+    }
+
+    @Test
+    void permissionModeRoundTripsWithLatestWins() throws IOException {
+        // 权限档投影（M19，ADR-0020 决策 10）：latest-wins（plan/mode 同款先例）、
+        // JSONL 重放一致；无切档事件的新会话返回 null（调用方回退 yml 缺省）
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.permissionMode("read-only"));
+        session.append(SessionEvent.permissionMode("danger-full-access"));
+        assertEquals("danger-full-access", session.permissionMode(), "latest-wins 取最后档");
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals("danger-full-access", reloaded.permissionMode(), "重放投影一致");
+        reloaded.close();
+
+        Session fresh = Session.create(sessionsDir());
+        assertNull(fresh.permissionMode(), "新会话无切档记录");
+        fresh.close();
     }
 
     @Test

@@ -20,6 +20,7 @@ import dev.duo.harness.tools.AskUserTool;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.PipelineTimeout;
 import dev.duo.harness.tools.ToolDefinition;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 import dev.duo.harness.tools.ToolsService;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -273,6 +274,51 @@ public final class PresenterAssembly {
     }
 
     /**
+     * 权限档恢复（M19，ADR-0020 决策 10）：呈现位打开/换绑会话后调用——读会话
+     * {@code permission/mode} 投影写回全局 workspace 档位（latest-wins，重开恢复最后
+     * 切定档）；无切档记录（新会话）重置回装配档（yml 缺省——"切档不跨会话惊吓"）。
+     * workspace 服务缺席（纯对话装配）零感跳过。双开语义：档位是全局治理态，后打开
+     * 的会话说了算（与单例 volatile 模型一致）。恢复事件不落盘（读侧恢复非治理动作）。
+     */
+    public static void restorePermissionMode(Context ctx, Session session) {
+        WorkspacePolicy workspace;
+        try {
+            workspace = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
+                    ? ctx.as(WorkspaceView.class).workspace() : null;
+        } catch (Exception e) {
+            return; // 服务解析失败等同缺席——恢复是尽力而为的还账，不阻断呈现位启动
+        }
+        if (workspace == null) {
+            return;
+        }
+        String saved = session.permissionMode();
+        WorkspacePolicy.Mode target = saved != null
+                ? WorkspacePolicy.Mode.parse(saved) : workspace.initialMode();
+        if (target != workspace.mode()) {
+            workspace.setMode(target);
+        }
+    }
+
+    /**
+     * /title 注册（M19，ADR-0020 决策 11，查重先到先得）：改名命令——双面 ANY +
+     * busySafe=true（纯事件写）；再 append {@code session/title} 即改名（latest-wins
+     * 投影现成，侧栏即时生效）。标题随对话自动演进不做（一次生成 + 可改名已覆盖）。
+     */
+    public static void registerTitleCommand(Context ctx, CommandsRegistry commands) {
+        if (commands.find("title") == null) {
+            commands.register(ctx, new CommandDefinition("title",
+                    "改会话标题：/title 新标题（侧栏与标签页即时生效）",
+                    CommandScope.ANY, true, context -> {
+                    if (context.args().isEmpty()) {
+                        return "用法：/title 新标题";
+                    }
+                    context.session().append(dev.duo.harness.session.SessionEvent.title(context.args()));
+                    return "已改名: " + context.args();
+                }));
+        }
+    }
+
+    /**
      * /compact 注册（M19，ADR-0020 决策 6，查重先到先得）：手动压缩命令——双面 ANY
      * （动上下文必须 idle，busySafe=false）；handler 的会话经 {@code CommandContext#session()}
      * 取**发起方**当前会话（双开下各压各的，零串位），治理实例先到方胜出（等价配置，
@@ -323,5 +369,10 @@ public final class PresenterAssembly {
             return; // 先到方胜出（多呈现位共存）
         }
         ctx.provide(SubagentHost.SERVICE_NAME, new SubagentHost(llm, tuning, currentSession));
+    }
+    /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */
+    interface WorkspaceView {
+
+        WorkspacePolicy workspace();
     }
 }

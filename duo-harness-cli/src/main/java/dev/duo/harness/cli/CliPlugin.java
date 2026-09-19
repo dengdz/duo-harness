@@ -185,6 +185,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
         registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
                 maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
                 workspacePolicy);
+        // 权限档持久化（M19，ADR-0020 决策 10）：续接会话恢复最后切定档；新会话无切档
+        // 记录即重置回 yml 缺省（档位跟对话走，切档不跨会话惊吓）
+        dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(ctx, session);
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
         plan.active = PlanMode.isActive(session);
@@ -299,6 +302,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
+                // 新会话回 yml 缺省（无切档记录 → 重置装配档，ADR-0020 决策 10）
+                dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(
+                        ctx, holder.session);
                 plan.active = false;
                 disposeGuidance(plan);
                 return "新会话 " + holder.session.id() + "。";
@@ -318,15 +324,20 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 }
                 try {
                     workspacePolicy.setMode(WorkspacePolicy.Mode.parse(context.args()));
+                    // 档位跟对话走（M19，ADR-0020 决策 10）：切档落会话事件——重开恢复
+                    context.session().append(
+                            dev.duo.harness.session.SessionEvent.permissionMode(
+                                    workspacePolicy.mode().configName()));
                     return "已切换: " + workspacePolicy.mode().configName();
                 } catch (IllegalArgumentException e) {
                     return e.getMessage();
                 }
             }));
-        // /compact（M19，ADR-0020 决策 6）：双面 ANY 命令经共享装配器注册（查重先到
-        // 先得——Web 侧同款），会话取发起方当前值
+        // /compact 与 /title（M19）：双面命令经共享装配器注册（查重先到先得——Web 侧
+        // 同款），会话取发起方当前值
         dev.duo.harness.agent.presenter.PresenterAssembly.registerCompactCommand(
                 ctx, commands, governance);
+        dev.duo.harness.agent.presenter.PresenterAssembly.registerTitleCommand(ctx, commands);
         commands.register(ctx, new CommandDefinition("plan",
                 "计划模式：/plan 进入（可携任务描述直接推进）、/plan off 退出",
                 CommandScope.CLI, false, context -> {

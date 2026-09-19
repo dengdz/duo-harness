@@ -508,6 +508,36 @@ class WebFaceTest {
     }
 
     @Test
+    void pageSizeConfigDrivesSnapshotWindow() throws Exception {
+        // 页长可配（M19 还账，ADR-0020 决策 12）：pageSize=3 —— 6 条投影消息的会话
+        // 首屏快照只回 3 条（从第 2 条消息起），头帧 hasMore=true、更早计数=3
+        Session session = Session.create(tempDir.resolve("sessions"));
+        for (int i = 0; i < 3; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        Context ctx = Context.root();
+        faceCtx = ctx;
+        ctx.plugin(new ToolsPlugin(), null).awaitStartup();
+        ToolsService tools = ctx.as(ToolsView.class).tools();
+        face = WebFace.start(0, ctx, tools, session,
+                (userText, listener) -> new AgentReply("ok", List.of(), true), null, null,
+                tempDir.resolve("web-sessions"), 3);
+        face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
+        face.onSessionChanged(changed -> changedSessions.add(changed));
+
+        String stream;
+        try (SseCollector sse = openSse(null)) {
+            stream = sse.awaitText(800);
+        }
+        assertTrue(stream.contains("\"hasMore\":true") && stream.contains("\"earlierCount\":3"),
+                "页长 3 生效（6 条投影取尾 3）: " + stream);
+        assertTrue(stream.contains("答1"), "窗口首条为第 4 条消息（尾 3 条之首）");
+        assertTrue(!stream.contains("问1") && !stream.contains("问0"),
+                "窗口外消息不下发: " + stream);
+    }
+
+    @Test
     void iterationCapPushesRunErrorFrame() throws Exception {
         // 迭代上限可见化（ADR-0018 搭车，BUG-20260917-03 验收 B 的缺口）：agent 返回
         // completed=false 时 Web 面直推 run/error 错误卡——页面不再无提示地停住

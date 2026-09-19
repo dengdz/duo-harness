@@ -615,6 +615,21 @@ public final class Session {
     }
 
     /**
+     * 权限档投影（M19，ADR-0020 决策 10）：最新一次 {@code permission/mode} 事件的档位
+     * （latest-wins，title 同款倒查）；无切档事件返回 null——调用方回退 yml 缺省
+     * （新会话/新部署不惊扰）。档位跟对话走：会话重开据此恢复最后切定档位。
+     */
+    public String permissionMode() {
+        List<SessionEvent> snapshot = events();
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            if (SessionEvent.PERMISSION_MODE.equals(snapshot.get(i).type())) {
+                return snapshot.get(i).text();
+            }
+        }
+        return null;
+    }
+
+    /**
      * todo 清单投影（ADR-0018）：最新一次 {@code todo/write} 的清单 JSON（latest-wins）。
      * 其后出现新的 user/message 即清空（新轮开始——上一轮清单的使命结束，返回 null）；
      * 终版 assistant/message 之后保留（用户读完答案还能看到完成的清单）。

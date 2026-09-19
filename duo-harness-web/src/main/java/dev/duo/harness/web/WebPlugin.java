@@ -104,7 +104,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
-                    DuoHome.resolve().resolveDir("agent-sessions"));
+                    DuoHome.resolve().resolveDir("agent-sessions"), parsePageSize(config));
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -115,6 +115,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // /compact（M19，ADR-0020 决策 6）：双面命令随 Web 装配注册（查重先到先得——
         // CLI 已注册则跳过），会话经 face 延迟解析取当前值
         PresenterAssembly.registerCompactCommand(ctx, commands, governance);
+        PresenterAssembly.registerTitleCommand(ctx, commands);
+        // 权限档持久化（M19，ADR-0020 决策 10）：续接会话恢复最后切定档（无 fs 服务的
+        // 纯对话装配零感跳过）；换绑恢复在 onSessionChanged 回调里同源执行
+        PresenterAssembly.restorePermissionMode(ctx, session);
         // HITL 交互工具补全（共享装配器，查重先到先得）：ask_user 与计划呈交随 Web 装配
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
@@ -137,6 +141,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
                     ChatAgent.PRESENTER_WEB));
             SessionTitles.attach(fresh, adapter);
+            // 换绑恢复权限档（新会话回 yml 缺省，ADR-0020 决策 10）
+            PresenterAssembly.restorePermissionMode(ctx, fresh);
         });
         SessionTitles.attach(session, adapter);
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
@@ -165,5 +171,26 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebCommandsView {
 
         CommandsRegistry commands();
+    }
+    /**
+     * 解析 web 插件 config 的可选页长（{@code config.pageSize}，M19 还账）：首屏与每页
+     * 消息数（ADR-0013 尾窗与分页同值）。缺席或 null 返回缺省 50（行为不变）；在场必须
+     * 是正整数——非整数/非正一律异常点名（与 maxIterations 同规，配置错误不做静默纠正）。
+     *
+     * @throws PluginException 值非正整数
+     */
+    static int parsePageSize(JsonNode config) {
+        if (config == null || !config.hasNonNull("pageSize")) {
+            return WebFace.TAIL_WINDOW_MESSAGES;
+        }
+        JsonNode value = config.get("pageSize");
+        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            throw new PluginException("pageSize 必须是整数: " + value);
+        }
+        int parsed = value.asInt();
+        if (parsed < 1) {
+            throw new PluginException("pageSize 必须为正: " + parsed);
+        }
+        return parsed;
     }
 }
