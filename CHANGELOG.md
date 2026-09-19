@@ -2,7 +2,7 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
-## 0.14.0（开发中）
+## 0.14.0（2026-09-20）
 
 ### Fixed
 
