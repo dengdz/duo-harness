@@ -100,13 +100,13 @@ public final class CommandsRegistry {
 
         CommandDefinition definition = find(name);
         if (definition == null) {
-            return resolveSkillOrUnknown(rawInput, skills);
+            return resolveSkillOrUnknown(rawInput, skills, env.presenter());
         }        if (!definition.scope().admits(env.presenter())) {
-            return CommandOutcome.command("该命令仅在 " + definition.scope().displayName()
+            return CommandOutcome.refusal("该命令仅在 " + definition.scope().displayName()
                     + " 可用。");
         }
         if (env.agentBusy().getAsBoolean() && !definition.busySafe()) {
-            return CommandOutcome.command(BUSY_REFUSAL);
+            return CommandOutcome.refusal(BUSY_REFUSAL);
         }
 
         // 审计先行（run → 执行 → done）：崩溃断口可观测（run 落定而 done 缺席即中断点）。
@@ -134,7 +134,8 @@ public final class CommandsRegistry {
     }
 
     /** 入口顺序第二级：技能直调命中即注入透传；未命中任何表则报未知命令附可用清单。 */
-    private CommandOutcome resolveSkillOrUnknown(String rawInput, SkillRegistry skills) {
+    private CommandOutcome resolveSkillOrUnknown(String rawInput, SkillRegistry skills,
+                                                 CommandScope presenter) {
         String[] parts = rawInput.split("\\s+", 2);
         Skill skill = skills == null ? null : skills.find(parts[0].substring(1));
         if (skill != null) {
@@ -142,12 +143,15 @@ public final class CommandsRegistry {
             return CommandOutcome.prompt(rest.isBlank()
                     ? skill.content() : skill.content() + "\n\n用户输入：" + rest);
         }
-        return CommandOutcome.command("未知命令: " + parts[0] + availabilityDigest(skills));
+        return CommandOutcome.refusal("未知命令: " + parts[0]
+                + availabilityDigest(skills, presenter));
     }
 
-    /** 未知命令提示的可用清单摘要：命令清单必有，技能清单在场时附注。 */
-    private String availabilityDigest(SkillRegistry skills) {
-        String commandNames = all().stream().map(CommandDefinition::name)
+    /** 未知命令提示的可用清单摘要：命令按发起面过滤适用性，技能清单在场时附注。 */
+    private String availabilityDigest(SkillRegistry skills, CommandScope presenter) {
+        String commandNames = all().stream()
+                .filter(definition -> definition.scope().admits(presenter))
+                .map(CommandDefinition::name)
                 .collect(Collectors.joining(", "));
         String digest = commandNames.isEmpty() ? "（无可用命令" : "（可用命令: " + commandNames;
         if (skills != null && !skills.all().isEmpty()) {

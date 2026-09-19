@@ -451,6 +451,30 @@ const render = (() => {
     }
   }
 
+  // 斜杠命令行（M19，ADR-0020 决策 5）：用户敲的命令以命令形态呈现（不进模型历史，
+  // 纯呈现）；结果行随 command/done 到达——回放经同一 dispatch，刷新可见
+  function commandLine(ev) {
+    showMessages();
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    const b = document.createElement('div');
+    b.className = 'bubble cmd';
+    b.textContent = '❯ /' + ev.toolName + (ev.text ? ' ' + ev.text : '');
+    div.appendChild(b);
+    t.container.appendChild(div);
+    scroll();
+  }
+
+  function commandResult(ev) {
+    if (!ev.text) return; // 空结果（如 /exit）不渲染
+    showMessages();
+    const div = document.createElement('div');
+    div.className = 'msg cmdresult';
+    div.textContent = ev.text;
+    t.container.appendChild(div);
+    scroll();
+  }
+
   function runError(text) {
     showMessages();
     const card = document.createElement('div');
@@ -570,6 +594,8 @@ const render = (() => {
     else if (ev.type === 'approval/decided') approvalDecided(ev);
     else if (ev.type === 'subagent/spawned') subagentSpawned(ev);
     else if (ev.type === 'subagent/completed') subagentCompleted(ev);
+    else if (ev.type === 'command/run') commandLine(ev);
+    else if (ev.type === 'command/done') commandResult(ev);
     else if (ev.type === 'run/error') runError(ev.text);
   }
 
@@ -823,15 +849,21 @@ const app = (() => {
     try {
       const res = await api.sendMessage(text);
       if (res.status === 202) {
-        // 202 空体 = 正常受理（异步执行）；202 带体 = 运行中注入已被接收
-        // （M19 steer：消息在当前步骤完成后进入对话，ADR-0020 决策 8）
-        const note = await res.text();
-        if (note) {
-          showToast(note, 'info');
-          setSendBusy(false); // 注入不改变任务忙态——输入恢复可用（可继续注入），
-                              // 任务完成时 assistant/message 的 clearSendBusy 幂等
-        } else {
+        // 202 空体 = 正常受理（异步执行）；带体 = 结构化受理（M19）：
+        // injected = 运行中注入；command = 斜杠命令（命中执行的结果走事件流渲染，
+        // 拒绝类无事件、text 随体 toast——未知命令/适用面/busy）
+        const body = await res.text();
+        if (!body) {
           setSendBusy(true, '思考中…');
+          return;
+        }
+        setSendBusy(false);
+        let ack = {};
+        try { ack = JSON.parse(body); } catch (e) { /* 兼容旧纯文本体 */ }
+        if (ack.outcome === 'injected') {
+          showToast(ack.text || '已注入，待当前步骤完成', 'info');
+        } else if (ack.outcome === 'command' && ack.text) {
+          showToast(ack.text, 'info');
         }
         return;
       }

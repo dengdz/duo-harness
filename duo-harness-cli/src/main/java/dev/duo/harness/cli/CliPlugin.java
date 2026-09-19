@@ -303,9 +303,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 disposeGuidance(plan);
                 return "新会话 " + holder.session.id() + "。";
             }));
+        // /permission 双面可用（ANY）：handler 只依赖 fs 插件的全局 workspace 服务
+        // （无呈现位归属，切档即全局生效）——M19 用户故事 1（浏览器直接切档）；
+        // 其余三命令闭包本呈现位状态（holder/plan/agent），维持 CLI 面
         commands.register(ctx, new CommandDefinition("permission",
                 "查看或切换权限预设：/permission [read-only|workspace-write|danger-full-access]",
-                CommandScope.CLI, true, context -> {
+                CommandScope.ANY, true, context -> {
                 if (workspacePolicy == null) {
                     return "workspace 服务未挂载（未装配 fs 工具插件），/permission 不可用。";
                 }

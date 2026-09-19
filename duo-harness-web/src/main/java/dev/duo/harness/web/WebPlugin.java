@@ -12,6 +12,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
@@ -52,7 +53,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
-                InteractionService.SERVICE_NAME);
+                InteractionService.SERVICE_NAME, CommandsRegistry.SERVICE_NAME);
     }
 
     @Override

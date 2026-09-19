@@ -3,6 +3,10 @@ package dev.duo.harness.web;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandEnv;
+import dev.duo.harness.agent.commands.CommandOutcome;
+import dev.duo.harness.agent.commands.CommandScope;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.session.Session;
@@ -407,6 +411,20 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
+        // 斜杠前置命令解释（M19，ADR-0020 决策 3/5）：命令注册表 → 技能直调 → 未知报错，
+        // 与 CLI 共享同一入口顺序——斜杠文本从此不再透传进模型历史（M12-03 事故销账）。
+        // 技能直调（prompt outcome）落回下方普通提交路径，注入文本照旧进模型历史
+        final String userText;
+        String stripped = text.strip();
+        if (stripped.startsWith("/")) {
+            String skillInjected = handleCommand(exchange, stripped);
+            if (skillInjected == null) {
+                return; // 命令分支已响应（命中执行或拒绝）
+            }
+            userText = skillInjected; // 技能直调：指令前缀注入文本照旧走 agent
+        } else {
+            userText = text;
+        }
         ChatAgent current = agent;
         if (current == null) {
             respondText(exchange, 503, "对话面未就绪（agent 未装配）");
@@ -416,8 +434,9 @@ public final class WebFace {
             // 运行中治理（M19 steer，ADR-0020 决策 8）：执行中的消息进 agent 注入收件箱
             // （迭代边界排干为普通 user/message，下一轮请求可见）——不再无差别 409；
             // agent 不支持注入（如测试桩）时保留 409 语义
-            if (current.injectUserMessage(text)) {
-                respondText(exchange, 202, "已注入，待当前步骤完成");
+            if (current.injectUserMessage(userText)) {
+                respondText(exchange, 202,
+                        "{\"outcome\":\"injected\",\"text\":\"已注入，待当前步骤完成\"}");
             } else {
                 respondText(exchange, 409, "已有对话在执行中（单入口串行）");
             }
@@ -427,7 +446,7 @@ public final class WebFace {
         Thread.ofVirtual().start(() -> {
             try {
                 dev.duo.harness.agent.AgentReply reply =
-                        current.send(text, new dev.duo.harness.agent.AgentListener() {
+                        current.send(userText, new dev.duo.harness.agent.AgentListener() {
                             @Override
                             public void onChunk(String chunk) {
                                 session.append(SessionEvent.assistantChunk(chunk));
@@ -449,6 +468,59 @@ public final class WebFace {
             }
         });
     }
+    /**
+     * 斜杠命令分支（M19）：经命令注册表共享入口解释输入——命中命令同步执行于 Web
+     * 进程内（不占 agent 单飞窗口、不 append user/message），run/done 审计事件经
+     * 会话监听器走既有 SSE 推送（前端渲染轻量命令行，刷新/回放可见）；拒绝三类
+     * （未知/适用面/busy）无审计事件，文本经响应体交前端 toast。命中返回 null；
+     * 技能直调返回注入文本（调用方落回普通 agent 提交路径）。
+     */
+    private String handleCommand(HttpExchange exchange, String line) throws IOException {
+        CommandsRegistry commands;
+        try {
+            // 惰性寻址（InteractivePolicy 同款）：命令服务由装配保证在场（web 插件 inject），
+            // 测试骨架等缺席场景不误透传——斜杠透传正是 M12-03 事故
+            commands = ctx.as(CommandsView.class).commands();
+        } catch (Exception e) {
+            respondText(exchange, 503, "命令服务未挂载（装配缺 commands 插件行）");
+            return null;
+        }
+        CommandOutcome outcome = commands.dispatch(line,
+                new CommandEnv(CommandScope.WEB, () -> session, s -> { }, () -> { }, busy::get),
+                skillsOrNull());
+        if (!outcome.isCommand()) {
+            return outcome.text(); // 技能直调注入文本
+        }
+        if (outcome.audited()) {
+            respondText(exchange, 202, "{\"outcome\":\"command\"}");
+        } else {
+            respondText(exchange, 202, "{\"outcome\":\"command\",\"text\":"
+                    + JSON.writeValueAsString(outcome.text()) + "}");
+        }
+        return null;
+    }
+
+    /** 技能注册表惰性寻址（技能直调入口第二级；缺席即无技能，null 安全）。 */
+    private dev.duo.harness.agent.skills.SkillRegistry skillsOrNull() {
+        try {
+            return ctx.as(SkillsView.class).skills();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 命令注册表视图接口（方法名即服务名 "commands"）。 */
+    interface CommandsView {
+
+        CommandsRegistry commands();
+    }
+
+    /** 技能注册表视图接口（方法名即服务名 "skills"）。 */
+    interface SkillsView {
+
+        dev.duo.harness.agent.skills.SkillRegistry skills();
+    }
+
     /** 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）。 */
     private void handleSessionNew(HttpExchange exchange) throws IOException {
         byte[] discarded = readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
