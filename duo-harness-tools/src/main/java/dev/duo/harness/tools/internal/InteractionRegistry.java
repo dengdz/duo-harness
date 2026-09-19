@@ -35,25 +35,31 @@ public final class InteractionRegistry implements InteractionService {
     /**
      * 询问一次：请求携发起呈现位标记时**发起方回答者优先**（M19 亲和路由，
      * ADR-0020 决策 7——"谁发起谁作答"）：先问同标记的回答者，其放弃（null）
-     * 或缺席才轮注册序全遍历；注册序兜底保留，单呈现位部署零感。无标记的请求
-     * 直接注册序。全部放弃或无人在场时 fail-closed。
+     * 或缺席才轮注册序全遍历（**跳过发起方**——null 即让渡作答权，不二次询问）；
+     * 注册序兜底保留，单呈现位部署零感。无标记的请求直接注册序。
+     * 全部放弃或无人在场时 fail-closed。
      */
     @Override
     public InteractionAnswer ask(InteractionRequest request) {
         Objects.requireNonNull(request, "request");
+        Answerer asked = null;
         if (request.presenterId() != null) {
             for (Answerer answerer : answerers) {
                 if (!request.presenterId().equals(answerer.presenterId())) {
                     continue;
                 }
+                asked = answerer;
                 InteractionAnswer answer = answerer.answer(request);
                 if (answer != null) {
                     return answer;
                 }
-                break; // 发起方在场但放弃作答权——交注册序（含其余回答者）
+                break; // 发起方在场但放弃作答权——交注册序其余回答者（不二次询问发起方）
             }
         }
         for (Answerer answerer : answerers) {
+            if (answerer == asked) {
+                continue;
+            }
             InteractionAnswer answer = answerer.answer(request);
             if (answer != null) {
                 return answer;

@@ -426,8 +426,7 @@ public final class Session {
                     // 的折叠骨架同文，模型视角两种触发路径无差别
                     messages.clear();
                     messages.add(new Message(Message.Role.USER,
-                            "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n"
-                                    + event.text()));
+                            SessionEvent.COMPACTION_SUMMARY_HEADER + event.text()));
                 }
                 default -> { /* 不可达：projectsToMessage 已收窄类型集 */ }
             }
@@ -653,13 +652,32 @@ public final class Session {
     /**
      * 静态权限档读取（M19 占用继承用）：不持锁打开 JSONL 逐行找最新 permission/mode
      * 事件——与 {@link #titleOf} 同款只读扫描（坏行跳过）。文件缺失/不可读返回 null。
+     *
+     * <p>POSIX 释放陷阱防线（OCR 终审 #15）：若该文件正被**本进程**另一 Session 实例
+     * 独占持锁（占用继承的主用例——双开下 CLI 对被占会话调本方法），关闭任何新开 fd
+     * 都会释放本进程在该文件上的全部锁（{@link #load} / {@link #isOccupied} 注释两次
+     * 记档）——此时只读 fd **有意不关**（占用继承低频路径，fd 泄漏有界，进程退出由
+     * 内核回收）；他进程持锁或无人持锁时照常关闭。</p>
      */
     public static String permissionModeOf(Path jsonl) {
         if (!Files.isRegularFile(jsonl)) {
             return null;
         }
+        Path key = jsonl.toAbsolutePath().normalize();
+        boolean heldHere;
+        synchronized (LOCK_GATE) {
+            heldHere = HELD_LOCKS.containsKey(key);
+        }
+        java.nio.channels.FileChannel channel;
+        try {
+            channel = java.nio.channels.FileChannel.open(jsonl, StandardOpenOption.READ);
+        } catch (IOException e) {
+            return null;
+        }
         String latest = null;
-        try (var reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
+        try {
+            var reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    java.nio.channels.Channels.newInputStream(channel), StandardCharsets.UTF_8));
             String line;
             while ((line = reader.readLine()) != null) {
                 try {
@@ -671,8 +689,17 @@ public final class Session {
                     // 坏行跳过
                 }
             }
-        } catch (IOException e) {
-            return null;
+        } catch (IOException ignored) {
+            // 读取失败按无记录处理
+        } finally {
+            if (!heldHere) {
+                try {
+                    channel.close();
+                } catch (IOException ignored) {
+                    // 关闭失败无碍（无锁可释放）
+                }
+            }
+            // heldHere：fd 有意不关（见方法 javadoc）——关了会释放属主的独占锁
         }
         return latest;
     }

@@ -63,7 +63,11 @@ public final class CommandContext {
         requestEnd.run();
     }
 
-    /** 转发文本给 agent（普通用户输入语义：进模型历史、落 user/message）。 */
+    /**
+     * 转发文本给 agent（普通用户输入语义：进模型历史、落 user/message）。
+     * 多次调用按 <b>last-wins</b>（后调覆盖前调——当前唯一消费方 /plan 只转发一次）。
+     * 另注：Web 呈现位现不消费转发文本，转发型命令应声明 CLI 适用面。
+     */
     public void forward(String text) {
         Objects.requireNonNull(text, "text");
         forward.accept(text);

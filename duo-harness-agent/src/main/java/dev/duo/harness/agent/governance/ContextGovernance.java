@@ -71,7 +71,8 @@ public final class ContextGovernance {
      * @param pruneThresholdChars      修剪触发阈值（字符，正）
      * @param compactionThresholdRatio compaction 触发比例（(0,1]）
      * @param contextWindowTokens      模型上下文窗口（token，正）
-     * @param keepRecentRatio          compaction 保留近端比例（[0,1)）
+     * @param keepRecentRatio          （已停用）事件化压缩总结压缩点之前全部历史，无"近端保留"概念
+     *                                 ——字段保留解析兼容既有 yml，值被忽略
      * @param minRemoteMessages        compaction 触发的最小远端消息数（正）
      */
     public record Tuning(Integer spillThresholdChars, Integer pruneThresholdChars,
@@ -98,7 +99,6 @@ public final class ContextGovernance {
     private final int pruneThresholdChars;
     private final double compactionThresholdRatio;
     private final long contextWindowTokens;
-    private final double keepRecentRatio;
     private final int minRemoteMessages;
 
     public ContextGovernance(LlmAdapter llm) {
@@ -115,8 +115,6 @@ public final class ContextGovernance {
                 ? COMPACTION_THRESHOLD_RATIO : tuning.compactionThresholdRatio();
         this.contextWindowTokens = tuning == null || tuning.contextWindowTokens() == null
                 ? CONTEXT_WINDOW_TOKENS : tuning.contextWindowTokens();
-        this.keepRecentRatio = tuning == null || tuning.keepRecentRatio() == null
-                ? KEEP_RECENT_RATIO : tuning.keepRecentRatio();
         this.minRemoteMessages = tuning == null || tuning.minRemoteMessages() == null
                 ? MIN_REMOTE_MESSAGES : tuning.minRemoteMessages();
     }
@@ -279,12 +277,12 @@ public final class ContextGovernance {
     }
 
     /**
-     * compaction（ADR-0020 决策 6 事件化）：修剪后计量仍超阈值时，远端历史折叠为固定
-     * 骨架摘要（近端原文保留）并落 {@code context/compacted} 压缩点事件（触发方式 auto）
-     * ——事件化后投影按最后压缩点拼接，**不再每轮重复总结**（现状是请求期纯变换，
-     * 每轮请求重新折叠、LLM 重复调用）。session 为 null 时退化为纯变换（不落盘）。
-     * 切分点前移到 USER 消息边界——近端以 TOOL 消息开头会破坏 provider 的
-     * tool_calls/results 相邻协议。LLM 失败原样透出（降级不冒险、不落事件）。
+     * compaction（ADR-0020 决策 6 事件化）：计量超阈值时，**压缩点之前的全部历史**折叠为
+     * 固定骨架摘要并落 {@code context/compacted} 压缩点事件（触发方式 auto），返回值 =
+     * 替换头单条——与投影语义（最后压缩点之前以总结替换、之后照常）严格一致，当轮请求
+     * 与后续轮重放模型视角无差别。事件化后不再每轮重复总结（旧请求期纯变换每轮重复
+     * 调用 LLM）。session 为 null 时退化为纯变换（不落盘）。历史不足最小折叠量时放弃；
+     * LLM 失败或空摘要原样透出（降级不冒险、不落事件——空摘要落盘会令投影坍缩为空）。
      *
      * @param measuredTokens       计量值：provider 真实用量或本地估算（由 measuredFromProvider 标注口径）
      * @param measuredFromProvider 计量是否来自 provider 真实用量（日志口径标注）
@@ -293,29 +291,21 @@ public final class ContextGovernance {
     List<Message> compact(List<Message> messages, long thresholdTokens,
                           long measuredTokens, boolean measuredFromProvider,
                           dev.duo.harness.session.Session session) {
-        if (measuredTokens <= thresholdTokens) {
-            return messages;
-        }
-        Split split = splitForCompaction(messages);
-        if (split == null) {
+        if (measuredTokens <= thresholdTokens || messages.size() < minRemoteMessages) {
             return messages;
         }
         try {
-            String summary = summarize(split.remote());
+            String summary = summarize(messages);
             if (summary.isBlank()) {
                 return messages;
             }
             log((measuredFromProvider ? "实测" : "估算") + " "
                     + measuredTokens + " tokens 超阈值 " + thresholdTokens
-                    + "，远端 " + split.remote().size() + " 条折叠为摘要（近端保留 "
-                    + split.recent().size() + " 条原文）");
+                    + "，历史 " + messages.size() + " 条折叠为摘要");
             if (session != null) {
                 session.append(SessionEvent.compaction(summary, TRIGGER_AUTO));
             }
-            List<Message> result = new ArrayList<>();
-            result.add(summaryHead(summary));
-            result.addAll(split.recent());
-            return result;
+            return List.of(summaryHead(summary));
         } catch (Exception e) {
             logger.warn("压缩摘要生成失败，本次请求原样透出", e);
             return messages;
@@ -323,36 +313,37 @@ public final class ContextGovernance {
     }
 
     /**
-     * 手动压缩（/compact 命令的本体，M19）：不看阈值强制走一次折叠并落压缩点事件
-     * （触发方式 manual）。压缩点之后的近端不足最小远端数时无折叠价值，返回提示
-     * 不落事件。命令语义 busySafe=false——调用方保证 agent 空闲（动上下文结构必须 idle）。
+     * 手动压缩（/compact 命令的本体，M19）：不看阈值强制压缩并落压缩点事件（触发方式
+     * manual）。语义与 {@link #compact} 一致：压缩点之前的全部历史折叠为摘要（投影随后
+     * 即以此拼接，无"近端保留"）。历史不足最小折叠量时提示无需压缩、不落事件；
+     * 空摘要（LLM 返回空白）不落事件——空压缩点会让投影坍缩为空，宁可不动。
+     * 命令语义 busySafe=false——调用方保证 agent 空闲（动上下文结构必须 idle）。
      *
-     * @return 回显摘要（压缩结果或无需压缩的说明）
+     * @return 回显摘要（压缩结果或无需压缩/失败的说明）
      */
     public String compactNow(dev.duo.harness.session.Session session) {
         List<Message> projected = session.deriveMessages();
-        long before = ContextBudget.estimateMessageTokens(projected);
-        Split split = splitForCompaction(projected);
-        if (split == null) {
-            return "近端消息不足 " + minRemoteMessages + " 条，无需压缩。";
+        if (projected.size() < minRemoteMessages) {
+            return "历史不足 " + minRemoteMessages + " 条消息，无需压缩。";
         }
-        String summary = summarize(split.remote());
+        long before = ContextBudget.estimateMessageTokens(projected);
+        String summary = summarize(projected);
+        if (summary.isBlank()) {
+            log("手动压缩放弃：摘要生成为空，不落压缩点");
+            return "摘要生成失败（LLM 返回为空），未压缩——请稍后重试。";
+        }
         session.append(SessionEvent.compaction(summary, TRIGGER_MANUAL));
-        List<Message> result = new ArrayList<>();
-        result.add(summaryHead(summary));
-        result.addAll(split.recent());
-        long after = ContextBudget.estimateMessageTokens(result);
-        log("手动压缩：远端 " + split.remote().size() + " 条折叠为摘要，估算 "
+        long after = ContextBudget.estimateMessageTokens(List.of(summaryHead(summary)));
+        log("手动压缩：历史 " + projected.size() + " 条折叠为摘要，估算 "
                 + before + " → " + after + " tokens（会话 " + session.id() + "）");
-        return "已压缩：远端 " + split.remote().size() + " 条消息折叠为摘要（估算 "
+        return "已压缩：" + projected.size() + " 条历史消息折叠为摘要（估算 "
                 + before + " → " + after + " tokens），后续请求按压缩点拼接。";
     }
 
-    /** 投影替换头（与 session 投影的压缩点替换文本同文——两种触发路径模型视角无差别）。 */
+    /** 投影替换头（常量与 session 投影同源——两侧逐字同文由单一事实来源保证）。 */
     private static Message summaryHead(String summary) {
         return new Message(Message.Role.USER,
-                "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n" + summary,
-                null, null, null);
+                SessionEvent.COMPACTION_SUMMARY_HEADER + summary, null, null, null);
     }
 
     /** 压缩触发方式（context/compacted 事件的 toolName 位）：/compact 命令。 */
@@ -361,32 +352,7 @@ public final class ContextGovernance {
     /** 压缩触发方式：预算阈值触发。 */
     public static final String TRIGGER_AUTO = "auto";
 
-    /** 切分结果：被折叠的远端 + 保留原文的近端。 */
-    private record Split(List<Message> remote, List<Message> recent) {
-    }
-
-    /**
-     * 压缩切分：近端按保留比例留出，切分点收在 USER 边界（协议安全——USER 之前
-     * 不会有悬挂的 tool 对，远端尾部与近端开头都完整）。BUG-20260919-01：切分点
-     * 曾从比例位置**向后**找 USER——投影尾部恰为 [助手(工具调用), 工具结果] 收尾时
-     * （工具调用的轮次结尾是常态）一路推进到末尾，被误判"近端不足"而永远放弃折叠；
-     * 改为**向前回退**到最近的 USER——近端多留一轮换取配对完整，投影含 USER 消息
-     * 时总能切分。近端之外不足最小远端数、或通篇无 USER 边界时返回 null（真不足）。
-     */
-    private Split splitForCompaction(List<Message> messages) {
-        int keepRecent = Math.max(1, (int) Math.round(messages.size() * keepRecentRatio));
-        int split = Math.min(messages.size() - keepRecent, messages.size() - 1);
-        while (split > 0 && messages.get(split).role() != Message.Role.USER) {
-            split--; // 回退到最近的 USER 边界（协议安全；投影首条恒为 USER，必能到达）
-        }
-        if (split < minRemoteMessages || split >= messages.size() - 1) {
-            return null; // 远端不足最小折叠量，或退到头仍无边界
-        }
-        return new Split(messages.subList(0, split),
-                new ArrayList<>(messages.subList(split, messages.size())));
-    }
-
-    /** compaction 摘要生成：远端消息经 LLM 直答折叠为固定骨架摘要。 */
+    /** compaction 摘要生成：压缩点之前的全部消息经 LLM 直答折叠为固定骨架摘要。 */
     String summarize(List<Message> remote) {
         ChatRequest request = new ChatRequest(SUMMARY_SYSTEM, toChatMessages(remote), List.of());
         StringBuilder summary = new StringBuilder();

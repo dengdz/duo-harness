@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -205,6 +206,15 @@ class PresenterAssemblyTest {
             PresenterAssembly.restorePermissionMode(root, switched, false);
             assertEquals("read-only", workspace.mode().configName(), "有记录照常恢复");
             switched.close();
+
+            // 非法档位串（手改/向前兼容）：回退保持当前档，不抛异常不落坏档
+            dev.duo.harness.session.Session corrupt = dev.duo.harness.session.Session.create(
+                    java.nio.file.Path.of(tempDir.toAbsolutePath().toString(), "s"));
+            corrupt.append(dev.duo.harness.session.SessionEvent.permissionMode("不存在的档"));
+            assertDoesNotThrow(() -> PresenterAssembly.restorePermissionMode(root, corrupt, false));
+            assertEquals("read-only", workspace.mode().configName(),
+                    "非法档位串保持当前档（与占用继承路径同口径）");
+            corrupt.close();
         } finally {
             root.dispose();
         }

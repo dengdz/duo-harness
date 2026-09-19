@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,7 +30,7 @@ class InteractionRegistryTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：InteractionRegistryTest —— 交互服务：回答者注册与作用域摘除、"
-                + "注册序遍历（null 交下一个）、无人在场或全部放弃 fail-closed、发起方亲和路由矩阵（9 用例） ===");
+                + "注册序遍历（null 交下一个）、无人在场或全部放弃 fail-closed、发起方亲和路由矩阵（10 用例） ===");
     }
 
     /** 服务视图接口（方法名即服务名 "answers"）。 */
@@ -208,6 +209,24 @@ class InteractionRegistryTest {
 
         assertEquals("web", answer.source());
         assertNull(webSeen.get().presenterId(), "无标记请求原样送达");
+    }
+
+    @Test
+    void originDeclinedIsNotAskedTwice() {
+        // 让渡语义（审查修复）：发起方放弃作答权（null）后，注册序全遍历不再二次询问发起方
+        AtomicInteger cliAsked = new AtomicInteger();
+        answers().register(root, new MarkedAnswerer("web",
+                r -> InteractionAnswer.allow("web")));
+        answers().register(root, new MarkedAnswerer("cli", r -> {
+            cliAsked.incrementAndGet();
+            return null;
+        }));
+
+        InteractionAnswer answer = answers().ask(
+                InteractionRequest.approval("bash", "{}", "cli"));
+
+        assertEquals(1, cliAsked.get(), "发起方恰被询问一次");
+        assertEquals("web", answer.source(), "兜底命中其余回答者");
     }
 
     @Test

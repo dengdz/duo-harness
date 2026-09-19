@@ -1,5 +1,6 @@
 package dev.duo.harness.cli;
 
+import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.tools.Answerer;
 import dev.duo.harness.tools.InteractionAnswer;
 import dev.duo.harness.tools.InteractionRequest;
@@ -30,7 +31,7 @@ public final class ConsoleAnswerer implements Answerer {
     /** 亲和路由（M19，ADR-0020 决策 7）：本回答者代表终端呈现位。 */
     @Override
     public String presenterId() {
-        return dev.duo.harness.agent.ChatAgent.PRESENTER_CLI;
+        return ChatAgent.PRESENTER_CLI;
     }
 
     @Override

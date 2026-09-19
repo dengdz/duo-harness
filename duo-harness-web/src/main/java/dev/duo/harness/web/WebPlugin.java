@@ -102,9 +102,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
+        // 页长解析在 start 之前——PluginException 不入下方 IOException catch，
+        // 确保配置错误路径也走 session.close() 释放独占锁（OCR #17）
+        int pageSize = parsePageSize(config);
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
-                    DuoHome.resolve().resolveDir("agent-sessions"), parsePageSize(config));
+                    DuoHome.resolve().resolveDir("agent-sessions"), pageSize);
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -191,6 +194,13 @@ public final class WebPlugin implements Plugin<JsonNode> {
         if (parsed < 1) {
             throw new PluginException("pageSize 必须为正: " + parsed);
         }
+        if (parsed > MAX_PAGE_SIZE) {
+            throw new PluginException("pageSize 过大（上限 " + MAX_PAGE_SIZE + "）: " + parsed
+                    + "——尾窗快照按页长分配缓冲，配置错误不应演变为运行期内存耗尽");
+        }
         return parsed;
     }
+
+    /** 页长上界：尾窗快照缓冲与页长成正比，防配置错误演变为内存耗尽（OCR #21）。 */
+    static final int MAX_PAGE_SIZE = 1_000;
 }

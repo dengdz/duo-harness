@@ -35,45 +35,59 @@ public final class ExitPlanModeTool implements ToolDefinition {
     private static final String RETYPE_OPTION = "继续计划（可直接输入你的修改意见）";
 
     private final InteractionService answers;
-    private final Runnable approvedCallback;
     /**
-     * 发起呈现位 → 会话供给（M19 亲和路由，ADR-0020 决策 7）：工具实例查重先到先得，
-     * 但各呈现位经 {@link #bindSession} 补记自己的供给——批准/打回的 plan/mode 事件
-     * 写进**发起方**会话（limitations"交互工具的会话绑定先到先得"销账，双开下计划
-     * 状态不串位）。
+     * 发起呈现位 → 装配绑定（M19 亲和路由，ADR-0020 决策 7）：工具实例查重先到先得，
+     * 但各呈现位经 {@link #bindSession} 补记自己的会话供给**与批准回调**——plan/mode
+     * 事件写进发起方会话、计划清理动作（plan.active 复位、指导片段卸载）也跑发起方的
+     * （回调单一绑定会让 Web-first 装配下 CLI 批准的计划指导片段永不卸载）。
      */
-    private final java.util.concurrent.ConcurrentMap<String, java.util.function.Supplier<Session>>
-            sessionsByPresenter = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentMap<String, PresenterBinding>
+            bindingsByPresenter = new java.util.concurrent.ConcurrentHashMap<>();
+    /** 绑定注册序（确定性回退用——ConcurrentHashMap 无序，"任一"会随机落账）。 */
+    private final java.util.List<PresenterBinding> bindingOrder =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** 一条呈现位装配绑定：会话供给 + 批准回调。 */
+    private record PresenterBinding(java.util.function.Supplier<Session> session,
+                                    Runnable approvedCallback) {
+    }
 
     public ExitPlanModeTool(InteractionService answers, String presenterId,
                             java.util.function.Supplier<Session> session,
                             Runnable approvedCallback) {
         this.answers = Objects.requireNonNull(answers, "answers");
         // 供给不即取：惰性供给（holder::current、face::currentSession）在装配期不可用
-        this.sessionsByPresenter.put(presenterId == null || presenterId.isBlank()
-                ? "" : presenterId, Objects.requireNonNull(session, "session"));
-        this.approvedCallback = Objects.requireNonNull(approvedCallback, "approvedCallback");
+        bindSession(presenterId, session, approvedCallback);
     }
 
     /**
-     * 补记一个呈现位的会话供给（后来呈现位装配时调用——工具实例先到先得，供给各记各账）。
+     * 补记一个呈现位的装配绑定（后来呈现位装配时调用——工具实例先到先得，各记各账）。
      * 换绑感知由供给器自身保证（呈现位传 holder::current 同款）。
      */
-    public void bindSession(String presenterId, java.util.function.Supplier<Session> session) {
+    public void bindSession(String presenterId, java.util.function.Supplier<Session> session,
+                            Runnable approvedCallback) {
         Objects.requireNonNull(session, "session");
-        sessionsByPresenter.put(presenterId == null || presenterId.isBlank()
-                ? "" : presenterId, session);
+        Objects.requireNonNull(approvedCallback, "approvedCallback");
+        String key = presenterId == null || presenterId.isBlank() ? "" : presenterId;
+        PresenterBinding binding = new PresenterBinding(session, approvedCallback);
+        if (bindingsByPresenter.putIfAbsent(key, binding) == null) {
+            bindingOrder.add(binding);
+        }
     }
 
-    /** 发起方的会话供给：标记缺席（直调等）回退任一在册供给。 */
-    private java.util.function.Supplier<Session> sessionFor(String presenterId) {
-        java.util.function.Supplier<Session> supplier =
-                sessionsByPresenter.get(presenterId == null || presenterId.isBlank()
+    /**
+     * 发起方的装配绑定：标记缺席（直调等）回退**最早注册**的绑定——确定性落账
+     * （ConcurrentHashMap 无序，取"任一"会让 plan/mode 事件随机进某个会话）。
+     */
+    private PresenterBinding bindingFor(String presenterId) {
+        PresenterBinding binding =
+                bindingsByPresenter.get(presenterId == null || presenterId.isBlank()
                         ? "" : presenterId);
-        if (supplier != null) {
-            return supplier;
+        if (binding != null) {
+            return binding;
         }
-        return sessionsByPresenter.values().iterator().next();
+        return bindingOrder.isEmpty()
+                ? bindingsByPresenter.values().iterator().next() : bindingOrder.get(0);
     }
 
     @Override
@@ -120,8 +134,9 @@ public final class ExitPlanModeTool implements ToolDefinition {
         }
         String verdict = answer.values().get(0);
         if (APPROVE_OPTION.equals(verdict)) {
-            sessionFor(execution.presenterId()).get().append(PlanMode.exitedEvent());
-            approvedCallback.run();
+            PresenterBinding binding = bindingFor(execution.presenterId());
+            binding.session().get().append(PlanMode.exitedEvent());
+            binding.approvedCallback().run();
             return "计划已获批准（回答者: " + answer.source() + "）。请立即开始执行计划。";
         }
         return "计划未获批准，用户要求继续修改计划。用户反馈：" + verdict

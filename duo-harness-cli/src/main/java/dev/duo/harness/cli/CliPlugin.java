@@ -200,7 +200,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 workspacePolicy);
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
         // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
-        dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(
+        PresenterAssembly.restorePermissionMode(
                 ctx, session, false);
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
@@ -291,9 +291,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
     }
 
     /**
-     * 斜杠命令注册（M19，ADR-0020 决策 1）：四命令从 REPL 硬编码迁移为注册表调用——
-     * 全部 CLI 适用面（handler 闭包本呈现位的会话与计划态，Web 面得到"仅在 CLI 可用"
-     * 提示）；/permission 声明 busySafe（volatile 治理态读写，agent 执行中勒住即生效）。
+     * 斜杠命令注册（M19，ADR-0020 决策 1）：CLI 命令从 REPL 硬编码迁移为注册表调用——
+     * /exit、/new、/plan 为 CLI 适用面（handler 闭包本呈现位的会话与计划态）；/permission
+     * 双面 ANY + busySafe（volatile 治理态读写，浏览器与终端都可切档）。另有 /compact、
+     * /title 双面命令经共享装配器注册（见下方 registerCompactCommand/registerTitleCommand）。
      * 命令随注册方作用域自动摘除。
      */
     private void registerCommands(Context ctx, CommandsRegistry commands, LlmAdapter llm,
@@ -317,7 +318,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                 // 用户显式开新话题：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
-                dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(
+                PresenterAssembly.restorePermissionMode(
                         ctx, holder.session, true);
                 plan.active = false;
                 disposeGuidance(plan);
@@ -349,9 +350,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
             }));
         // /compact 与 /title（M19）：双面命令经共享装配器注册（查重先到先得——Web 侧
         // 同款），会话取发起方当前值
-        dev.duo.harness.agent.presenter.PresenterAssembly.registerCompactCommand(
+        PresenterAssembly.registerCompactCommand(
                 ctx, commands, governance);
-        dev.duo.harness.agent.presenter.PresenterAssembly.registerTitleCommand(ctx, commands);
+        PresenterAssembly.registerTitleCommand(ctx, commands);
         commands.register(ctx, new CommandDefinition("plan",
                 "计划模式：/plan 进入（可携任务描述直接推进）、/plan off 退出",
                 CommandScope.CLI, false, context -> {

@@ -37,6 +37,9 @@ import java.util.function.Supplier;
  */
 public final class PresenterAssembly {
 
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(PresenterAssembly.class);
+
     private PresenterAssembly() {
     }
 
@@ -265,7 +268,11 @@ public final class PresenterAssembly {
                 .ifPresentOrElse(
                         existing -> {
                             if (existing instanceof ExitPlanModeTool tool) {
-                                tool.bindSession(presenterId, currentSession);
+                                tool.bindSession(presenterId, currentSession, onPlanExited);
+                            } else {
+                                LOG.warn("exit_plan_mode 已被非本库实现占用（{}），呈现位 [{}] 的"
+                                        + "会话供给与批准回调未记账——计划状态可能串位",
+                                        existing.getClass().getName(), presenterId);
                             }
                         },
                         () -> tools.register(ctx, new ExitPlanModeTool(answers, presenterId,
@@ -295,6 +302,7 @@ public final class PresenterAssembly {
             workspace = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
                     ? ctx.as(WorkspaceView.class).workspace() : null;
         } catch (Exception e) {
+            LOG.warn("权限档恢复跳过：workspace 服务解析失败（视为缺席）", e);
             return; // 服务解析失败等同缺席——恢复是尽力而为的还账，不阻断呈现位启动
         }
         if (workspace == null) {
@@ -302,7 +310,14 @@ public final class PresenterAssembly {
         }
         String saved = session.permissionMode();
         if (saved != null) {
-            WorkspacePolicy.Mode target = WorkspacePolicy.Mode.parse(saved);
+            WorkspacePolicy.Mode target;
+            try {
+                target = WorkspacePolicy.Mode.parse(saved);
+            } catch (IllegalArgumentException e) {
+                // 会话事件文本非法（手改/向前兼容）：与占用继承路径同口径——回退缺省不留坏档
+                LOG.warn("权限档恢复跳过：会话记录档位非法 [{}]，保持当前档", saved);
+                return;
+            }
             if (target != workspace.mode()) {
                 workspace.setMode(target);
             }

@@ -87,8 +87,10 @@ public final class WebFace {
     private volatile Session session;
     /** 对话执行者（/new 重建；volatile 保证跨线程可见）。 */
     private volatile ChatAgent agent;
-    /** 单飞标志：一次只跑一轮 send（CLI 单入口同约定）。 */
+    /** 单飞标志：一次只跑一轮 send 或一个非 busySafe 命令（CLI 单入口同约定）。 */
     private final AtomicBoolean busy = new AtomicBoolean(false);
+    /** agent send 执行中标志：busySafe 分级的探针（busy 兼作命令互斥，两者分离）。 */
+    private final AtomicBoolean agentRunning = new AtomicBoolean(false);
     /** 心跳调度器（保活 + 死连接摘除）。 */
     private final java.util.concurrent.ScheduledExecutorService heartbeat =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -452,11 +454,11 @@ public final class WebFace {
             return;
         }
         if (!busy.compareAndSet(false, true)) {
-            // 运行中治理（M19 steer，ADR-0020 决策 8）：执行中的消息进 agent 注入收件箱
-            // （迭代边界排干为普通 user/message，下一轮请求可见）——不再无差别 409；
-            // agent 不支持注入（如测试桩）时保留 409 语义
-            if (current.injectUserMessage(userText)) {
-                respondText(exchange, 202,
+            // 运行中治理（M19 steer，ADR-0020 决策 8）：agent 执行中的消息进注入收件箱
+            // （迭代边界排干为普通 user/message，下一轮请求可见）；agent 未执行（busy 被
+            // 非 busySafe 命令互斥持有）时不入收件箱——保留 409（消息不会被"当前步骤"消化）
+            if (agentRunning.get() && current.injectUserMessage(userText)) {
+                respondJson(exchange, 202,
                         "{\"outcome\":\"injected\",\"text\":\"已注入，待当前步骤完成\"}");
             } else {
                 respondText(exchange, 409, "已有对话在执行中（单入口串行）");
@@ -464,6 +466,7 @@ public final class WebFace {
             return;
         }
         exchange.sendResponseHeaders(202, -1);
+        agentRunning.set(true);
         Thread.ofVirtual().start(() -> {
             try {
                 dev.duo.harness.agent.AgentReply reply =
@@ -485,6 +488,7 @@ public final class WebFace {
                 log.warn("消息处理失败", e);
                 pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
             } finally {
+                agentRunning.set(false);
                 busy.set(false);
             }
         });
@@ -494,7 +498,9 @@ public final class WebFace {
      * 进程内（不占 agent 单飞窗口、不 append user/message），run/done 审计事件经
      * 会话监听器走既有 SSE 推送（前端渲染轻量命令行，刷新/回放可见）；拒绝三类
      * （未知/适用面/busy）无审计事件，文本经响应体交前端 toast。命中返回 null；
-     * 技能直调返回注入文本（调用方落回普通 agent 提交路径）。
+     * 技能直调返回注入文本（调用方落回普通 agent 提交路径）。命令的 forward 转发文本
+     * 在 Web 面不消费（当前唯一转发方 /plan 为 CLI 专属）——转发型命令上 Web 前须先
+     * 补呈现位消费路径。
      */
     private String handleCommand(HttpExchange exchange, String line) throws IOException {
         CommandsRegistry commands;
@@ -506,19 +512,41 @@ public final class WebFace {
             respondText(exchange, 503, "命令服务未挂载（装配缺 commands 插件行）");
             return null;
         }
-        CommandOutcome outcome = commands.dispatch(line,
-                new CommandEnv(CommandScope.WEB, () -> session, s -> { }, () -> { }, busy::get),
-                skillsOrNull());
-        if (!outcome.isCommand()) {
-            return outcome.text(); // 技能直调注入文本
+        // 非 busySafe 命令（如 /compact 动上下文）执行期占住单飞标志：agent send 与命令
+        // 互斥——压缩摘要走 LLM 的窗口内不会再启动 agent 轮次（投影结构不被交错改写）。
+        // agent 执行中不抢互斥——交 dispatch 的 busySafe 分级回应（"执行中，需等待空闲"）
+        String commandName = line.split("\\s+", 2)[0].substring(1);
+        dev.duo.harness.agent.commands.CommandDefinition matched = commands.find(commandName);
+        boolean needsMutex = matched != null && !matched.busySafe();
+        boolean mutexHeld = false;
+        if (needsMutex && !agentRunning.get()) {
+            if (!busy.compareAndSet(false, true)) {
+                respondJson(exchange, 202, "{\"outcome\":\"command\",\"text\":"
+                        + JSON.writeValueAsString("已有命令在执行中，请稍候再试。") + "}");
+                return null;
+            }
+            mutexHeld = true;
         }
-        if (outcome.audited()) {
-            respondText(exchange, 202, "{\"outcome\":\"command\"}");
-        } else {
-            respondText(exchange, 202, "{\"outcome\":\"command\",\"text\":"
-                    + JSON.writeValueAsString(outcome.text()) + "}");
+        try {
+            CommandOutcome outcome = commands.dispatch(line,
+                    new CommandEnv(CommandScope.WEB, () -> session, s -> { }, () -> { },
+                            agentRunning::get),
+                    skillsOrNull());
+            if (!outcome.isCommand()) {
+                return outcome.text(); // 技能直调注入文本
+            }
+            if (outcome.audited()) {
+                respondJson(exchange, 202, "{\"outcome\":\"command\"}");
+            } else {
+                respondJson(exchange, 202, "{\"outcome\":\"command\",\"text\":"
+                        + JSON.writeValueAsString(outcome.text()) + "}");
+            }
+            return null;
+        } finally {
+            if (mutexHeld) {
+                busy.set(false);
+            }
         }
-        return null;
     }
 
     /** 技能注册表惰性寻址（技能直调入口第二级；缺席即无技能，null 安全）。 */

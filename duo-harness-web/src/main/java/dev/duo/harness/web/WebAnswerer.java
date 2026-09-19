@@ -1,5 +1,6 @@
 package dev.duo.harness.web;
 
+import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.tools.Answerer;
 import dev.duo.harness.tools.InteractionAnswer;
 import dev.duo.harness.tools.InteractionRequest;
@@ -41,7 +42,7 @@ public final class WebAnswerer implements Answerer {
     /** 亲和路由（M19，ADR-0020 决策 7）：本回答者代表 Web 呈现位。 */
     @Override
     public String presenterId() {
-        return dev.duo.harness.agent.ChatAgent.PRESENTER_WEB;
+        return ChatAgent.PRESENTER_WEB;
     }
 
     @Override

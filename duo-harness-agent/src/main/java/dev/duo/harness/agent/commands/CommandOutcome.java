@@ -26,7 +26,11 @@ public final class CommandOutcome {
         return new CommandOutcome(true, resultText == null ? "" : resultText, null, true);
     }
 
-    /** 命令已处理且附带转发文本（/plan 携任务描述同款：先回显结果再推进 agent）。 */
+    /**
+     * 命令已处理且附带转发文本（/plan 携任务描述同款：先回显结果再推进 agent）。
+     * 转发文本由呈现位消费（CLI replLoop 交 agent.send）；Web 面现不消费——转发型
+     * 命令应声明 CLI 适用面，否则 Web 端转发静默丢失。
+     */
     public static CommandOutcome commandThenForward(String resultText, String forwardText) {
         Objects.requireNonNull(forwardText, "forwardText");
         return new CommandOutcome(true, resultText == null ? "" : resultText, forwardText, true);

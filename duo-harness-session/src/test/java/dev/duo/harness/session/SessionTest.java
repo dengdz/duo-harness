@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null）（47 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（48 用例） ===");
     }
 
     @TempDir
@@ -787,6 +787,34 @@ class SessionTest {
         Session fresh = Session.create(sessionsDir());
         assertNull(fresh.permissionMode(), "新会话无切档记录");
         fresh.close();
+    }
+
+    @Test
+    void permissionModeOfDoesNotReleaseHeldLock() throws IOException {
+        // OCR #15 回归：本进程持锁期间经 permissionModeOf 读同文件——只读 fd 有意不关
+        // （POSIX 陷阱：关闭任意 fd 释放进程全部锁）。探测方式：新通道 tryLock 必须
+        // 因重叠锁失败；若失败前被读取路径释放，tryLock 会意外成功
+        Session holder = Session.create(sessionsDir());
+        holder.append(SessionEvent.permissionMode("read-only"));
+
+        assertEquals("read-only", Session.permissionModeOf(holder.jsonl()), "读取本身正常");
+
+        // 同进程新通道探测锁仍在：tryLock 抛 OverlappingFileLockException = 锁未被释放
+        try (var probe = java.nio.channels.FileChannel.open(holder.jsonl(),
+                java.nio.file.StandardOpenOption.READ,
+                java.nio.file.StandardOpenOption.WRITE)) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    java.nio.channels.OverlappingFileLockException.class,
+                    probe::tryLock,
+                    "读取路径不得释放属主的独占锁（POSIX 陷阱）");
+        }
+
+        // 无人持锁的文件照常读取且正常关闭
+        Session other = Session.create(sessionsDir());
+        other.append(SessionEvent.permissionMode("danger-full-access"));
+        other.close();
+        assertEquals("danger-full-access", Session.permissionModeOf(other.jsonl()));
+        holder.close();
     }
 
     @Test

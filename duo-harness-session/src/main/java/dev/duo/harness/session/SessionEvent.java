@@ -113,6 +113,13 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
      */
     public static final String COMPACTION = "context/compacted";
 
+    /**
+     * 压缩替换头（M19）：治理管线折叠与投影压缩点共用的首行说明——单一事实来源保证
+     * 两侧逐字同文（任何一侧单独改动即静默漂移的防线，OCR #13/#16）。
+     */
+    public static final String COMPACTION_SUMMARY_HEADER =
+            "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");

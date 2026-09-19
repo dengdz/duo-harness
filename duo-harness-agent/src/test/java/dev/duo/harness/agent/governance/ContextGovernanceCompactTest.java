@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,21 +24,24 @@ class ContextGovernanceCompactTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：ContextGovernanceCompactTest —— compaction：远端折叠与降级（9 用例） ===");
+        System.out.println("\n=== 套件：ContextGovernanceCompactTest —— compaction：远端折叠与降级（10 用例） ===");
     }
 
     /** 可编程适配器：stream 返回固定摘要；计数调用次数。 */
     private static final class ScriptedAdapter implements LlmAdapter {
         int calls;
         boolean fail;
+        boolean blank;
+        ChatRequest lastRequest;
 
         @Override
         public void stream(ChatRequest request, Consumer<ChatChunk> onChunk) {
             calls++;
+            lastRequest = request;
             if (fail) {
                 throw new RuntimeException("模拟 LLM 故障");
             }
-            onChunk.accept(new ChatChunk(MOCK_SUMMARY));
+            onChunk.accept(new ChatChunk(blank ? "" : MOCK_SUMMARY));
         }
 
         @Override
@@ -57,21 +61,23 @@ class ContextGovernanceCompactTest {
     }
 
     @Test
-    void overThresholdFoldsRemoteKeepsRecent() {
+    void overThresholdFoldsAllHistoryIntoSingleSummaryHead() {
+        // 事件化语义（ADR-0020 决策 6）：压缩点之前的全部历史折叠为摘要，返回值 = 替换头
+        // 单条——与投影重放（clear + 摘要）严格一致，当轮与后续轮模型视角无差别
         ScriptedAdapter adapter = new ScriptedAdapter();
         ContextGovernance governance = new ContextGovernance(adapter);
-        List<Message> messages = rounds(30); // 60 条，约 60 * 50 tokens = 3000 tokens
+        List<Message> messages = rounds(30); // 60 条
 
         List<Message> result = governance.compact(messages, 1_000);
 
-        assertTrue(result.size() < messages.size(), "折叠后条数减少");
-        assertEquals(1 + 12, result.size(), "摘要 1 条 + 近端 20%（12 条）");
-        assertTrue(result.getFirst().content().contains(MOCK_SUMMARY), "首条为摘要消息");
-        assertTrue(result.getFirst().content().contains("主要请求"), "摘要含骨架小节");
-        assertEquals(Message.Role.USER, result.getFirst().role(), "摘要以 USER 消息注入");
-        // 近端原文保留（最后 12 条 = 第 25-30 轮）
-        assertTrue(result.get(1).content().startsWith("第25问"), "近端保留第 25 轮起");
-        assertTrue(result.getLast().content().startsWith("第30答"), "近端末条为第 30 轮答");
+        assertEquals(1, result.size(), "返回值即投影替换头（无近端保留）");
+        assertEquals(Message.Role.USER, result.getFirst().role());
+        assertTrue(result.getFirst().content().contains(MOCK_SUMMARY), "摘要全文随替换头");
+        // 总结输入 = 压缩点之前全部历史（无近端保留——保留段未总结即被投影丢弃是信息丢失）
+        assertNotNull(adapter.lastRequest);
+        assertEquals(60, adapter.lastRequest.messages().size(), "全部 60 条进摘要请求");
+        assertTrue(adapter.lastRequest.messages().getFirst().content().contains("第1问"));
+        assertTrue(adapter.lastRequest.messages().getLast().content().contains("第30答"));
         assertEquals(1, adapter.calls, "摘要调用一次");
     }
 
@@ -85,23 +91,20 @@ class ContextGovernanceCompactTest {
     }
 
     @Test
-    void splitBoundaryNeverStartsWithToolMessage() {
+    void mixedRoleHistoryCompactsIntoSingleSummaryHead() {
+        // 无切分概念后：含 tool 消息的混合历史整体折叠——替换头单条即协议安全形态
+        // （投影重放遇压缩点 clear 全部后只余 USER 替换头，无悬挂 tool 对）
         ScriptedAdapter adapter = new ScriptedAdapter();
         ContextGovernance governance = new ContextGovernance(adapter);
-        // 混入 tool 消息的周期：user/assistant/tool 三条一组
         List<Message> messages = new ArrayList<>();
-        for (int i = 1; i <= 20; i++) {
+        for (int i = 1; i <= 10; i++) {
             messages.add(new Message(Message.Role.USER, "第" + i + "问：" + "x".repeat(200), null, null, null));
             messages.add(new Message(Message.Role.ASSISTANT, "第" + i + "答：" + "y".repeat(200), null, null, null));
             messages.add(Message.tool("call_" + i, "r".repeat(200)));
         }
         List<Message> result = governance.compact(messages, 1_500);
-        assertTrue(result.size() > 1, "发生折叠");
-        for (Message message : result.subList(1, result.size())) {
-            // 近端（摘要之后）允许任意角色，但整体消息序列在摘要后应从 USER 开始（协议周期完整）
-            break;
-        }
-        assertEquals(Message.Role.USER, result.get(1).role(), "切分点推进到 USER 边界");
+        assertEquals(1, result.size());
+        assertEquals(Message.Role.USER, result.getFirst().role(), "替换头为 USER（协议安全）");
     }
 
     @Test
@@ -160,21 +163,22 @@ class ContextGovernanceCompactTest {
 
             String echo = governance.compactNow(session);
             assertTrue(echo.contains("已压缩"), echo);
+            assertTrue(echo.contains("60 条历史消息"), "回显覆盖全部历史条数: " + echo);
             var compacted = session.events().stream()
                     .filter(e -> dev.duo.harness.session.SessionEvent.COMPACTION.equals(e.type()))
                     .findFirst().orElseThrow();
             assertEquals("manual", compacted.toolName());
 
-            // 投影按压缩点拼接：替换头 + 近端
+            // 投影按压缩点拼接：全部旧历史 → 替换头单条（当轮返回与重放一致）
             var projected = session.deriveMessages();
-            assertTrue(projected.size() < 60, "投影已按压缩点缩小");
+            assertEquals(1, projected.size(), "投影 = 替换头单条（无近端保留）");
             assertTrue(projected.getFirst().content().contains(MOCK_SUMMARY));
 
-            // 防重复总结（事件化的核心收益）：压缩后投影已小，再次 /compact 切分不足
-            // 即放弃——不重复调用 LLM、不落重复压缩点
+            // 防重复总结（事件化的核心收益）：压缩后投影只剩替换头，再 /compact 不足
+            // 最小折叠量即放弃——不重复调用 LLM、不落重复压缩点
             int callsBefore = adapter.calls;
             String again = governance.compactNow(session);
-            assertEquals(callsBefore, adapter.calls, "近端不足不再触发摘要");
+            assertEquals(callsBefore, adapter.calls, "历史不足不再触发摘要");
             assertTrue(again.contains("无需压缩"), again);
         } finally {
             session.close();
@@ -221,10 +225,42 @@ class ContextGovernanceCompactTest {
 
         List<Message> result = governance.compact(messages, 200); // 10 条 ≈ 550 tokens，必超
 
-        assertTrue(result.size() < messages.size(), "工具对收尾的投影照常折叠");
-        assertEquals(Message.Role.USER, result.get(1).role(), "近端从 USER 边界开始（协议安全）");
-        // 近端应包含完整尾部工具对
-        assertEquals(Message.Role.TOOL, result.getLast().role());
+        assertEquals(1, result.size(), "工具对收尾照常折叠（无切分即无边界问题）");
+        assertEquals(Message.Role.USER, result.getFirst().role(), "替换头为 USER（协议安全）");
+        assertTrue(result.getFirst().content().contains(MOCK_SUMMARY));
+    }
+
+    @Test
+    void blankSummaryNeverLandsCompactionEvent() {
+        // P1-1 回归：LLM 返回空白摘要时 manual/auto 都不落压缩点——空压缩点会让
+        // 投影 clear 后坍缩为空，宁可放弃压缩
+        ScriptedAdapter adapter = new ScriptedAdapter();
+        adapter.blank = true;
+        ContextGovernance governance = new ContextGovernance(adapter);
+        dev.duo.harness.session.Session session =
+                dev.duo.harness.session.Session.create(
+                        java.nio.file.Path.of(System.getProperty("java.io.tmpdir"),
+                                "gov-blank-" + System.nanoTime()));
+        try {
+            for (int i = 1; i <= 10; i++) {
+                session.append(dev.duo.harness.session.SessionEvent.userMessage("第" + i + "问"));
+                session.append(dev.duo.harness.session.SessionEvent.assistantMessage("第" + i + "答"));
+            }
+
+            String echo = governance.compactNow(session);
+            assertTrue(echo.contains("未压缩"), "空摘要回显失败说明: " + echo);
+            var projected = session.deriveMessages();
+            assertEquals(20, projected.size(), "投影原样保留（未被清空）");
+            assertTrue(session.events().stream().noneMatch(e ->
+                    dev.duo.harness.session.SessionEvent.COMPACTION.equals(e.type())),
+                    "空摘要不落压缩点");
+
+            List<Message> result = governance.compact(
+                    session.deriveMessages(), 1);
+            assertEquals(20, result.size(), "auto 路径同样原样透出");
+        } finally {
+            session.close();
+        }
     }
 
     @Test

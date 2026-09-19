@@ -101,7 +101,8 @@ public final class CommandsRegistry {
         CommandDefinition definition = find(name);
         if (definition == null) {
             return resolveSkillOrUnknown(rawInput, skills, env.presenter());
-        }        if (!definition.scope().admits(env.presenter())) {
+        }
+        if (!definition.scope().admits(env.presenter())) {
             return CommandOutcome.refusal("该命令仅在 " + definition.scope().displayName()
                     + " 可用。");
         }
@@ -124,8 +125,9 @@ public final class CommandsRegistry {
                 result = "";
             }
         } catch (Exception e) {
-            // 命令异常收敛为回显文本：不影响 agent 单飞与呈现位存活（ADR-0020 Consequences）
-            result = "命令执行失败: " + e.getMessage();
+            // 命令异常收敛为回显文本：不影响 agent 单飞与呈现位存活（ADR-0020 Consequences）；
+            // message 为 null（裸 NPE 等）回退 toString 保住异常类名（排障不丢线索）
+            result = "命令执行失败: " + (e.getMessage() != null ? e.getMessage() : e.toString());
         }
         env.session().get().append(SessionEvent.commandDone(definition.name(), result));
         return forwarded.get() == null

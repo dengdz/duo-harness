@@ -1,6 +1,6 @@
 # 01: 命令注册表地基 + CLI 迁移
 
-**What to build:** agent 域立起 "commands" 命令注册表服务，CLI 的 /new、/permission、/plan、/exit 从 replLoop 硬编码迁移为注册调用——终端敲命令走注册表执行、会话日志见 command/run 与 command/done 两事件、模型历史无命令文本；agent 执行期间 busySafe 命令（/permission）立即生效，非 busySafe（/new）得到明确"执行中，需等待空闲"提示；未知 `/xxx` 报错附可用命令清单。
+**What to build:** agent 域立起 "commands" 命令注册表服务，CLI 的 /new、/permission、/plan、/exit 从 replLoop 硬编码迁移为注册调用（**落地注记**：/permission 改标双面 ANY——handler 只依赖全局 workspace 服务，用户故事 1 由此成立；其余三命令 CLI 面）——终端敲命令走注册表执行、会话日志见 command/run 与 command/done 两事件、模型历史无命令文本；agent 执行期间 busySafe 命令（/permission）立即生效，非 busySafe（/new）得到明确"执行中，需等待空闲"提示；未知 `/xxx` 报错附可用命令清单。
 
 **Blocked by:** None (can start immediately)
 

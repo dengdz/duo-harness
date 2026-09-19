@@ -57,7 +57,7 @@ Status: ready-for-agent
 - handler 收统一命令上下文：参数文本、当前会话供给、回显通道、发起呈现位标记、请求结束回调；同步执行于呈现位进程内、返回文本结果；不占 agent 单飞窗口；命令异常收敛为回显文本（不影响 agent 单飞与呈现位存活）。
 - 入口顺序（两呈现位同款）：命令注册表 → 技能直调（指令前缀注入、进模型历史）→ 未知命令报错附可用清单。技能与命令两张表保持平行。
 - busySafe 分级：agent 单飞占用时 busySafe 命令立即执行回显；非 busySafe 回应"执行中，需等待空闲"（Web 409 的命令专用版）。/permission（查看/切档）、/title 声明 busySafe=true；/new、/compact、/exit 缺省 false。
-- CLI 的 /new、/permission、/plan、/exit 迁移为注册调用（行为不变，用户故事 25）；Web 新增斜杠入口（命中命令执行并回显，未命中 `/` 前缀报未知命令）。
+- CLI 的 /new、/permission、/plan、/exit 迁移为注册调用（行为不变，用户故事 25）；Web 新增斜杠入口（命中命令执行并回显，未命中 `/` 前缀报未知命令）。**注记（2026-09-19）**：/permission 落地时改标双面（ANY）——handler 只依赖全局 workspace 服务无呈现位归属，M19 用户故事 1（浏览器直接切档）由此成立；其余三命令维持 CLI 面。
 
 **会话事件与投影（session 域）**
 
@@ -86,7 +86,7 @@ Status: ready-for-agent
 
 **还账四件**
 
-- 权限档持久化：`/permission` 切档时落 `permission/mode` 事件；会话打开投影恢复最后档位（写回 WorkspacePolicy）；新会话/新部署回 yml 缺省。
+- 权限档持久化：`/permission` 切档时落 `permission/mode` 事件；会话打开投影恢复最后档位（写回 WorkspacePolicy）；新会话/新部署回 yml 缺省。**注记（2026-09-19）**：恢复时机分档（BUG-20260919-03）——启动续接只恢复不重置；占用被迫改开的新会话继承被占会话最后切定档并落继承事件；显式换绑（/new、页面新话题/切换）无记录才重置缺省。
 - /title 命令（busySafe=true）：再 append `session/title` 即改名（latest-wins 投影现成）；标题自动演进不做。
 - 页长可配：web 插件 config 增首屏/每页消息数（缺省 50 不变），WebFace 分页逻辑参数化。
 - /model 不做（backlog："`/model` 运行时切换"条目记档）。
@@ -121,6 +121,7 @@ Status: ready-for-agent
 ## Further Notes
 
 - fail-open 不是本期的主题，但 busySafe 缺省 false 沿同一 fail-closed 哲学：说不清就别在运行中动。
+- **注记（2026-09-19）**：① WebFace busy 注入分支对不支持 `injectUserMessage` 的 agent（测试桩/旧实现）保留 409 兜底——防御性细化，注入协议不静默漂移；② CLI 面单线程 REPL 下 busy 探针在 dispatch 时刻恒 false，busySafe 分级的实际受益面是 Web（CLI 运行中输入经行缓冲在本轮结束后生效，与决策 9 自洽）——故事 5 的"立即勒住"在 CLI 实为"本轮结束后立即生效"。
 - ADR-0020 明示：DSH 的 `ctx.commands` API 签名研究笔记未展开——实现以本文与 ADR 为准，不臆测 DSH 形状；`command/run|done`、`permission/mode`、`context/compacted` 的字段形状在实现时定稿并回写配置参考/术语表（如适用）。
 - steer 使会话日志出现"执行中追加的 user/message"（可能连续多条）——投影与回放需显式断言兼容（日志本就允许连续 user/message，预期零特判）。
 - 钩子载荷透传部分消化：presenterId 可随 ToolExecution 进 hooks stdin 载荷（session_id/transcript_path 仍缺席，backlog 条目保留）。

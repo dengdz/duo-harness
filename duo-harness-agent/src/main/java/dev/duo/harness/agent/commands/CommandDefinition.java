@@ -29,6 +29,11 @@ public final class CommandDefinition {
         if (trimmed.isEmpty() || !trimmed.equals(name) || trimmed.chars().anyMatch(Character::isWhitespace)) {
             throw new IllegalArgumentException("命令名须为无空白的非空词: \"" + name + "\"");
         }
+        if (trimmed.startsWith("/")) {
+            // dispatch 剥离输入首斜杠后按裸名查表——带斜杠注册永远无法命中（静默死命令）
+            throw new IllegalArgumentException("命令名不带斜杠前缀（注册 \"" + trimmed
+                    + "\" 而非 \"" + name + "\"）");
+        }
         this.name = trimmed;
         this.description = description == null ? "" : description;
         this.scope = scope == null ? CommandScope.ANY : scope;

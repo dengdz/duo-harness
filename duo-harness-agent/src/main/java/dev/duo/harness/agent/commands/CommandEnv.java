@@ -16,7 +16,10 @@ import java.util.function.Supplier;
  * @param session    当前会话供给（command/run|done 事件的落点与 handler 的会话来源）
  * @param echo       回显通道（CommandContext#echo 的后端；CLI 为终端行、Web 为响应流）
  * @param requestEnd 请求结束回调（/exit 同款命令经 CommandContext#requestEnd 表达）
- * @param agentBusy  agent 单飞探针（true = 执行中；busySafe 分级的判定输入）
+ * @param agentBusy  agent 单飞探针（true = 执行中；busySafe 分级的判定输入）。契约：
+ *                   探针结论须在 handler 执行全程保持有效——呈现位以执行互斥保证
+ *                   （WebFace：非 busySafe 命令经 dispatch 前占住单飞标志；CLI 单线程
+ *                   REPL 天然无窗口）
  */
 public record CommandEnv(CommandScope presenter, Supplier<Session> session,
                          Consumer<String> echo, Runnable requestEnd,
