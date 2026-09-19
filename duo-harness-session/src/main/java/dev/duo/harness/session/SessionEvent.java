@@ -14,9 +14,11 @@ import java.util.Objects;
  *
  * @param type       事件类型（见本类常量）
  * @param at         事件时间戳（epoch millis）
- * @param text       事件载荷文本（tool/call 为参数 JSON；tool/result 为结果文本）
+ * @param text       事件载荷文本（tool/call 为参数 JSON；tool/result 为结果文本；
+ *                   command/run 为命令参数文本；command/done 为命令结果文本）
  * @param toolCallId 协议关联 id（工具事件与子代理事件携带——后者为子 agent id，其余为 null）
- * @param toolName   工具名（工具事件与子代理 spawned 携带——后者为模板名，其余为 null）
+ * @param toolName   工具名（工具事件与子代理 spawned 携带——后者为模板名；command 两事件
+ *                   携带命令名；其余为 null）
  * @param reasoning  思考内容（仅 tool/call 携带，其余为 null）
  * @param usage      真实 token 用量（仅 assistant/message 携带，provider 未报告为 null）
  */
@@ -82,6 +84,19 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
      * ——投影层只认 completed 一种终局事件；本事件是子会话侧的可审计终止痕迹。
      */
     public static final String SUBAGENT_INTERRUPTED = "subagent/interrupted";
+
+    /**
+     * 斜杠命令执行开始（M19，ADR-0020 决策 5；text = 命令参数文本，toolName = 命令名）。
+     * 与 command/done 成对（先 run 后 done）——崩溃断口可观测；投影排除（命令操作
+     * harness 不进模型历史），Web 命令行渲染与 CLI 回显的消费源。
+     */
+    public static final String COMMAND_RUN = "command/run";
+
+    /**
+     * 斜杠命令执行完成（M19，ADR-0020 决策 5；text = 结果文本，toolName = 命令名）。
+     * 命令异常收敛为错误说明文本照常落 done——审计面只见结果，不见异常通道。
+     */
+    public static final String COMMAND_DONE = "command/done";
 
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
@@ -190,5 +205,15 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：子代理中止痕迹（id 关联 spawned；落子会话，父侧终局走 completed）。 */
     public static SessionEvent subagentInterrupted(String agentId, String reason) {
         return new SessionEvent(SUBAGENT_INTERRUPTED, System.currentTimeMillis(), reason, agentId, null, null);
+    }
+
+    /** 便捷工厂：斜杠命令执行开始（名 + 参数文本；args 可为空串）。 */
+    public static SessionEvent commandRun(String name, String args) {
+        return new SessionEvent(COMMAND_RUN, System.currentTimeMillis(), args, null, name, null);
+    }
+
+    /** 便捷工厂：斜杠命令执行完成（名 + 结果文本；异常已收敛为错误说明文本）。 */
+    public static SessionEvent commandDone(String name, String result) {
+        return new SessionEvent(COMMAND_DONE, System.currentTimeMillis(), result, null, name, null);
     }
 }

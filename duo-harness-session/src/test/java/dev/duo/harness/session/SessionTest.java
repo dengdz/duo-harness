@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合（41 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）（43 用例） ===");
     }
 
     @TempDir
@@ -642,6 +642,63 @@ class SessionTest {
         assertEquals(Message.Role.USER, messages.get(1).role(),
                 "子代理结果以 USER 形态进入父 LLM 上下文（tool 关联位已被 spawn 调用消费）");
         assertEquals("子代理 sa-1 已完成。\n最终回答：结论 ……", messages.get(1).content());
+    }
+
+    @Test
+    void commandEventsRoundTripAndSkipProjection() throws IOException {
+        // M19 命令审计两事件（ADR-0020 决策 5）：run/done 落会话（崩溃断口可观测）、
+        // JSONL 往返一致、投影排除——命令操作 harness 不进模型历史
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.userMessage("看看权限"));
+        session.append(SessionEvent.commandRun("permission", ""));
+        session.append(SessionEvent.commandDone("permission", "当前预设: read-only（可选: …）"));
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(3, reloaded.events().size(), "命令事件随 JSONL 完整往返");
+        SessionEvent run = reloaded.events().get(1);
+        assertEquals(SessionEvent.COMMAND_RUN, run.type());
+        assertEquals("permission", run.toolName(), "命令名走工具名可选位");
+        assertEquals("", run.text(), "参数文本走载荷位");
+        SessionEvent done = reloaded.events().get(2);
+        assertEquals(SessionEvent.COMMAND_DONE, done.type());
+        assertEquals("permission", done.toolName());
+        assertEquals("当前预设: read-only（可选: …）", done.text());
+
+        List<Message> messages = reloaded.deriveMessages();
+        assertEquals(1, messages.size(), "命令事件不进对话投影（模型不可见由投影纯函数保证）");
+        assertEquals(Message.Role.USER, messages.get(0).role());
+    }
+
+    @Test
+    void commandEventsDoNotDisturbToolPairingOrWindowCount() {
+        // M19 零牵动断言（ADR-0020 决策 5）：命令事件插在 tool/call 与 tool/result
+        // 之间——紧邻修复照常成立（只认 tool/call|result）；尾窗计数不含命令事件
+        // （只数投影消息），窗口边界不受影响
+        Session session = Session.create(sessionsDir());
+        appendRound(session, "第一问", "第一答");
+        session.append(SessionEvent.userMessage("派个活"));
+        session.append(SessionEvent.toolCall("call_1", "bash", "{}"));
+        session.append(SessionEvent.commandRun("permission", "read-only"));
+        session.append(SessionEvent.commandDone("permission", "已切换: read-only"));
+        session.append(SessionEvent.toolResult("call_1", "bash", "结果文本"));
+
+        List<Message> messages = session.deriveMessages();
+        // user, assistant, user, assistant(tool_calls), tool —— 命令两事件不占位，
+        // tool 消息仍前移到配对 assistant 之后紧邻（修复对命令事件透明）
+        assertEquals(5, messages.size());
+        assertEquals(Message.Role.TOOL, messages.get(4).role());
+        assertEquals("call_1", messages.get(4).toolCallId());
+        assertEquals(Message.Role.ASSISTANT, messages.get(3).role());
+        assertNotNull(messages.get(3).toolCalls());
+
+        // 尾窗 max=2：最后两条投影消息是 assistant(tool_calls) 与 tool——命令事件
+        // 不算消息，窗口起点收在 assistant(tool_calls)（回折不需要，调用本就在窗内）
+        Session.TailWindow window = session.tailWindow(2);
+        List<SessionEvent> events = session.events();
+        assertEquals(events.size() - 4, window.startEvent(),
+                "窗口起点 = assistant(tool_calls) 事件下标（命令事件不占消息计数）");
+        assertEquals(3, window.earlierMessages(), "起点之前 3 条投影消息（命令不计）");
     }
 
     @Test

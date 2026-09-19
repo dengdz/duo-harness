@@ -60,6 +60,11 @@ plugins:
     config:
       disabled: []
 
+  # 命令注册表（M19，ADR-0020）：CliPlugin 声明依赖它——斜杠命令统一入口，零配置
+  - id: commands
+    name: dev.duo.harness.agent.commands.CommandsPlugin
+    config: {}
+
   - id: answers
     name: dev.duo.harness.tools.InteractionPlugin
 

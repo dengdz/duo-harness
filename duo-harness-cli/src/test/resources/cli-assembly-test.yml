@@ -17,6 +17,11 @@ plugins:
     config:
       disabled: []
 
+  # 命令注册表（M19）：CliPlugin 硬依赖 "commands" 服务——斜杠命令统一入口
+  - id: commands
+    name: dev.duo.harness.agent.commands.CommandsPlugin
+    config: {}
+
   # fs 工具族：提供 workspace 服务（CliPlugin 的可选依赖，ADR-0019）——此行供
   # /permission 命令使用；纯对话装配见 cli-pure-conversation-test.yml（无此行）
   - id: fs-tools

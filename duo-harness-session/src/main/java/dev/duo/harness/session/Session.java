@@ -492,6 +492,9 @@ public final class Session {
             case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE -> true;
             case SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT -> event.toolCallId() != null;
             case SessionEvent.SUBAGENT_COMPLETED -> true; // 子代理最终回答进父上下文（父聚合的数据源）
+            // 命令操作 harness 不进模型历史（ADR-0020 决策 5）——排除由本投影纯函数保证，
+            // 不参与 tool 配对（只认 tool/call|result）、不占消息窗口计数（只数本判定为真者）
+            case SessionEvent.COMMAND_RUN, SessionEvent.COMMAND_DONE -> false;
             default -> false; // subagent/spawned 卡片专用，同 approval/title 不投影
         };
     }

@@ -40,9 +40,9 @@ class CliPluginTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、/new 换绑、"
-                + "/exit idle 锁释放、占用提示、/permission 档位、工具叙述行通用形态、"
-                + "子任务过程行（spawn 派生 + 完成回流）（8 用例） ===");
+        System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、命令注册表入口"
+                + "（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位）、"
+                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行（10 用例） ===");
     }
 
     interface ToolsView {
@@ -82,6 +82,9 @@ class CliPluginTest {
             root.plugin(new InteractionPlugin(), null).awaitStartup();
             root.plugin(new SkillsPlugin(), JsonNodeFactory.instance.objectNode()
                     .putArray("disabled")).awaitStartup();
+            // 命令注册表（M19）：CliPlugin 硬依赖 "commands"——四命令迁移后的注册目标
+            root.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(),
+                    JsonNodeFactory.instance.objectNode()).awaitStartup();
             // fs 工具族先挂：提供 workspace 服务——WorkspaceApprovalPlugin 与 CliPlugin
             // 都依赖它，编程挂载缺依赖会永久挂起（awaitStartup 无超时）；workspace 根锚定测试临时目录
             root.plugin(new dev.duo.harness.tools.fs.FsToolsPlugin(),
@@ -182,7 +185,7 @@ class CliPluginTest {
 
     @Test
     void replTurnLogsSessionEventsAndExitsIdle() throws Exception {
-        // 基本循环：一轮对话事件落会话；/exit → idle（输出收尾行）
+        // 基本循环：一轮对话事件落会话；/exit 经命令注册表（M19）——run/done 审计落盘后 idle
         Path dir = tempDir.resolve("a");
         Fixture fx = new Fixture(dir, "问好\n/exit\n", fixedReply("答：好"));
         try {
@@ -193,19 +196,24 @@ class CliPluginTest {
             assertTrue(out.contains("=== 对话结束 ==="), out);
 
             Session latest = Session.latest(dir); // idle 已释放锁，latest 可正常打开
-            // 标题生成（工单 M13-06）为 title 事件多落一条——异步落盘，轮询等待（竞态避免）
+            // 标题生成（工单 M13-06）异步落盘，轮询等待（竞态避免）
             long titleDeadline = System.currentTimeMillis() + 5_000;
-            while (latest.events().size() < 3 && System.currentTimeMillis() < titleDeadline) {
+            while (latest.events().size() < 5 && System.currentTimeMillis() < titleDeadline) {
                 Thread.sleep(50);
                 latest.close();
                 latest = Session.latest(dir);
             }
-            assertEquals(3, latest.events().size(), "user/message + assistant/message + session/title");
+            assertEquals(5, latest.events().size(),
+                    "user/message + assistant/message + session/title + /exit 的 run/done 审计");
             assertEquals("问好", latest.events().get(0).text());
             // 标题生成异步——title 与 assistant/message 落日志顺序不保证，按类型集合断言
             var types = latest.events().stream().map(SessionEvent::type).sorted().toList();
-            assertEquals(List.of(SessionEvent.ASSISTANT_MESSAGE, SessionEvent.TITLE, SessionEvent.USER_MESSAGE),
-                    types, "三类事件齐备");
+            assertEquals(List.of(SessionEvent.ASSISTANT_MESSAGE, SessionEvent.COMMAND_DONE,
+                            SessionEvent.COMMAND_RUN, SessionEvent.TITLE, SessionEvent.USER_MESSAGE),
+                    types, "五类事件齐备");
+            SessionEvent exitRun = latest.events().stream()
+                    .filter(e -> SessionEvent.COMMAND_RUN.equals(e.type())).findFirst().orElseThrow();
+            assertEquals("exit", exitRun.toolName(), "/exit 经命令注册表执行");
             latest.close();
         } finally {
             fx.dispose();
@@ -214,7 +222,8 @@ class CliPluginTest {
 
     @Test
     void newCommandSwitchesToFreshSession() throws Exception {
-        // /new 换绑：旧会话立即关闭（锁释放）、后续对话落新会话
+        // /new 换绑（M19 经注册表）：旧会话立即关闭（锁释放）、run 落旧会话收尾、
+        // done 随新会话开篇、后续对话落新会话
         Path dir = tempDir.resolve("b");
         Fixture fx = new Fixture(dir, "第一问\n/new\n第二问\n/exit\n", fixedReply("答"));
         try {
@@ -226,7 +235,13 @@ class CliPluginTest {
             assertEquals(2, summaries.size(), "旧 + 新两个会话");
             Session fresh = Session.load(summaries.get(0).jsonl()); // 修改时间倒序：最新在前
             Session old = Session.load(summaries.get(1).jsonl());
-            assertEquals("第二问", fresh.events().get(0).text());
+            assertEquals(SessionEvent.COMMAND_DONE, fresh.events().get(0).type(),
+                    "/new 的 done 审计随新会话开篇");
+            assertEquals("new", fresh.events().get(0).toolName());
+            assertEquals("第二问", fresh.events().get(1).text());
+            assertEquals(SessionEvent.COMMAND_RUN, old.events().stream()
+                    .filter(e -> SessionEvent.COMMAND_RUN.equals(e.type())).findFirst().orElseThrow()
+                    .type(), "/new 的 run 审计留在旧会话（换绑两头留痕）");
             assertEquals("第一问", old.events().get(0).text());
             fresh.close();
             old.close();
@@ -307,6 +322,49 @@ class CliPluginTest {
             String out = fx.output();
             assertTrue(out.contains("当前预设: read-only"), out);
             assertTrue(out.contains("已切换: workspace-write"), out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void unknownCommandListsRegisteredCommands() throws Exception {
+        // 未知命令（M19 入口顺序第三级）：报错附可用命令清单（技能清单在场时附注——
+        // 本仓库 .agents/skills 存在故技能段非空，不参与断言）
+        Path dir = tempDir.resolve("unknown");
+        Fixture fx = new Fixture(dir, "/nope\n/exit\n", fixedReply("答"));
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("未知命令: /nope（可用命令: exit, new, permission, plan"),
+                    "四命令注册序即清单序: " + out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void planCommandEntersExitsAndForwardsTaskText() throws Exception {
+        // /plan 迁移后行为不变：进入、退出、携任务描述续接（回显进入提示后把描述
+        // 作为普通输入推进 agent——转发文本走 user/message 进模型历史）
+        Path dir = tempDir.resolve("plan");
+        Fixture fx = new Fixture(dir, "/plan\n/plan off\n/plan 帮我调研\n/exit\n", fixedReply("答：调研完了"));
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("已进入计划模式（先探索与设计"), out);
+            assertTrue(out.contains("已退出计划模式。"), out);
+            assertTrue(out.contains("答：调研完了"), "转发文本推进 agent 并回流回答: " + out);
+
+            Session latest = Session.latest(dir);
+            var planEvents = latest.events().stream()
+                    .filter(e -> "plan/mode".equals(e.type())).map(SessionEvent::text).toList();
+            assertEquals(List.of("entered", "exited", "entered"), planEvents,
+                    "两次进入一次退出的计划态事件序列");
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            "user/message".equals(e.type()) && "帮我调研".equals(e.text())),
+                    "转发文本以普通用户消息落盘");
+            latest.close();
         } finally {
             fx.dispose();
         }

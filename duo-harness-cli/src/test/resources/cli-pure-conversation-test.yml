@@ -17,6 +17,11 @@ plugins:
     config:
       disabled: []
 
+  # 命令注册表（M19）：CliPlugin 硬依赖 "commands" 服务——斜杠命令统一入口
+  - id: commands
+    name: dev.duo.harness.agent.commands.CommandsPlugin
+    config: {}
+
   - id: cli
     name: dev.duo.harness.cli.CliPlugin
     config: {}

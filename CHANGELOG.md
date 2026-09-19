@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.14.0（开发中）
+
+### Added
+
+- **斜杠命令注册表**（工单 01，ADR-0020）：agent 域发布 "commands" 服务——命令由插件代码注册（名 + 描述 + 适用呈现位 ANY/CLI/WEB + busySafe 缺省 false），CLI 与 Web 共享同一入口顺序：命令 → 技能直调 → 未知命令报错附可用命令与技能清单。CLI 的 /new、/permission、/plan、/exit 迁入注册表（行为不变）；执行落 `command/run` / `command/done` 审计两事件（投影排除——命令操作 harness 不进模型历史，崩溃断口可观测）；/permission 声明 busySafe，agent 执行期间切档立即生效，其余命令空闲才执行。boot yml 装 `dev.duo.harness.agent.commands.CommandsPlugin` 行即启用（cli 插件硬依赖本服务）
+
 ## 0.13.0（2026-09-18）
 
 ### Added
