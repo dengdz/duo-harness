@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.15.0（未发布）
+
+### Changed
+
+- **技能经验文档归位 references/ 并全量预建**：duo-* 技能的 experience.md 从 SKILL.md 平级迁至 `references/experience.md`（对齐技能规范格式，references 承载辅助文档）；经验文档 14 技能全量就位——duo-code-review / duo-skill-evolution 迁移保留既有内容，其余 12 个按元技能规范预建模板；全部 SKILL.md 增补"经验参考"段（执行前读经验、任务后复盘追加同一文件）并统一新路径引用——修正自我进化收尾流程不被触发的问题
+
 ## 0.14.0（2026-09-20）
 
 ### Fixed

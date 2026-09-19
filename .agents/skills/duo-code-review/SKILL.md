@@ -77,7 +77,7 @@ description: 审查并修复 duo-harness 仓库的代码变更、提交或分支
 
 ## 经验参考
 
-执行前建议阅读 `experience.md`，了解常见边界情况和最佳实践。
+执行前建议阅读 `references/experience.md`，了解常见边界情况和最佳实践。
 
 ## 变更历史
 
