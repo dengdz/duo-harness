@@ -651,6 +651,33 @@ public final class Session {
     }
 
     /**
+     * 静态权限档读取（M19 占用继承用）：不持锁打开 JSONL 逐行找最新 permission/mode
+     * 事件——与 {@link #titleOf} 同款只读扫描（坏行跳过）。文件缺失/不可读返回 null。
+     */
+    public static String permissionModeOf(Path jsonl) {
+        if (!Files.isRegularFile(jsonl)) {
+            return null;
+        }
+        String latest = null;
+        try (var reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                try {
+                    JsonNode node = JSON.readTree(line);
+                    if (SessionEvent.PERMISSION_MODE.equals(node.path("type").asText())) {
+                        latest = node.path("text").asText();
+                    }
+                } catch (IOException ignored) {
+                    // 坏行跳过
+                }
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return latest;
+    }
+
+    /**
      * 静态标题读取（侧栏列表用）：不持锁打开 JSONL 逐行找最新 title 事件——
      * 与 load 的严格解析不同，损坏行跳过不抛（标注是锦上添花，不因脏行失败）。
      * 文件缺失/不可读返回 null。

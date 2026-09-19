@@ -13,8 +13,8 @@
 - **日期**：2026-09-19（M19 工单 06 验收实测报告）
 - **症状**：CLI 切档 read-only（事件确认落盘）→ 重启双开 → `/permission` 显示 workspace-write（yml 缺省），恢复未生效。
 - **根因**：恢复语义未分档——双开重启时 Web 先启动续接切档会话（恢复 read-only ✓），CLI 后启动续接失败被迫改开新会话，"无切档记录即重置装配档"对启动路径也生效，把 Web 刚恢复的全局档位覆盖回缺省。
-- **修复**：`restorePermissionMode` 增 `resetToInitialIfAbsent` 分档——**启动续接**只恢复不重置（用户没有开新话题的动作意图，治理态延续；占用被迫改开的新会话不得覆盖另一呈现位的恢复）；**显式换绑**（/new、页面新话题/切换）保留"无记录重置缺省"（"切档不跨会话惊吓"语义不变）。
-- **防复发**：全局治理态的"打开时恢复"必须区分"进程启动"与"用户显式换绑"两种时机——后者的副作用（重置）不得在 former 上重放；回归用例 `permissionModeRestoreRespectsResetPolicy` 固化两档语义。状态 done（待真机复测双开重启）。
+- **修复**：两层——① `restorePermissionMode` 增 `resetToInitialIfAbsent` 分档：**启动续接**只恢复不重置、**显式换绑**（/new、页面新话题/切换）无记录才重置缺省；② 用户裁定补齐双开语义：占用改开的新会话**继承被占会话最后切定档**（`Session.permissionModeOf` 只读扫描 + 落继承事件，重启链延续——占用改开不是用户开新话题，治理态不因呈现位轮转而丢）。
+- **防复发**：全局治理态的"打开时恢复"必须区分"进程启动/占用改开"与"用户显式换绑"两种时机——后者的副作用（重置）不得在 former 上重放；回归用例 `permissionModeRestoreRespectsResetPolicy` 与 `occupiedSessionInheritsPermissionModeIntoNewSession` 固化语义。状态 done（待真机复测双开重启）。
 
 ## BUG-20260919-02 · /compact 后压缩执行了、页面"卡住"光标闪烁——查无缺陷（重试链退避窗口）
 

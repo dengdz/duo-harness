@@ -147,6 +147,19 @@ public final class CliPlugin implements Plugin<JsonNode> {
             out.println("[提示] " + e.getMessage());
             out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
             session = Session.create(sessionsDir);
+            // 继承被占会话的权限档（BUG-20260919-03 裁定，ADR-0020 决策 10 的双开延续）：
+            // 占用改开不是用户开新话题，治理态不因呈现位轮转而丢——继承并落事件（重启链延续）
+            String inherited = Session.permissionModeOf(
+                    sessionsDir.resolve(e.sessionId() + ".jsonl"));
+            if (inherited != null && workspacePolicy != null) {
+                try {
+                    workspacePolicy.setMode(WorkspacePolicy.Mode.parse(inherited));
+                    session.append(dev.duo.harness.session.SessionEvent.permissionMode(inherited));
+                    out.println("[提示] 已继承被占会话的权限档: " + inherited);
+                } catch (IllegalArgumentException ignored) {
+                    // 被占会话的档位记录非法——保持缺省
+                }
+            }
         }
 
         // 执行链与 HITL 供给（呈现位共享装配器）：治理（governance 段可省——缺省常量）、

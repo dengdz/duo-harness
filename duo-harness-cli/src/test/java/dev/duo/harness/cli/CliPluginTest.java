@@ -42,7 +42,7 @@ class CliPluginTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、命令注册表入口"
                 + "（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
-                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩、/permission 持久化、/title 改名（13 用例） ===");
+                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩、/permission 持久化、/title 改名（14 用例） ===");
     }
 
     interface ToolsView {
@@ -509,6 +509,32 @@ class CliPluginTest {
         } finally {
             fx.dispose();
         }
+    }
+
+    @Test
+    void occupiedSessionInheritsPermissionModeIntoNewSession() throws Exception {
+        // BUG-20260919-03 裁定延续（M19-06）：占用改开的新会话继承被占会话最后切定档
+        // 并落 permission/mode 事件——治理态不因呈现位轮转而丢（重启链延续）
+        Path dir = tempDir.resolve("inherit");
+        Session occupied = Session.create(dir);
+        occupied.append(SessionEvent.permissionMode("danger-full-access"));
+
+        Fixture fx = new Fixture(dir, "/permission\n/exit\n", fixedReply("答"));
+        try {
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("已继承被占会话的权限档: danger-full-access"),
+                    "继承提示可见: " + fx.output());
+            assertTrue(fx.output().contains("当前预设: danger-full-access"),
+                    "继承档立即生效: " + fx.output());
+            Session latest = Session.latest(dir);
+            assertEquals("danger-full-access", latest.permissionMode(),
+                    "新会话落继承记录（重启链延续）");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+        occupied.append(SessionEvent.userMessage("属主继续写"));
+        occupied.close();
     }
 
     @Test
