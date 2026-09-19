@@ -68,6 +68,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         ToolsService tools = ctx.as(WebToolsView.class).tools();
         PromptRegistry prompts = ctx.as(WebPromptsView.class).prompts();
         InteractionService answers = ctx.as(WebAnswersView.class).answers();
+        CommandsRegistry commands = ctx.as(WebCommandsView.class).commands();
 
         // 执行链装配（呈现位共享单点，ADR-0011）：LLM 配置 → 重试 adapter；
         // LLM 未配置 → 插件 FAILED 点名
@@ -111,6 +112,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 审计桥包装（ADR-0008 决策 5）：approval/requested、approval/decided 事件落会话
         // ——会话监听器推 SSE，页面据此渲染审批卡；会话经 face 延迟解析（/new 换绑后留新会话）
         answers.register(ctx, new AuditingAnswerer(face::currentSession, webAnswerer));
+        // /compact（M19，ADR-0020 决策 6）：双面命令随 Web 装配注册（查重先到先得——
+        // CLI 已注册则跳过），会话经 face 延迟解析取当前值
+        PresenterAssembly.registerCompactCommand(ctx, commands, governance);
         // HITL 交互工具补全（共享装配器，查重先到先得）：ask_user 与计划呈交随 Web 装配
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
@@ -155,5 +159,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebAnswersView {
 
         InteractionService answers();
+    }
+
+    /** commands 服务的视图接口（方法名即服务名 "commands"）。 */
+    interface WebCommandsView {
+
+        CommandsRegistry commands();
     }
 }

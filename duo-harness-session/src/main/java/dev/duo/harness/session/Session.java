@@ -420,6 +420,15 @@ public final class Session {
                         messages.add(Message.tool(event.toolCallId(), event.text()));
                 case SessionEvent.SUBAGENT_COMPLETED ->
                         messages.add(new Message(Message.Role.USER, event.text()));
+                case SessionEvent.COMPACTION -> {
+                    // 压缩点（ADR-0020 决策 6）：之前的一切以总结替换（latest-wins——后一个
+                    // 压缩点的总结涵盖更早历史，含前一压缩点），之后照常。替换头与治理管线
+                    // 的折叠骨架同文，模型视角两种触发路径无差别
+                    messages.clear();
+                    messages.add(new Message(Message.Role.USER,
+                            "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n"
+                                    + event.text()));
+                }
                 default -> { /* 不可达：projectsToMessage 已收窄类型集 */ }
             }
         }
@@ -492,6 +501,7 @@ public final class Session {
             case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE -> true;
             case SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT -> event.toolCallId() != null;
             case SessionEvent.SUBAGENT_COMPLETED -> true; // 子代理最终回答进父上下文（父聚合的数据源）
+            case SessionEvent.COMPACTION -> true; // 压缩点入投影（以总结替换之前的全部消息）
             // 命令操作 harness 不进模型历史（ADR-0020 决策 5）——排除由本投影纯函数保证，
             // 不参与 tool 配对（只认 tool/call|result）、不占消息窗口计数（只数本判定为真者）
             case SessionEvent.COMMAND_RUN, SessionEvent.COMMAND_DONE -> false;

@@ -1,6 +1,8 @@
 package dev.duo.harness.agent.presenter;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.commands.CommandScope;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.prompt.PromptRegistry;
@@ -26,6 +28,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +48,11 @@ class PresenterAssemblyTest {
     interface ToolsView {
 
         ToolsService tools();
+    }
+
+    interface CommandsView {
+
+        dev.duo.harness.agent.commands.CommandsRegistry commands();
     }
 
     interface AnswersView {
@@ -116,6 +124,48 @@ class PresenterAssemblyTest {
             assertEquals(1, names.stream().filter("exit_plan_mode"::equals).count(), "exit_plan_mode 恰注册一次");
         } finally {
             root.dispose();
+        }
+    }
+
+    @Test
+    void compactCommandRegistersOncePerName() {
+        // /compact 查重先到先得（M19）：双呈现位共存时二次注册跳过——同名 fail-fast 的
+        // 注册表语义下，装配层的查重是双面命令的唯一安全注册方式
+        Context root = Context.root();
+        try {
+            root.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(),
+                    JsonNodeFactory.instance.objectNode()).awaitStartup();
+            var commands = root.as(CommandsView.class).commands();
+            ContextGovernance governance = ContextGovernanceTestHarness.dummy();
+
+            PresenterAssembly.registerCompactCommand(root, commands, governance);
+            PresenterAssembly.registerCompactCommand(root, commands, governance);
+
+            assertEquals(1, commands.all().size(), "compact 恰注册一次");
+            assertEquals(CommandScope.ANY, commands.find("compact").scope(), "双面可用");
+            assertFalse(commands.find("compact").busySafe(), "动上下文必须 idle（busySafe=false）");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    /** 治理测试桩：compactNow 不被本用例触发，仅占位。 */
+    private static final class ContextGovernanceTestHarness {
+        private static ContextGovernance dummy() {
+            return new ContextGovernance(new dev.duo.harness.llm.LlmAdapter() {
+                @Override
+                public void stream(dev.duo.harness.llm.ChatRequest request,
+                                   java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public dev.duo.harness.llm.LlmTurn streamTurn(
+                        dev.duo.harness.llm.ChatRequest request,
+                        java.util.function.Consumer<String> textSink) {
+                    throw new UnsupportedOperationException();
+                }
+            });
         }
     }
 

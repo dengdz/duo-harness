@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）（43 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）（46 用例） ===");
     }
 
     @TempDir
@@ -699,6 +699,75 @@ class SessionTest {
         assertEquals(events.size() - 4, window.startEvent(),
                 "窗口起点 = assistant(tool_calls) 事件下标（命令事件不占消息计数）");
         assertEquals(3, window.earlierMessages(), "起点之前 3 条投影消息（命令不计）");
+    }
+
+    @Test
+    void compactionEventReplacesPriorHistoryWithSummary() throws IOException {
+        // 压缩点投影（M19，ADR-0020 决策 6）：compacted 之前的一切以总结替换、之后照常；
+        // 重开会话经日志重放天然恢复压缩态（不重复总结的数据源）
+        Session session = Session.create(sessionsDir());
+        appendRound(session, "第一问", "第一答");
+        appendRound(session, "第二问", "第二答");
+        session.append(SessionEvent.compaction("## 主要请求\n压缩总结全文", "manual"));
+        session.append(SessionEvent.userMessage("压缩后的问题"));
+
+        List<Message> messages = session.deriveMessages();
+        assertEquals(2, messages.size(), "替换头 + 压缩后消息");
+        assertEquals(Message.Role.USER, messages.get(0).role());
+        assertTrue(messages.get(0).content().contains("压缩总结全文"), "总结文本入投影");
+        assertTrue(messages.get(0).content().startsWith("[以下是本会话早期历史的压缩摘要"),
+                "替换头与治理管线折叠骨架同文");
+        assertEquals("压缩后的问题", messages.get(1).content(), "压缩点之后照常");
+
+        // 重放：压缩态经 JSONL 恢复一致
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        List<Message> replayed = reloaded.deriveMessages();
+        assertEquals(2, replayed.size());
+        assertEquals(messages.get(0).content(), replayed.get(0).content(), "重放投影一致");
+        reloaded.close();
+    }
+
+    @Test
+    void multipleCompactionEventsLatestWins() {
+        // latest-wins：后一压缩点的总结涵盖更早历史（含前一压缩点）——投影取最后压缩点
+        Session session = Session.create(sessionsDir());
+        appendRound(session, "第一问", "第一答");
+        session.append(SessionEvent.compaction("第一次总结", "auto"));
+        session.append(SessionEvent.userMessage("中间一问"));
+        session.append(SessionEvent.compaction("第二次总结（涵盖一切）", "manual"));
+        session.append(SessionEvent.userMessage("最后问题"));
+
+        List<Message> messages = session.deriveMessages();
+        assertEquals(2, messages.size());
+        assertTrue(messages.get(0).content().contains("第二次总结（涵盖一切）"),
+                "最后压缩点胜出");
+        assertEquals("最后问题", messages.get(1).content());
+        session.close();
+    }
+
+    @Test
+    void compactionPointDoesNotBreakToolPairingAndCountsAsWindowMessage() {
+        // 零牵动断言：压缩点后新开的工具对照常配对（压缩点只切历史，不影响之后）；
+        // 替换头是投影消息——占窗口计数（它是上下文的一部分）
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.compaction("历史总结", "manual"));
+        session.append(SessionEvent.userMessage("压缩后的任务"));
+        session.append(SessionEvent.toolCall("call_1", "bash", "{}"));
+        session.append(SessionEvent.toolResult("call_1", "bash", "输出"));
+
+        List<Message> messages = session.deriveMessages();
+        // 替换头, user, assistant(tool_calls), tool——配对零牵动
+        assertEquals(4, messages.size());
+        assertEquals(Message.Role.TOOL, messages.get(3).role());
+        assertEquals("call_1", messages.get(3).toolCallId());
+
+        Session.TailWindow window = session.tailWindow(3);
+        // 4 条投影消息（替换头, user, assistant(tool_calls), tool）取尾 3 条：
+        // 起点收在 user（下标 1），替换头是起点之前的 1 条更早消息（计入投影、占分页计数）
+        assertEquals(1, window.startEvent(), "替换头计入投影消息（窗口不含它时为 earlier）");
+        assertEquals(1, window.earlierMessages());
+        session.close();
     }
 
     @Test

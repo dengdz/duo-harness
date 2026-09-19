@@ -1,6 +1,9 @@
 package dev.duo.harness.agent.presenter;
 
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandDefinition;
+import dev.duo.harness.agent.commands.CommandScope;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.plan.ExitPlanModeTool;
 import dev.duo.harness.agent.prompt.PromptRegistry;
@@ -267,6 +270,22 @@ public final class PresenterAssembly {
                         () -> tools.register(ctx, new ExitPlanModeTool(answers, presenterId,
                                 currentSession, onPlanExited)));
         registerIfAbsent(tools, ctx, "ask_user", () -> new AskUserTool(answers));
+    }
+
+    /**
+     * /compact 注册（M19，ADR-0020 决策 6，查重先到先得）：手动压缩命令——双面 ANY
+     * （动上下文必须 idle，busySafe=false）；handler 的会话经 {@code CommandContext#session()}
+     * 取**发起方**当前会话（双开下各压各的，零串位），治理实例先到方胜出（等价配置，
+     * 压缩效果一致）。命令未注册时注册，已注册（另一呈现位先到）跳过。
+     */
+    public static void registerCompactCommand(Context ctx, CommandsRegistry commands,
+                                              ContextGovernance governance) {
+        if (commands.find("compact") == null) {
+            commands.register(ctx, new CommandDefinition("compact",
+                    "手动压缩上下文：远端历史折叠为摘要（会话日志留压缩点，后续请求按其拼接）",
+                    CommandScope.ANY, false,
+                    context -> governance.compactNow(context.session())));
+        }
     }
 
     /**

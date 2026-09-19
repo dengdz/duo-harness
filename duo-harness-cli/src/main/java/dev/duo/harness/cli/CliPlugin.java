@@ -323,6 +323,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     return e.getMessage();
                 }
             }));
+        // /compact（M19，ADR-0020 决策 6）：双面 ANY 命令经共享装配器注册（查重先到
+        // 先得——Web 侧同款），会话取发起方当前值
+        dev.duo.harness.agent.presenter.PresenterAssembly.registerCompactCommand(
+                ctx, commands, governance);
         commands.register(ctx, new CommandDefinition("plan",
                 "计划模式：/plan 进入（可携任务描述直接推进）、/plan off 退出",
                 CommandScope.CLI, false, context -> {

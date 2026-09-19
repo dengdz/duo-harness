@@ -98,6 +98,14 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
      */
     public static final String COMMAND_DONE = "command/done";
 
+    /**
+     * 上下文压缩点（M19，ADR-0020 决策 6；text = 远端历史的总结全文，toolName = 触发方式
+     * {@code "manual"}（/compact 命令）或 {@code "auto"}（预算触发））。一处语义两处触发
+     * ——"上下文为何变小"在日志可审计。投影 latest-wins：最后压缩点之前的一切以总结
+     * 替换、之后照常；刷新/重开经日志重放天然恢复压缩态、不重复总结。
+     */
+    public static final String COMPACTION = "context/compacted";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");
@@ -215,5 +223,10 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：斜杠命令执行完成（名 + 结果文本；异常已收敛为错误说明文本）。 */
     public static SessionEvent commandDone(String name, String result) {
         return new SessionEvent(COMMAND_DONE, System.currentTimeMillis(), result, null, name, null);
+    }
+
+    /** 便捷工厂：上下文压缩点（总结全文 + 触发方式 manual/auto 走工具名可选位）。 */
+    public static SessionEvent compaction(String summary, String trigger) {
+        return new SessionEvent(COMPACTION, System.currentTimeMillis(), summary, null, trigger, null);
     }
 }

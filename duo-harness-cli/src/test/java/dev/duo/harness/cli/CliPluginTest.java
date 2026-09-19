@@ -41,8 +41,8 @@ class CliPluginTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、命令注册表入口"
-                + "（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位）、"
-                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行（10 用例） ===");
+                + "（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
+                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩（11 用例） ===");
     }
 
     interface ToolsView {
@@ -336,7 +336,7 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             String out = fx.output();
-            assertTrue(out.contains("未知命令: /nope（可用命令: exit, new, permission, plan"),
+            assertTrue(out.contains("未知命令: /nope（可用命令: exit, new, permission, compact, plan"),
                     "四命令注册序即清单序: " + out);
         } finally {
             fx.dispose();
@@ -430,6 +430,44 @@ class CliPluginTest {
             assertEquals(occupied.id(), summaries.get(1).id(), "被占会话未被改动（只剩原一条事件）");
             occupied.append(SessionEvent.userMessage("属主继续写"));
             assertEquals(2, occupied.events().size(), "属主不受影响");
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void compactCommandCompactsAndLandsCompactionEvent() throws Exception {
+        // /compact（M19，ADR-0020 决策 6）：命令触发治理压缩——mock LLM 直答形态返回
+        // 摘要，manual 压缩点落会话，回显压缩结果；摘要经 stream() 直答（compaction 专用）
+        Path dir = tempDir.resolve("compact");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                onChunk.accept(new dev.duo.harness.llm.ChatChunk("## 主要请求\n压缩总结"));
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                textSink.accept("答");
+                return new dev.duo.harness.llm.LlmTurn("答", List.of());
+            }
+        };
+        // 五轮对话让远端越过最小折叠量（近端之外不足 4 条时提示无需压缩）
+        Fixture fx = new Fixture(dir,
+                "一问\n二问\n三问\n四问\n五问\n/compact\n/exit\n", llm);
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("已压缩"), "回显压缩结果: " + out);
+
+            Session latest = Session.latest(dir);
+            var compacted = latest.events().stream()
+                    .filter(e -> SessionEvent.COMPACTION.equals(e.type())).findFirst().orElseThrow();
+            assertEquals("manual", compacted.toolName(), "/compact 触发署名 manual");
+            assertTrue(compacted.text().contains("压缩总结"), "总结全文随事件落盘");
+            latest.close();
         } finally {
             fx.dispose();
         }
