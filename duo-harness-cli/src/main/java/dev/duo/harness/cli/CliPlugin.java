@@ -185,9 +185,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
                 maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
                 workspacePolicy);
-        // 权限档持久化（M19，ADR-0020 决策 10）：续接会话恢复最后切定档；新会话无切档
-        // 记录即重置回 yml 缺省（档位跟对话走，切档不跨会话惊吓）
-        dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(ctx, session);
+        // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
+        // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
+        dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(
+                ctx, session, false);
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
         plan.active = PlanMode.isActive(session);
@@ -302,9 +303,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
-                // 新会话回 yml 缺省（无切档记录 → 重置装配档，ADR-0020 决策 10）
+                // 用户显式开新话题：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
                 dev.duo.harness.agent.presenter.PresenterAssembly.restorePermissionMode(
-                        ctx, holder.session);
+                        ctx, holder.session, true);
                 plan.active = false;
                 disposeGuidance(plan);
                 return "新会话 " + holder.session.id() + "。";

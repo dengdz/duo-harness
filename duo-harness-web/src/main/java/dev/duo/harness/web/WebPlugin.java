@@ -116,9 +116,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // CLI 已注册则跳过），会话经 face 延迟解析取当前值
         PresenterAssembly.registerCompactCommand(ctx, commands, governance);
         PresenterAssembly.registerTitleCommand(ctx, commands);
-        // 权限档持久化（M19，ADR-0020 决策 10）：续接会话恢复最后切定档（无 fs 服务的
-        // 纯对话装配零感跳过）；换绑恢复在 onSessionChanged 回调里同源执行
-        PresenterAssembly.restorePermissionMode(ctx, session);
+        // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置（BUG-20260919-03
+        // ——双开下另一呈现位可能刚恢复过档位）；换绑恢复在 onSessionChanged 回调里执行
+        PresenterAssembly.restorePermissionMode(ctx, session, false);
         // HITL 交互工具补全（共享装配器，查重先到先得）：ask_user 与计划呈交随 Web 装配
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
@@ -141,8 +141,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
                     ChatAgent.PRESENTER_WEB));
             SessionTitles.attach(fresh, adapter);
-            // 换绑恢复权限档（新会话回 yml 缺省，ADR-0020 决策 10）
-            PresenterAssembly.restorePermissionMode(ctx, fresh);
+            // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
+            PresenterAssembly.restorePermissionMode(ctx, fresh, true);
         });
         SessionTitles.attach(session, adapter);
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());

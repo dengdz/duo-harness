@@ -18,6 +18,7 @@ import dev.duo.harness.tools.InteractionPlugin;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolsPlugin;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 import dev.duo.harness.tools.ToolsService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -170,6 +171,46 @@ class PresenterAssemblyTest {
     }
 
     @Test
+    void permissionModeRestoreRespectsResetPolicy() throws Exception {
+        // BUG-20260919-03（M19-06 验收实测）：恢复语义分档——启动续接（reset=false）
+        // 无切档记录保持现状不重置（双开下不得覆盖另一呈现位刚恢复的档位）；
+        // 显式换绑（reset=true）无记录重置回装配档
+        Context root = Context.root();
+        try {
+            root.plugin(new ToolsPlugin(), null).awaitStartup();
+            root.plugin(new dev.duo.harness.tools.fs.FsToolsPlugin(),
+                    JsonNodeFactory.instance.objectNode().put("mode", "workspace-write"))
+                    .awaitStartup();
+            WorkspacePolicy workspace = root.as(WorkspaceView.class).workspace();
+
+            // 会话无切档记录
+            dev.duo.harness.session.Session fresh = dev.duo.harness.session.Session.create(
+                    java.nio.file.Path.of(tempDir.toAbsolutePath().toString(), "s"));
+            // 模拟"另一呈现位刚恢复过 read-only"的全局现状
+            workspace.setMode(WorkspacePolicy.Mode.parse("read-only"));
+
+            PresenterAssembly.restorePermissionMode(root, fresh, false);
+            assertEquals("read-only", workspace.mode().configName(),
+                    "启动续接：无记录保持现状（不覆盖另一呈现位的恢复）");
+
+            PresenterAssembly.restorePermissionMode(root, fresh, true);
+            assertEquals("workspace-write", workspace.mode().configName(),
+                    "显式换绑：无记录重置回装配档");
+            fresh.close();
+
+            // 有切档记录：两种模式都恢复记录档
+            dev.duo.harness.session.Session switched = dev.duo.harness.session.Session.create(
+                    java.nio.file.Path.of(tempDir.toAbsolutePath().toString(), "s"));
+            switched.append(dev.duo.harness.session.SessionEvent.permissionMode("read-only"));
+            PresenterAssembly.restorePermissionMode(root, switched, false);
+            assertEquals("read-only", workspace.mode().configName(), "有记录照常恢复");
+            switched.close();
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
     void llmAdapterPropagatesConfigLoadFailure() {
         // LLM 配置缺失/不合法时装配即失败点名——呈现位据此 FAILED（沿 WebPlugin 既有语义）
         assertThrows(PluginException.class,
@@ -299,5 +340,10 @@ class PresenterAssemblyTest {
         assertThrows(PluginException.class,
                 () -> PresenterAssembly.parsePipelineTimeoutMs(config("{\"pipelineTimeoutMs\":0}")),
                 "非正点名拒绝");
+    }
+    /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */
+    interface WorkspaceView {
+
+        dev.duo.harness.tools.fs.WorkspacePolicy workspace();
     }
 }

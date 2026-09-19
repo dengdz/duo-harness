@@ -276,11 +276,20 @@ public final class PresenterAssembly {
     /**
      * 权限档恢复（M19，ADR-0020 决策 10）：呈现位打开/换绑会话后调用——读会话
      * {@code permission/mode} 投影写回全局 workspace 档位（latest-wins，重开恢复最后
-     * 切定档）；无切档记录（新会话）重置回装配档（yml 缺省——"切档不跨会话惊吓"）。
-     * workspace 服务缺席（纯对话装配）零感跳过。双开语义：档位是全局治理态，后打开
-     * 的会话说了算（与单例 volatile 模型一致）。恢复事件不落盘（读侧恢复非治理动作）。
+     * 切定档）。workspace 服务缺席（纯对话装配）零感跳过。双开语义：档位是全局治理态，
+     * 后恢复者生效（与单例 volatile 模型一致）。恢复事件不落盘（读侧恢复非治理动作）。
+     *
+     * <p>BUG-20260919-03（验收实测）：双开重启时 Web 先恢复切定档、CLI 占用被迫改开
+     * 新会话——若"无切档记录即重置缺省"对启动路径也生效，CLI 会把刚恢复的档位覆盖
+     * 回缺省。故重置语义只对**显式换绑**（/new、页面新话题/切换——用户主动开新话题，
+     * "切档不跨会话惊吓"）生效；**启动续接**（含占用被迫改开）只恢复、不重置——用户
+     * 没有开新话题的动作意图，治理态延续。</p>
+     *
+     * @param resetToInitialIfAbsent true = 无切档记录时重置回装配档（显式换绑场景）；
+     *                               false = 无记录保持现状（启动续接场景）
      */
-    public static void restorePermissionMode(Context ctx, Session session) {
+    public static void restorePermissionMode(Context ctx, Session session,
+                                             boolean resetToInitialIfAbsent) {
         WorkspacePolicy workspace;
         try {
             workspace = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
@@ -292,10 +301,13 @@ public final class PresenterAssembly {
             return;
         }
         String saved = session.permissionMode();
-        WorkspacePolicy.Mode target = saved != null
-                ? WorkspacePolicy.Mode.parse(saved) : workspace.initialMode();
-        if (target != workspace.mode()) {
-            workspace.setMode(target);
+        if (saved != null) {
+            WorkspacePolicy.Mode target = WorkspacePolicy.Mode.parse(saved);
+            if (target != workspace.mode()) {
+                workspace.setMode(target);
+            }
+        } else if (resetToInitialIfAbsent && workspace.mode() != workspace.initialMode()) {
+            workspace.setMode(workspace.initialMode());
         }
     }
 
