@@ -163,11 +163,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
-                maxIterations, maxParallelToolCalls, governance);
+                maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI);
         answererRegistration = answers.register(ctx,
                 new AuditingAnswerer(holder::current, new ConsoleAnswerer(in, out)));
         PlanHolder plan = new PlanHolder();
-        PresenterAssembly.registerInteractionTools(ctx, tools, answers, holder::current, () -> {
+        PresenterAssembly.registerInteractionTools(ctx, tools, answers, ChatAgent.PRESENTER_CLI,
+                holder::current, () -> {
             plan.active = false;
             disposeGuidance(plan);
         });
@@ -294,7 +295,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 Session previous = holder.session;
                 holder.session = Session.create(sessionsDir);
                 agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
-                        maxIterations, maxParallelToolCalls, governance);
+                        maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI);
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）

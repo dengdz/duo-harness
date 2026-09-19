@@ -810,17 +810,29 @@ const app = (() => {
     }
   }
 
+  let sendInFlight = false; // 请求在途闸：只拦重入，不拦"思考中"——执行中发消息是合法注入
+
   async function send() {
     const input = $('#input');
     const text = input.value.trim();
-    if (!text || $('#send').disabled) return; // 受理中/思考中重入忽略（按钮态已可见）
+    if (!text || sendInFlight) return; // 受理中重入忽略（注入受理后按钮即恢复，可连发）
     input.value = '';
+    sendInFlight = true;
     setSendBusy(true, '…');
     render.showMessages();
     try {
       const res = await api.sendMessage(text);
       if (res.status === 202) {
-        setSendBusy(true, '思考中…');
+        // 202 空体 = 正常受理（异步执行）；202 带体 = 运行中注入已被接收
+        // （M19 steer：消息在当前步骤完成后进入对话，ADR-0020 决策 8）
+        const note = await res.text();
+        if (note) {
+          showToast(note, 'info');
+          setSendBusy(false); // 注入不改变任务忙态——输入恢复可用（可继续注入），
+                              // 任务完成时 assistant/message 的 clearSendBusy 幂等
+        } else {
+          setSendBusy(true, '思考中…');
+        }
         return;
       }
       setSendBusy(false);
@@ -829,6 +841,8 @@ const app = (() => {
     } catch (err) {
       setSendBusy(false);
       showToast('消息发送失败：' + errText(err));
+    } finally {
+      sendInFlight = false;
     }
   }
   $('#send').addEventListener('click', send);

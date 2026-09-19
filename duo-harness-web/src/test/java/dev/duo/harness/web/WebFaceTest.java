@@ -294,7 +294,43 @@ class WebFaceTest {
     }
 
     @Test
-    void concurrentMessageRejectedWith409() throws Exception {
+    void concurrentMessageInjectedWhileBusy() throws Exception {
+        // 运行中治理（M19 steer，ADR-0020 决策 8）：执行中 POST 不再 409——进 agent
+        // 注入收件箱，202 + "已注入" 轻提示；注入文本由 agent 在迭代边界排干
+        AtomicReference<String> injected = new AtomicReference<>();
+        ChatAgent slow = new ChatAgent() {
+            @Override
+            public dev.duo.harness.agent.AgentReply send(String userText,
+                                                         dev.duo.harness.agent.AgentListener listener) {
+                listener.onChunk("慢回复");
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new AgentReply("慢回复", List.of(), true);
+            }
+
+            @Override
+            public boolean injectUserMessage(String text) {
+                injected.set(text);
+                return true;
+            }
+        };
+        start(Session.create(tempDir.resolve("sessions")), slow);
+
+        HttpResponse<String> first = post("/api/message", "{\"text\": \"第一条\"}");
+        assertEquals(202, first.statusCode());
+        Thread.sleep(100);
+        HttpResponse<String> second = post("/api/message", "{\"text\": \"第二条\"}");
+        assertEquals(202, second.statusCode(), "执行中再发 → 202（注入受理，非 409）");
+        assertEquals("已注入，待当前步骤完成", second.body(), "轻提示随响应体返回");
+        assertEquals("第二条", injected.get(), "文本已交 agent 注入收件箱");
+    }
+
+    @Test
+    void concurrentMessageKeeps409WhenAgentCannotSteer() throws Exception {
+        // 兜底：不支持注入的 agent（测试桩/旧实现）保留 409 语义——行为不静默漂移
         ChatAgent slow = (userText, listener) -> {
             listener.onChunk("慢回复");
             try {
@@ -310,7 +346,7 @@ class WebFaceTest {
         assertEquals(202, first.statusCode());
         Thread.sleep(100);
         HttpResponse<String> second = post("/api/message", "{\"text\": \"第二条\"}");
-        assertEquals(409, second.statusCode(), "执行中再发 → 409（单入口串行）");
+        assertEquals(409, second.statusCode(), "不支持注入的 agent → 409（单入口串行保留）");
     }
 
     @Test

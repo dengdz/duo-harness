@@ -72,8 +72,9 @@ public final class AskUserTool implements ToolDefinition {
         List<String> options = readOptions(args.get("options"));
         boolean multiSelect = args.path("multiSelect").asBoolean(false);
 
-        InteractionAnswer answer = answers.ask(
-                InteractionRequest.question(questionNode.asText(), options, multiSelect));
+        // 发起呈现位随请求走：回答者路由发起方优先（M19，ADR-0020 决策 7）
+        InteractionAnswer answer = answers.ask(InteractionRequest.question(
+                questionNode.asText(), options, multiSelect, execution.presenterId()));
         if (!answer.approved() || answer.values().isEmpty()) {
             // fail-closed：无回答者 / 人未作答——收敛为 error 结果，模型可见原因后自行调整
             throw new PluginException("提问无人应答（fail-closed），用户当前不可达");

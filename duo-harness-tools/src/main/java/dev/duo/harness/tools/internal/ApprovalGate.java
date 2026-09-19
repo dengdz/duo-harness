@@ -28,8 +28,9 @@ public final class ApprovalGate {
                 // 未被声明需审批的调用不进入审批——策略只裁决 ask，不主动治理
                 return inner;
             }
-            // args 在内层之后取：内层监听器可能改写参数，策略应看到最终形态
-            exec.resolveApproval(policy.decide(exec.toolName(), exec.args()));
+            // args 在内层之后取：内层监听器可能改写参数，策略应看到最终形态；
+            // 发起呈现位标记随行——ask 请求据此亲和路由（M19，ADR-0020 决策 7）
+            exec.resolveApproval(policy.decide(exec.toolName(), exec.args(), exec.presenterId()));
             return inner;
         };
     }

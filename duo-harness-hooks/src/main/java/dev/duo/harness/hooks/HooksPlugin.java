@@ -90,7 +90,7 @@ public final class HooksPlugin implements Plugin<Void> {
                     for (HookHandler handler : HookMatcher.matched(rules, exec.toolName())) {
                         HookRunner.Outcome outcome = HookRunner.run(handler,
                                 payload(HooksConfig.EVENT_PRE_TOOL_USE, exec.toolName(),
-                                        exec.args(), null));
+                                        exec.args(), null, exec.presenterId()));
                         if (!outcome.produced()) {
                             log.warn("PreToolUse 钩子未产生裁定，放行（fail-open）: {}",
                                     outcome.diagnosis(handler.command()));
@@ -146,7 +146,7 @@ public final class HooksPlugin implements Plugin<Void> {
                     for (HookHandler handler : HookMatcher.matched(rules, exec.toolName())) {
                         HookRunner.Outcome outcome = HookRunner.run(handler,
                                 payload(HooksConfig.EVENT_POST_TOOL_USE, exec.toolName(),
-                                        exec.args(), exec.result()));
+                                        exec.args(), exec.result(), exec.presenterId()));
                         if (!outcome.produced()) {
                             log.warn("PostToolUse 钩子未产生裁定，结果原样（fail-open）: {}",
                                     outcome.diagnosis(handler.command()));
@@ -247,16 +247,22 @@ public final class HooksPlugin implements Plugin<Void> {
 
     /**
      * stdin 载荷（字段名与 Claude Code 同名）：一期为 hook_event_name、tool_name、
-     * tool_input、cwd，PostToolUse 增 tool_response（审计面需要看到工具结果）。
+     * tool_input、cwd，PostToolUse 增 tool_response（审计面需要看到工具结果）；
+     * M19 增 presenter_id（发起呈现位标记，agent 循环执行时携带——载荷上下文透传
+     * 的部分消化，session_id/transcript_path 仍缺席）。
      * session_id / transcript_path / tool_use_id 一期缺席——管线载荷无会话与调用
      * 标识，透传需执行入口携带上下文，与"tools 域零改动"冲突（backlog 记档）。
      */
-    private JsonNode payload(String event, String toolName, JsonNode toolInput, Object toolResponse) {
+    private JsonNode payload(String event, String toolName, JsonNode toolInput, Object toolResponse,
+                             String presenterId) {
         ObjectNode payload = MAPPER.createObjectNode();
         payload.put("hook_event_name", event);
         payload.put("tool_name", toolName);
         payload.set("tool_input", toolInput);
         payload.put("cwd", System.getProperty("user.dir"));
+        if (presenterId != null) {
+            payload.put("presenter_id", presenterId);
+        }
         if (HooksConfig.EVENT_POST_TOOL_USE.equals(event)) {
             payload.set("tool_response", MAPPER.valueToTree(toolResponse));
         }

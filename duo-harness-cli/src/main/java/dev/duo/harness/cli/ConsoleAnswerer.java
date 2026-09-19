@@ -27,6 +27,12 @@ public final class ConsoleAnswerer implements Answerer {
         this.out = out;
     }
 
+    /** 亲和路由（M19，ADR-0020 决策 7）：本回答者代表终端呈现位。 */
+    @Override
+    public String presenterId() {
+        return dev.duo.harness.agent.ChatAgent.PRESENTER_CLI;
+    }
+
     @Override
     public InteractionAnswer answer(InteractionRequest request) {
         if (InteractionRequest.KIND_APPROVAL.equals(request.kind())) {

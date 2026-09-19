@@ -73,7 +73,8 @@ class ExitPlanModeToolTest {
         if (answerer != null) {
             answers.register(root, answerer);
         }
-        tools.register(root, new ExitPlanModeTool(answers, () -> session, approvals::incrementAndGet));
+        tools.register(root, new ExitPlanModeTool(answers, "cli", () -> session,
+                approvals::incrementAndGet));
         return tools;
     }
 

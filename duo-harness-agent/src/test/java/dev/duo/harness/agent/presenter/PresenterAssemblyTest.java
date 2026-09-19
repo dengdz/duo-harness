@@ -105,9 +105,10 @@ class PresenterAssemblyTest {
             ToolsService tools = root.as(ToolsView.class).tools();
             InteractionService answers = root.as(AnswersView.class).answers();
 
-            PresenterAssembly.registerInteractionTools(root, tools, answers,
+            PresenterAssembly.registerInteractionTools(root, tools, answers, "cli",
                     () -> { throw new IllegalStateException("本用例不触发会话解析"); }, () -> { });
-            PresenterAssembly.registerInteractionTools(root, tools, answers,
+            // 二次注册（另一呈现位）：工具实例跳过，但亲和会话供给应补记进既有实例
+            PresenterAssembly.registerInteractionTools(root, tools, answers, "web",
                     () -> { throw new IllegalStateException("重复注册应被跳过"); }, () -> { });
 
             List<String> names = tools.list().stream().map(ToolDefinition::name).toList();

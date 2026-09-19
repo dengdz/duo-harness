@@ -35,14 +35,45 @@ public final class ExitPlanModeTool implements ToolDefinition {
     private static final String RETYPE_OPTION = "继续计划（可直接输入你的修改意见）";
 
     private final InteractionService answers;
-    private final java.util.function.Supplier<Session> session;
     private final Runnable approvedCallback;
+    /**
+     * 发起呈现位 → 会话供给（M19 亲和路由，ADR-0020 决策 7）：工具实例查重先到先得，
+     * 但各呈现位经 {@link #bindSession} 补记自己的供给——批准/打回的 plan/mode 事件
+     * 写进**发起方**会话（limitations"交互工具的会话绑定先到先得"销账，双开下计划
+     * 状态不串位）。
+     */
+    private final java.util.concurrent.ConcurrentMap<String, java.util.function.Supplier<Session>>
+            sessionsByPresenter = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public ExitPlanModeTool(InteractionService answers, java.util.function.Supplier<Session> session,
+    public ExitPlanModeTool(InteractionService answers, String presenterId,
+                            java.util.function.Supplier<Session> session,
                             Runnable approvedCallback) {
         this.answers = Objects.requireNonNull(answers, "answers");
-        this.session = Objects.requireNonNull(session, "session");
+        // 供给不即取：惰性供给（holder::current、face::currentSession）在装配期不可用
+        this.sessionsByPresenter.put(presenterId == null || presenterId.isBlank()
+                ? "" : presenterId, Objects.requireNonNull(session, "session"));
         this.approvedCallback = Objects.requireNonNull(approvedCallback, "approvedCallback");
+    }
+
+    /**
+     * 补记一个呈现位的会话供给（后来呈现位装配时调用——工具实例先到先得，供给各记各账）。
+     * 换绑感知由供给器自身保证（呈现位传 holder::current 同款）。
+     */
+    public void bindSession(String presenterId, java.util.function.Supplier<Session> session) {
+        Objects.requireNonNull(session, "session");
+        sessionsByPresenter.put(presenterId == null || presenterId.isBlank()
+                ? "" : presenterId, session);
+    }
+
+    /** 发起方的会话供给：标记缺席（直调等）回退任一在册供给。 */
+    private java.util.function.Supplier<Session> sessionFor(String presenterId) {
+        java.util.function.Supplier<Session> supplier =
+                sessionsByPresenter.get(presenterId == null || presenterId.isBlank()
+                        ? "" : presenterId);
+        if (supplier != null) {
+            return supplier;
+        }
+        return sessionsByPresenter.values().iterator().next();
     }
 
     @Override
@@ -77,9 +108,10 @@ public final class ExitPlanModeTool implements ToolDefinition {
         }
         String plan = planNode.asText();
         // 计划复核走 KIND_PLAN（BUG-20260917-04）：subject 携工具名——审计桥据此把
-        // 请求/决定写进作答呈现位会话，浏览器计划卡与终端提示都以此身份键渲染
+        // 请求/决定写进作答呈现位会话，浏览器计划卡与终端提示都以此身份键渲染；
+        // 发起呈现位随请求走（亲和路由 + 会话供给按发起方，M19 ADR-0020 决策 7）
         InteractionAnswer answer = answers.ask(InteractionRequest.plan(
-                NAME, plan, List.of(APPROVE_OPTION, RETYPE_OPTION)));
+                NAME, plan, List.of(APPROVE_OPTION, RETYPE_OPTION), execution.presenterId()));
         if (answer == null || !answer.approved() || answer.values().isEmpty()) {
             // fail-closed：无回答者 / 未作答 → 计划不批准（对齐 DSH：保持计划模式，
             // 不写 exited——模型可继续修改计划或由用户 /plan off 手动退出）
@@ -88,7 +120,7 @@ public final class ExitPlanModeTool implements ToolDefinition {
         }
         String verdict = answer.values().get(0);
         if (APPROVE_OPTION.equals(verdict)) {
-            session.get().append(PlanMode.exitedEvent());
+            sessionFor(execution.presenterId()).get().append(PlanMode.exitedEvent());
             approvedCallback.run();
             return "计划已获批准（回答者: " + answer.source() + "）。请立即开始执行计划。";
         }

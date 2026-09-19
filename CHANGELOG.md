@@ -7,6 +7,8 @@
 ### Added
 
 - **斜杠命令注册表**（工单 01，ADR-0020）：agent 域发布 "commands" 服务——命令由插件代码注册（名 + 描述 + 适用呈现位 ANY/CLI/WEB + busySafe 缺省 false），CLI 与 Web 共享同一入口顺序：命令 → 技能直调 → 未知命令报错附可用命令与技能清单。CLI 的 /new、/permission、/plan、/exit 迁入注册表（行为不变）；执行落 `command/run` / `command/done` 审计两事件（投影排除——命令操作 harness 不进模型历史，崩溃断口可观测）；/permission 声明 busySafe，agent 执行期间切档立即生效，其余命令空闲才执行。boot yml 装 `dev.duo.harness.agent.commands.CommandsPlugin` 行即启用（cli 插件硬依赖本服务）
+- **呈现位亲和路由（谁发起谁作答）**（工单 05，ADR-0020 决策 7）：工具执行携带发起呈现位标记（presenterId），审批/提问/计划呈交的 ask 请求优先路由给发起方的回答者——双开部署下 CLI 发起的审批在终端 y/n 作答，不再跳 Web 卡片、终端零提示（M12-02 事故销账）；发起方缺席/放弃才轮注册序（单呈现位部署零感）。交互工具（exit_plan_mode）的会话供给按发起方亲和——批准/打回事件写进发起方会话，计划状态不再串位（limitations 交互工具绑定条销账）；hooks 载荷增 `presenter_id`（载荷上下文透传部分消化）
+- **父级 steer（运行中消息注入）**（工单 04，ADR-0020 决策 8）：Web 执行中发消息不再 409——进 agent 注入收件箱，send 循环在迭代边界排干为普通 `user/message`（下一轮请求即可见，不打断飞行中的工具组，多条照排），页面 toast"已注入，待当前步骤完成"；与子代理 send_message 的"下一轮生效"语义对称。CLI 不接（行缓冲天然排队，ADR-0020 决策 9）
 
 ## 0.13.0（2026-09-18）
 

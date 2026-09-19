@@ -15,10 +15,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -199,6 +201,57 @@ class ToolsServiceTest {
         assertTrue(result.isError());
         assertTrue(String.valueOf(result.value()).contains("工具内部炸了"),
                 String.valueOf(result.value()));
+    }
+
+    @Test
+    void presenterIdRidesExecutionThroughPipeline() {
+        // M19 亲和路由传导（ADR-0020 决策 7）：三参 execute 的发起呈现位标记
+        // 贯穿三段管线——pre / 本体 / post 监听器与工具本体都可见；两参 execute 为 null
+        AtomicReference<String> preSeen = new AtomicReference<>();
+        root.on(ToolsService.PRE_EXECUTE,
+                (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
+                    preSeen.set(exec.presenterId());
+                    return next.invoke(exec);
+                });
+        AtomicReference<String> bodySeen = new AtomicReference<>();
+        tools().register(root, new ToolDefinition() {
+            @Override
+            public String name() {
+                return "probe";
+            }
+
+            @Override
+            public String description() {
+                return "标记探针";
+            }
+
+            @Override
+            public JsonNode parameters() {
+                return NullNode.getInstance();
+            }
+
+            @Override
+            public Object execute(ToolExecution execution) {
+                bodySeen.set(execution.presenterId());
+                return "ok";
+            }
+        });
+        AtomicReference<String> postSeen = new AtomicReference<>();
+        root.on(ToolsService.POST_EXECUTE,
+                (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
+                    postSeen.set(exec.presenterId());
+                    return next.invoke(exec);
+                });
+
+        tools().execute("probe", NullNode.getInstance(), "cli");
+        assertEquals("cli", preSeen.get(), "pre 段可见发起呈现位");
+        assertEquals("cli", bodySeen.get(), "工具本体可见发起呈现位");
+        assertEquals("cli", postSeen.get(), "post 段可见发起呈现位");
+
+        preSeen.set("哨兵");
+        tools().execute("probe", NullNode.getInstance());
+        assertNull(preSeen.get(), "两参 execute 直调无发起方标记");
+        assertNull(bodySeen.get(), "两参 execute 直调无发起方标记");
     }
 
     @Test

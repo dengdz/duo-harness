@@ -30,4 +30,18 @@ public interface ApprovalPolicyService {
      * @return 审批决策（含结果、理由与策略来源）
      */
     ApprovalDecision decide(String toolName, JsonNode args);
+
+    /**
+     * 裁决一次被声明的工具调用（携发起呈现位标记，M19 亲和路由 ADR-0020 决策 7）：
+     * 委托交互 seam 的策略（interactive 等）把标记带进 ask 请求——回答者路由据此
+     * 发起方优先。缺省忽略标记（实现未升级时行为不变）。
+     *
+     * @param toolName    工具名
+     * @param args        调用参数
+     * @param presenterId 发起呈现位标记（直调/无发起方为 null）
+     * @return 审批决策（含结果、理由与策略来源）
+     */
+    default ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
+        return decide(toolName, args);
+    }
 }

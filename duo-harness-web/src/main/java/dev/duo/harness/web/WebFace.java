@@ -413,7 +413,14 @@ public final class WebFace {
             return;
         }
         if (!busy.compareAndSet(false, true)) {
-            respondText(exchange, 409, "已有对话在执行中（单入口串行）");
+            // 运行中治理（M19 steer，ADR-0020 决策 8）：执行中的消息进 agent 注入收件箱
+            // （迭代边界排干为普通 user/message，下一轮请求可见）——不再无差别 409；
+            // agent 不支持注入（如测试桩）时保留 409 语义
+            if (current.injectUserMessage(text)) {
+                respondText(exchange, 202, "已注入，待当前步骤完成");
+            } else {
+                respondText(exchange, 409, "已有对话在执行中（单入口串行）");
+            }
             return;
         }
         exchange.sendResponseHeaders(202, -1);

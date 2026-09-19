@@ -95,7 +95,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 管线缺省超时（ADR-0018）：config.pipelineTimeoutMs 可省，缺省 120s——挂工具执行段兜底
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
-                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance);
+                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
+                ChatAgent.PRESENTER_WEB);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -113,7 +114,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
         PresenterAssembly.registerInteractionTools(
-                ctx, tools, answers, face::currentSession, () -> { });
+                ctx, tools, answers, ChatAgent.PRESENTER_WEB, face::currentSession, () -> { });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, face::currentSession);
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
@@ -128,7 +129,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // attach，双开时与 CLI 共享静态去重表
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
-                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance));
+                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
+                    ChatAgent.PRESENTER_WEB));
             SessionTitles.attach(fresh, adapter);
         });
         SessionTitles.attach(session, adapter);

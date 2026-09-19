@@ -41,4 +41,17 @@ public final class WorkspaceGatePolicy implements ApprovalPolicyService {
         }
         return inner.decide(toolName, args);
     }
+
+    /** 携发起呈现位版：档位判定与标记无关，ask 委托内层时原样转发（亲和路由）。 */
+    @Override
+    public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
+        Path targetPath = null;
+        if (args != null && args.hasNonNull("path")) {
+            targetPath = workspace.resolveInWorkspaceOrNull(args.get("path").asText(""));
+        }
+        if (workspace.decide(toolName, targetPath) == WorkspacePolicy.Decision.ALLOW) {
+            return ApprovalDecision.allow(SOURCE);
+        }
+        return inner.decide(toolName, args, presenterId);
+    }
 }

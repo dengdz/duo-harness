@@ -175,14 +175,16 @@ public final class PresenterAssembly {
     }
 
     /**
-     * 对话执行者（并发度显式版，ADR-0018）：呈现位经 {@link #parseMaxParallelToolCalls}
-     * 传入——单轮并发安全工具的并行池在飞上限。
+     * 对话执行者（并发度显式 + 呈现位标记版，M19 亲和路由 ADR-0020 决策 7）：
+     * 标记随 agent 的工具执行进管线——审批/提问的 ask 请求据此路由给发起呈现位的
+     * 回答者（"谁发起谁作答"）。
      */
     public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
                                       PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance) {
+                                      int maxParallelToolCalls, ContextGovernance governance,
+                                      String presenterId) {
         return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance);
+                maxParallelToolCalls, governance, presenterId);
     }
 
     /**
@@ -241,17 +243,30 @@ public final class PresenterAssembly {
 
     /**
      * HITL 交互工具注册（查重先到先得）：ask_user 与计划呈交随呈现位装配注册——
-     * 任意单呈现位部署下 HITL 完整；多呈现位共存（如 cli + web 双开）时先到方胜出，
-     * 不触发内核重复注册拒绝。计划退出的状态清理回调由呈现位给出（Web 无计划指导
-     * 片段可清，传空 Runnable）。
+     * 任意单呈现位部署下 HITL 完整；多呈现位共存（如 cli + web 双开）时工具实例
+     * 先到方胜出、不触发内核重复注册拒绝，**会话供给各记各账**（M19 亲和路由，
+     * ADR-0020 决策 7）：后来呈现位把自己的 {@code presenterId → 会话供给} 补记进
+     * 既有 exit_plan_mode 实例——批准/打回的 plan/mode 事件写进发起方会话，双开下
+     * 计划状态不串位。计划退出的状态清理回调由呈现位给出（Web 无计划指导片段可清，
+     * 传空 Runnable）。
      */
     public static void registerInteractionTools(Context ctx, ToolsService tools,
                                                 InteractionService answers,
+                                                String presenterId,
                                                 Supplier<Session> currentSession,
                                                 Runnable onPlanExited) {
+        tools.list().stream()
+                .filter(definition -> "exit_plan_mode".equals(definition.name()))
+                .findFirst()
+                .ifPresentOrElse(
+                        existing -> {
+                            if (existing instanceof ExitPlanModeTool tool) {
+                                tool.bindSession(presenterId, currentSession);
+                            }
+                        },
+                        () -> tools.register(ctx, new ExitPlanModeTool(answers, presenterId,
+                                currentSession, onPlanExited)));
         registerIfAbsent(tools, ctx, "ask_user", () -> new AskUserTool(answers));
-        registerIfAbsent(tools, ctx, "exit_plan_mode",
-                () -> new ExitPlanModeTool(answers, currentSession, onPlanExited));
     }
 
     /**
