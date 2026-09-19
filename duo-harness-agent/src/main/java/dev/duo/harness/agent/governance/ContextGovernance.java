@@ -71,7 +71,8 @@ public final class ContextGovernance {
      * @param pruneThresholdChars      修剪触发阈值（字符，正）
      * @param compactionThresholdRatio compaction 触发比例（(0,1]）
      * @param contextWindowTokens      模型上下文窗口（token，正）
-     * @param keepRecentRatio          compaction 保留近端比例（[0,1)）
+     * @param keepRecentRatio          （已停用）事件化压缩总结压缩点之前全部历史，无"近端保留"概念
+     *                                 ——字段保留解析兼容既有 yml，值被忽略
      * @param minRemoteMessages        compaction 触发的最小远端消息数（正）
      */
     public record Tuning(Integer spillThresholdChars, Integer pruneThresholdChars,
@@ -98,7 +99,6 @@ public final class ContextGovernance {
     private final int pruneThresholdChars;
     private final double compactionThresholdRatio;
     private final long contextWindowTokens;
-    private final double keepRecentRatio;
     private final int minRemoteMessages;
 
     public ContextGovernance(LlmAdapter llm) {
@@ -115,8 +115,6 @@ public final class ContextGovernance {
                 ? COMPACTION_THRESHOLD_RATIO : tuning.compactionThresholdRatio();
         this.contextWindowTokens = tuning == null || tuning.contextWindowTokens() == null
                 ? CONTEXT_WINDOW_TOKENS : tuning.contextWindowTokens();
-        this.keepRecentRatio = tuning == null || tuning.keepRecentRatio() == null
-                ? KEEP_RECENT_RATIO : tuning.keepRecentRatio();
         this.minRemoteMessages = tuning == null || tuning.minRemoteMessages() == null
                 ? MIN_REMOTE_MESSAGES : tuning.minRemoteMessages();
     }
@@ -139,7 +137,7 @@ public final class ContextGovernance {
         List<Message> governed = compact(
                 spillAndPrune(messages, session),
                 contextThreshold(),
-                contextTokens, usage != null);
+                contextTokens, usage != null, session);
         long after = ContextBudget.estimateMessageTokens(governed);
         if (after != estimate) {
             log(messages.size() + " 条消息：估算 "
@@ -175,11 +173,19 @@ public final class ContextGovernance {
         return contextWindowTokens;
     }
 
-    /** 最近一次带用量的 assistant/message 事件（倒查即得；续接的历史会话同样天然可取）。 */
+    /**
+     * 最近一次带用量的 assistant/message 事件（倒查即得；续接的历史会话同样天然可取）。
+     * 压缩感知（M19，ADR-0020 决策 6）：倒查先遇压缩点即返回 null——该实测值反映的是
+     * 压缩**前**的请求上下文，已不代表压缩后的下一次请求（占用与计量回退本地估算，
+     * 新一轮真实请求的用量事件落盘后自然恢复实测口径）。
+     */
     private static TokenUsage latestUsage(dev.duo.harness.session.Session session) {
         List<SessionEvent> events = session.events();
         for (int i = events.size() - 1; i >= 0; i--) {
             SessionEvent event = events.get(i);
+            if (SessionEvent.COMPACTION.equals(event.type())) {
+                return null;
+            }
             if (SessionEvent.ASSISTANT_MESSAGE.equals(event.type()) && event.usage() != null) {
                 return event.usage();
             }
@@ -264,58 +270,89 @@ public final class ContextGovernance {
         return toolName.replaceAll("[^\\w.-]", "_");
     }
 
+    /** 无会话纯变换（测试/无落盘场景专用）：不落压缩点事件——生产路径经 {@link #govern} 走事件版。 */
     List<Message> compact(List<Message> messages, long thresholdTokens) {
         return compact(messages, thresholdTokens,
-                ContextBudget.estimateMessageTokens(messages), false);
+                ContextBudget.estimateMessageTokens(messages), false, null);
     }
 
     /**
-     * compaction：修剪后计量仍超阈值时，远端历史折叠为固定骨架摘要（近端原文保留）。
-     * 切分点前移到 USER 消息边界——近端以 TOOL 消息开头会破坏 provider 的
-     * tool_calls/results 相邻协议。折叠只影响本次请求；LLM 失败原样透出（降级不冒险）。
+     * compaction（ADR-0020 决策 6 事件化）：计量超阈值时，**压缩点之前的全部历史**折叠为
+     * 固定骨架摘要并落 {@code context/compacted} 压缩点事件（触发方式 auto），返回值 =
+     * 替换头单条——与投影语义（最后压缩点之前以总结替换、之后照常）严格一致，当轮请求
+     * 与后续轮重放模型视角无差别。事件化后不再每轮重复总结（旧请求期纯变换每轮重复
+     * 调用 LLM）。session 为 null 时退化为纯变换（不落盘）。历史不足最小折叠量时放弃；
+     * LLM 失败或空摘要原样透出（降级不冒险、不落事件——空摘要落盘会令投影坍缩为空）。
      *
      * @param measuredTokens       计量值：provider 真实用量或本地估算（由 measuredFromProvider 标注口径）
      * @param measuredFromProvider 计量是否来自 provider 真实用量（日志口径标注）
+     * @param session              压缩点事件落点（null = 纯变换不落盘）
      */
     List<Message> compact(List<Message> messages, long thresholdTokens,
-                          long measuredTokens, boolean measuredFromProvider) {
-        if (measuredTokens <= thresholdTokens) {
+                          long measuredTokens, boolean measuredFromProvider,
+                          dev.duo.harness.session.Session session) {
+        if (measuredTokens <= thresholdTokens || messages.size() < minRemoteMessages) {
             return messages;
         }
-        int keepRecent = Math.max(1, (int) Math.round(messages.size() * keepRecentRatio));
-        int split = messages.size() - keepRecent;
-        if (split < minRemoteMessages) {
-            return messages; // 近端之外寥寥数条，无折叠价值
-        }
-        while (split < messages.size() && messages.get(split).role() != Message.Role.USER) {
-            split++; // 切分点推进到 USER 边界（协议安全）
-        }
-        if (split >= messages.size() - 1 || split > messages.size() - keepRecent) {
-            return messages; // 无可用边界或近端越扩越大——放弃折叠
-        }
-        List<Message> remote = messages.subList(0, split);
-        List<Message> recent = new ArrayList<>(messages.subList(split, messages.size()));
         try {
-            String summary = summarize(remote);
+            String summary = summarize(messages);
             if (summary.isBlank()) {
                 return messages;
             }
             log((measuredFromProvider ? "实测" : "估算") + " "
                     + measuredTokens + " tokens 超阈值 " + thresholdTokens
-                    + "，远端 " + remote.size() + " 条折叠为摘要（近端保留 " + recent.size() + " 条原文）");
-            List<Message> result = new ArrayList<>();
-            result.add(new Message(Message.Role.USER,
-                    "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n" + summary,
-                    null, null, null));
-            result.addAll(recent);
-            return result;
+                    + "，历史 " + messages.size() + " 条折叠为摘要");
+            if (session != null) {
+                session.append(SessionEvent.compaction(summary, TRIGGER_AUTO));
+            }
+            return List.of(summaryHead(summary));
         } catch (Exception e) {
             logger.warn("压缩摘要生成失败，本次请求原样透出", e);
             return messages;
         }
     }
 
-    /** compaction 摘要生成：远端消息经 LLM 直答折叠为固定骨架摘要。 */
+    /**
+     * 手动压缩（/compact 命令的本体，M19）：不看阈值强制压缩并落压缩点事件（触发方式
+     * manual）。语义与 {@link #compact} 一致：压缩点之前的全部历史折叠为摘要（投影随后
+     * 即以此拼接，无"近端保留"）。历史不足最小折叠量时提示无需压缩、不落事件；
+     * 空摘要（LLM 返回空白）不落事件——空压缩点会让投影坍缩为空，宁可不动。
+     * 命令语义 busySafe=false——调用方保证 agent 空闲（动上下文结构必须 idle）。
+     *
+     * @return 回显摘要（压缩结果或无需压缩/失败的说明）
+     */
+    public String compactNow(dev.duo.harness.session.Session session) {
+        List<Message> projected = session.deriveMessages();
+        if (projected.size() < minRemoteMessages) {
+            return "历史不足 " + minRemoteMessages + " 条消息，无需压缩。";
+        }
+        long before = ContextBudget.estimateMessageTokens(projected);
+        String summary = summarize(projected);
+        if (summary.isBlank()) {
+            log("手动压缩放弃：摘要生成为空，不落压缩点");
+            return "摘要生成失败（LLM 返回为空），未压缩——请稍后重试。";
+        }
+        session.append(SessionEvent.compaction(summary, TRIGGER_MANUAL));
+        long after = ContextBudget.estimateMessageTokens(List.of(summaryHead(summary)));
+        log("手动压缩：历史 " + projected.size() + " 条折叠为摘要，估算 "
+                + before + " → " + after + " tokens（会话 " + session.id() + "）");
+        return "已压缩：" + projected.size() + " 条历史消息折叠为摘要（估算 "
+                + before + " → " + after + " tokens），后续请求按压缩点拼接。";
+    }
+
+    /** 投影替换头（常量与 session 投影同源——两侧逐字同文由单一事实来源保证）。 */
+    private static Message summaryHead(String summary) {
+        return new Message(Message.Role.USER,
+                SessionEvent.COMPACTION_SUMMARY_HEADER + summary, null, null, null);
+    }
+
+    /** 压缩触发方式（context/compacted 事件的 toolName 位）：/compact 命令。 */
+    public static final String TRIGGER_MANUAL = "manual";
+
+    /** 压缩触发方式：预算阈值触发。 */
+    public static final String TRIGGER_AUTO = "auto";
+
+    /** compaction 摘要生成：压缩点之前的全部消息经 LLM 直答折叠为固定骨架摘要。 */
     String summarize(List<Message> remote) {
         ChatRequest request = new ChatRequest(SUMMARY_SYSTEM, toChatMessages(remote), List.of());
         StringBuilder summary = new StringBuilder();

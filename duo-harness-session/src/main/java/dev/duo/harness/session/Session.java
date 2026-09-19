@@ -420,6 +420,14 @@ public final class Session {
                         messages.add(Message.tool(event.toolCallId(), event.text()));
                 case SessionEvent.SUBAGENT_COMPLETED ->
                         messages.add(new Message(Message.Role.USER, event.text()));
+                case SessionEvent.COMPACTION -> {
+                    // 压缩点（ADR-0020 决策 6）：之前的一切以总结替换（latest-wins——后一个
+                    // 压缩点的总结涵盖更早历史，含前一压缩点），之后照常。替换头与治理管线
+                    // 的折叠骨架同文，模型视角两种触发路径无差别
+                    messages.clear();
+                    messages.add(new Message(Message.Role.USER,
+                            SessionEvent.COMPACTION_SUMMARY_HEADER + event.text()));
+                }
                 default -> { /* 不可达：projectsToMessage 已收窄类型集 */ }
             }
         }
@@ -492,6 +500,10 @@ public final class Session {
             case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE -> true;
             case SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT -> event.toolCallId() != null;
             case SessionEvent.SUBAGENT_COMPLETED -> true; // 子代理最终回答进父上下文（父聚合的数据源）
+            case SessionEvent.COMPACTION -> true; // 压缩点入投影（以总结替换之前的全部消息）
+            // 命令操作 harness 不进模型历史（ADR-0020 决策 5）——排除由本投影纯函数保证，
+            // 不参与 tool 配对（只认 tool/call|result）、不占消息窗口计数（只数本判定为真者）
+            case SessionEvent.COMMAND_RUN, SessionEvent.COMMAND_DONE -> false;
             default -> false; // subagent/spawned 卡片专用，同 approval/title 不投影
         };
     }
@@ -602,6 +614,21 @@ public final class Session {
     }
 
     /**
+     * 权限档投影（M19，ADR-0020 决策 10）：最新一次 {@code permission/mode} 事件的档位
+     * （latest-wins，title 同款倒查）；无切档事件返回 null——调用方回退 yml 缺省
+     * （新会话/新部署不惊扰）。档位跟对话走：会话重开据此恢复最后切定档位。
+     */
+    public String permissionMode() {
+        List<SessionEvent> snapshot = events();
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            if (SessionEvent.PERMISSION_MODE.equals(snapshot.get(i).type())) {
+                return snapshot.get(i).text();
+            }
+        }
+        return null;
+    }
+
+    /**
      * todo 清单投影（ADR-0018）：最新一次 {@code todo/write} 的清单 JSON（latest-wins）。
      * 其后出现新的 user/message 即清空（新轮开始——上一轮清单的使命结束，返回 null）；
      * 终版 assistant/message 之后保留（用户读完答案还能看到完成的清单）。
@@ -620,6 +647,61 @@ public final class Session {
             }
         }
         return null;
+    }
+
+    /**
+     * 静态权限档读取（M19 占用继承用）：不持锁打开 JSONL 逐行找最新 permission/mode
+     * 事件——与 {@link #titleOf} 同款只读扫描（坏行跳过）。文件缺失/不可读返回 null。
+     *
+     * <p>POSIX 释放陷阱防线（OCR 终审 #15）：若该文件正被**本进程**另一 Session 实例
+     * 独占持锁（占用继承的主用例——双开下 CLI 对被占会话调本方法），关闭任何新开 fd
+     * 都会释放本进程在该文件上的全部锁（{@link #load} / {@link #isOccupied} 注释两次
+     * 记档）——此时只读 fd **有意不关**（占用继承低频路径，fd 泄漏有界，进程退出由
+     * 内核回收）；他进程持锁或无人持锁时照常关闭。</p>
+     */
+    public static String permissionModeOf(Path jsonl) {
+        if (!Files.isRegularFile(jsonl)) {
+            return null;
+        }
+        Path key = jsonl.toAbsolutePath().normalize();
+        boolean heldHere;
+        synchronized (LOCK_GATE) {
+            heldHere = HELD_LOCKS.containsKey(key);
+        }
+        java.nio.channels.FileChannel channel;
+        try {
+            channel = java.nio.channels.FileChannel.open(jsonl, StandardOpenOption.READ);
+        } catch (IOException e) {
+            return null;
+        }
+        String latest = null;
+        try {
+            var reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    java.nio.channels.Channels.newInputStream(channel), StandardCharsets.UTF_8));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                try {
+                    JsonNode node = JSON.readTree(line);
+                    if (SessionEvent.PERMISSION_MODE.equals(node.path("type").asText())) {
+                        latest = node.path("text").asText();
+                    }
+                } catch (IOException ignored) {
+                    // 坏行跳过
+                }
+            }
+        } catch (IOException ignored) {
+            // 读取失败按无记录处理
+        } finally {
+            if (!heldHere) {
+                try {
+                    channel.close();
+                } catch (IOException ignored) {
+                    // 关闭失败无碍（无锁可释放）
+                }
+            }
+            // heldHere：fd 有意不关（见方法 javadoc）——关了会释放属主的独占锁
+        }
+        return latest;
     }
 
     /**

@@ -7,7 +7,7 @@
 - [x] **Web 状态面显示 token 占用**：状态面加"上下文占用"一行，治理可见化。→ 进 M10（2026-09-14），升格为真实 usage 展示，见 `.scratch/m10-web-hardening/`
 - [x] **治理阈值 yml 化**：spill/修剪/压缩/窗口四阈值目前是 `ContextGovernance` 常量，改为 WebPlugin/装配 config 可配。来源：M9 spec Out of Scope 有意延后。→ 0.8.0 已交付（M13，ADR-0013：web/cli 插件 config governance 段六字段，2026-09-17 对账销账）
 - [x] **provider usage 捕获**：`stream_options: include_usage` 拿真实 token 数替代本地估算。→ 进 M10（2026-09-14），治理判定切真实值+估算兜底（ADR-0009），见 `.scratch/m10-web-hardening/`
-- [ ] **/compact 手动压缩命令**：CLI 与 Web 各加一个手动触发入口。来源：DSH 参照（研究材料 45 行）。→ 已入册 M19 斜杠命令与运行中治理（ADR-0016）
+- [x] **/compact 手动压缩命令**：CLI 与 Web 各加一个手动触发入口。来源：DSH 参照（研究材料 45 行）。→ M19-03 已落地：/compact 双面命令 + 压缩点事件化（ADR-0020 决策 6，2026-09-19）
 
 ## Web 呈现域（M10 grill 衍生）
 
@@ -33,8 +33,8 @@
 
 ## 交互路由（M12-02 验收衍生）
 
-- [ ] **审批/提问的呈现位路由（谁发起谁作答）**：双呈现位并存时按注册序固定路由（web 优先），CLI 发起的工具调用审批会跳到 Web 卡片、**终端零提示**——M12-02 验收第 6 步用户实际被绊住（误以为卡死）。改进方向：回答者按"发起呈现位"亲和路由（工具循环所属呈现位的回答者优先），或至少给终端补一行"审批已发往 Web，等待作答"。来源：M12-02 验收（2026-09-15）。→ 已入册 M19 斜杠命令与运行中治理（ADR-0016）
-- [ ] **Web 面斜杠命令缺口**：`/permission` 等 REPL 内置命令只在 CLI 呈现位拦截（ADR-0012 归 CLI），Web 聊天输入框不识别、透传给模型当普通消息——M12-03 验收第 8 步用户在浏览器输入即踩坑（模型自己排查出了根因）。改进方向：Web 输入框识别斜杠命令给提示（"该命令在终端 REPL 使用"），或给 Web 面做等效切档入口。来源：M12-03 验收（2026-09-15）。→ 已入册 M19（ADR-0016）
+- [x] **审批/提问的呈现位路由（谁发起谁作答）**：双呈现位并存时按注册序固定路由（web 优先），CLI 发起的工具调用审批会跳到 Web 卡片、**终端零提示**——M12-02 验收第 6 步用户实际被绊住（误以为卡死）。来源：M12-02 验收（2026-09-15）。→ M19-05 已落地：ToolExecution 携 presenterId，ask 请求发起方回答者优先、缺席/放弃才轮注册序（ADR-0020 决策 7，2026-09-19）
+- [x] **Web 面斜杠命令缺口**：`/permission` 等 REPL 内置命令只在 CLI 呈现位拦截（ADR-0012 归 CLI），Web 聊天输入框不识别、透传给模型当普通消息——M12-03 验收第 8 步用户在浏览器输入即踩坑（模型自己排查出了根因）。来源：M12-03 验收（2026-09-15）。→ M19-02 已落地：Web 输入框斜杠前置命令解释，与 CLI 共享命令注册表入口（ADR-0020 决策 3/5，2026-09-19）
 
 ## 工具并发域（M17 grill 衍生，2026-09-18，ADR-0018）
 
@@ -47,7 +47,13 @@
 - [ ] **项目级 hooks 配置**：仓库内 `.duo/hooks.json` 与用户级合并（团队共享钩子场景）——需先立"项目根"概念（git 定根或 cwd 锚定），M18 只做了用户级。来源：M18 grill Q1（2026-09-18）。
 - [ ] **钩子事件扩面（UserPromptSubmit / Stop 等）**：非工具事件需 agent 循环新增挂点，Stop 的 exit 2（禁止停止）语义重；M18 一期只做工具两事件。来源：M18 grill Q3（2026-09-18）。
 - [ ] **钩子 updatedInput 入参改写**：allow + 改写工具入参（格式化、脱敏类用法）——需 ToolExecution.args 可变与"改写后参数进日志"的语义钉子（M17 日志同构承诺不可轻动）。来源：M18 grill Q3（2026-09-18）。
-- [ ] **钩子载荷上下文透传（session_id / transcript_path / tool_use_id）**：Claude Code 的 stdin 载荷含此三字段（会话关联与日志检视用），duo 管线载荷（ToolExecution）无会话与调用标识——透传需执行入口携带上下文（签名或载荷对象扩展），与 M18"tools 域零改动"冲突故一期缺席。载荷一期实发：hook_event_name / tool_name / tool_input / cwd（PostToolUse 增 tool_response）+ DUO_HOME。来源：M18-03/04 实现裁定（2026-09-18）。
+- [ ] **钩子载荷上下文透传（session_id / transcript_path / tool_use_id）**：Claude Code 的 stdin 载荷含此三字段（会话关联与日志检视用），duo 管线载荷（ToolExecution）无会话与调用标识——透传需执行入口携带上下文。**presenter_id 已随 M19-05 消化**（ToolExecution.presenterId 进载荷，ADR-0020 决策 7）；session_id / transcript_path / tool_use_id 仍缺席（ToolExecution 无会话引用，补齐需载荷对象再扩展）。载荷实发：hook_event_name / tool_name / tool_input / cwd（PostToolUse 增 tool_response）+ presenter_id + DUO_HOME。来源：M18-03/04 实现裁定（2026-09-18），M19-05 更新（2026-09-19）。
+
+## 运行中治理（M19 衍生，2026-09-19，ADR-0020）
+
+- [ ] **Web 斜杠命令执行异步化**：/compact 等命令同步执行于 HTTP 线程，LLM 摘要无超时兜底可长挂（CLI 同步可接受）；方向 = 202 受理 + 结果经既有 command/done 事件流呈现。来源：M19 双轴审查 P2（2026-09-19）。
+- [ ] **CLI 运行中 steer 入口**：注入收件箱做在 agent 域，Web 已接（工单 04）；CLI 未接——终端行缓冲天然排队（执行中输入下一轮 readLine 即得，体验已够），接入需主循环线程拆分、改动面大。来源：ADR-0020 决策 9 裁定记档（2026-09-19）。
+- [ ] **/model 运行时切换**：LLM 配置启动期装配，运行时换 model 牵连适配器生命周期与治理计量连续性；命令注册表（M19-01）落地后加回是增量。来源：ADR-0020 拒绝项（/model 运行时切换本期做）裁定记档（2026-09-19）。
 
 ## 1.0 后菜单（DSH 全景复审补充，2026-09-17，ADR-0016 拒绝项对应池）
 

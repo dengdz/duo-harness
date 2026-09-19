@@ -53,10 +53,13 @@ public final class WorkspacePolicy {
     private static final Set<String> WRITE_TOOLS = Set.of("write", "edit");
 
     private final Path root;
+    /** 装配档（fs 插件 config 的 yml 缺省）：会话无切档记录时恢复逻辑的重置目标。 */
+    private final Mode initialMode;
     private volatile Mode mode;
 
     public WorkspacePolicy(Path root, Mode mode) {
         this.root = realPathOrNormalize(root.toAbsolutePath().normalize());
+        this.initialMode = mode;
         this.mode = mode;
     }
 
@@ -64,7 +67,16 @@ public final class WorkspacePolicy {
         return mode;
     }
 
-    /** 运行时切档（REPL /permission 命令）：重启后回 yml 缺省——不持久化。 */
+    /** 装配档（yml 缺省）：权限档持久化恢复时，无切档记录的会话重置回此档（ADR-0020 决策 10）。 */
+    public Mode initialMode() {
+        return initialMode;
+    }
+
+    /**
+     * 运行时切档（REPL /permission 命令）。持久化由调用方落 {@code permission/mode}
+     * 会话事件（M19，ADR-0020 决策 10）——本类保持中立不感知会话；重启后由呈现位
+     * 按会话投影恢复（档位跟对话走），不在此处做任何文件持久化。
+     */
     public void setMode(Mode mode) {
         this.mode = java.util.Objects.requireNonNull(mode, "mode");
     }

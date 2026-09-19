@@ -18,4 +18,13 @@ public interface Answerer {
      * @return 回答；{@code null} = 放弃作答权，交给下一个回答者
      */
     InteractionAnswer answer(InteractionRequest request);
+
+    /**
+     * 本回答者代表的呈现位标记（M19 亲和路由，ADR-0020 决策 7）：请求携发起方
+     * 标记时路由先找同标记的回答者（"谁发起谁作答"），缺席或放弃才轮注册序。
+     * 缺省 null = 不参与亲和、只按注册序兜底。
+     */
+    default String presenterId() {
+        return null;
+    }
 }

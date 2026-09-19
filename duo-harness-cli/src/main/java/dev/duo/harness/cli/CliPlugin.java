@@ -4,12 +4,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandContext;
+import dev.duo.harness.agent.commands.CommandDefinition;
+import dev.duo.harness.agent.commands.CommandEnv;
+import dev.duo.harness.agent.commands.CommandOutcome;
+import dev.duo.harness.agent.commands.CommandScope;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.SessionTitles;
 import dev.duo.harness.agent.plan.PlanMode;
 import dev.duo.harness.agent.prompt.PromptFragment;
 import dev.duo.harness.agent.prompt.PromptRegistry;
-import dev.duo.harness.agent.skills.Skill;
 import dev.duo.harness.agent.skills.SkillRegistry;
 import dev.duo.harness.agent.presenter.PresenterAssembly;
 import dev.duo.harness.agent.todo.TodoWriteTool;
@@ -30,15 +35,16 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * CLI 呈现位插件（ADR-0011，与 WebPlugin 对称）：终端 REPL——LLM 自主调用工具
  * （Function Calling 经工具域三段管线与治理链）、HITL 交互（写操作 y/n 审批、
- * ask_user 提问）、技能直调（/技能名）、计划模式（/plan）。装配经共享装配器
- * （{@link PresenterAssembly}），呈现件是终端循环与 {@link ConsoleAnswerer}。
+ * ask_user 提问）、斜杠命令（M19 起经命令注册表共享入口：/new /permission /plan
+ * /exit 四命令注册为 CLI 适用面）、技能直调（/技能名，注册表入口第二级）。
+ * 装配经共享装配器（{@link PresenterAssembly}），呈现件是终端循环与
+ * {@link ConsoleAnswerer}。
  *
  * <p><b>idle 语义</b>：`/exit` 或输入 EOF 只结束终端呈现——REPL 循环退出、会话
  * 独占锁释放、回答者摘除；**插件保持挂载、插件树与兄弟呈现位（如 Web）不受影响**。
@@ -97,7 +103,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
-                InteractionService.SERVICE_NAME, SkillRegistry.SERVICE_NAME);
+                InteractionService.SERVICE_NAME, SkillRegistry.SERVICE_NAME,
+                CommandsRegistry.SERVICE_NAME);
     }
 
     /**
@@ -120,6 +127,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         PromptRegistry prompts = ctx.as(CliPromptsView.class).prompts();
         InteractionService answers = ctx.as(CliAnswersView.class).answers();
         SkillRegistry skills = ctx.as(CliSkillsView.class).skills();
+        CommandsRegistry commands = ctx.as(CliCommandsView.class).commands();
         // workspace 是可选依赖（ADR-0019）：fs 插件缺席的纯对话装配照常启动——
         // hasService 判存接线，缺席即 null，/permission 走降级提示
         WorkspacePolicy workspacePolicy = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
@@ -139,6 +147,19 @@ public final class CliPlugin implements Plugin<JsonNode> {
             out.println("[提示] " + e.getMessage());
             out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
             session = Session.create(sessionsDir);
+            // 继承被占会话的权限档（BUG-20260919-03 裁定，ADR-0020 决策 10 的双开延续）：
+            // 占用改开不是用户开新话题，治理态不因呈现位轮转而丢——继承并落事件（重启链延续）
+            String inherited = Session.permissionModeOf(
+                    sessionsDir.resolve(e.sessionId() + ".jsonl"));
+            if (inherited != null && workspacePolicy != null) {
+                try {
+                    workspacePolicy.setMode(WorkspacePolicy.Mode.parse(inherited));
+                    session.append(dev.duo.harness.session.SessionEvent.permissionMode(inherited));
+                    out.println("[提示] 已继承被占会话的权限档: " + inherited);
+                } catch (IllegalArgumentException ignored) {
+                    // 被占会话的档位记录非法——保持缺省
+                }
+            }
         }
 
         // 执行链与 HITL 供给（呈现位共享装配器）：治理（governance 段可省——缺省常量）、
@@ -155,11 +176,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
-                maxIterations, maxParallelToolCalls, governance);
+                maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI);
         answererRegistration = answers.register(ctx,
                 new AuditingAnswerer(holder::current, new ConsoleAnswerer(in, out)));
         PlanHolder plan = new PlanHolder();
-        PresenterAssembly.registerInteractionTools(ctx, tools, answers, holder::current, () -> {
+        PresenterAssembly.registerInteractionTools(ctx, tools, answers, ChatAgent.PRESENTER_CLI,
+                holder::current, () -> {
             plan.active = false;
             disposeGuidance(plan);
         });
@@ -169,6 +191,17 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, llm, governanceTuning, holder::current);
         attachSubagentTrace(session);
+
+        // agent 引用经持取器（/new 换绑即换 agent 实例）与单飞标志（busySafe 分级的探针）
+        AgentHolder agentHolder = new AgentHolder(agent);
+        AtomicBoolean agentBusy = new AtomicBoolean(false);
+        registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
+                maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
+                workspacePolicy);
+        // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
+        // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
+        PresenterAssembly.restorePermissionMode(
+                ctx, session, false);
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
         plan.active = PlanMode.isActive(session);
@@ -180,8 +213,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         out.flush();
 
         replThread = Thread.ofVirtual().name("cli-repl").start(() ->
-                replLoop(ctx, llm, tools, prompts, governance, maxIterations, maxParallelToolCalls,
-                        skills, holder, plan, agent, workspacePolicy));
+                replLoop(commands, skills, holder, plan, agentHolder, agentBusy));
         return this::stop;
     }
 
@@ -258,77 +290,141 @@ public final class CliPlugin implements Plugin<JsonNode> {
         });
     }
 
-    /** REPL 主循环（交互沿 AgentReplMain 既有形态）：读行 → 命令分发 → agent 执行。 */
-    private void replLoop(Context ctx, LlmAdapter llm, ToolsService tools, PromptRegistry prompts,
-                          ContextGovernance governance, int maxIterations, int maxParallelToolCalls,
-                          SkillRegistry skills, SessionHolder holder, PlanHolder plan, ChatAgent agent,
-                          WorkspacePolicy workspacePolicy) {
-        Path sessionsDir = sessionsDir();
+    /**
+     * 斜杠命令注册（M19，ADR-0020 决策 1）：CLI 命令从 REPL 硬编码迁移为注册表调用——
+     * /exit、/new、/plan 为 CLI 适用面（handler 闭包本呈现位的会话与计划态）；/permission
+     * 双面 ANY + busySafe（volatile 治理态读写，浏览器与终端都可切档）。另有 /compact、
+     * /title 双面命令经共享装配器注册（见下方 registerCompactCommand/registerTitleCommand）。
+     * 命令随注册方作用域自动摘除。
+     */
+    private void registerCommands(Context ctx, CommandsRegistry commands, LlmAdapter llm,
+                                  ToolsService tools, PromptRegistry prompts,
+                                  ContextGovernance governance, int maxIterations,
+                                  int maxParallelToolCalls, Path sessionsDir,
+                                  SessionHolder holder, AgentHolder agentHolder,
+                                  PlanHolder plan, WorkspacePolicy workspacePolicy) {
+        commands.register(ctx, new CommandDefinition("exit", "结束终端对话（会话锁释放，插件保持挂载）",
+                CommandScope.CLI, false, context -> {
+                context.requestEnd();
+                return "";
+            }));
+        commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
+                CommandScope.CLI, false, context -> {
+                Session previous = holder.session;
+                holder.session = Session.create(sessionsDir);
+                agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
+                        maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI);
+                SessionTitles.attach(holder.session, llm);
+                attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
+                previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
+                // 用户显式开新话题：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
+                PresenterAssembly.restorePermissionMode(
+                        ctx, holder.session, true);
+                plan.active = false;
+                disposeGuidance(plan);
+                return "新会话 " + holder.session.id() + "。";
+            }));
+        // /permission 双面可用（ANY）：handler 只依赖 fs 插件的全局 workspace 服务
+        // （无呈现位归属，切档即全局生效）——M19 用户故事 1（浏览器直接切档）；
+        // 其余三命令闭包本呈现位状态（holder/plan/agent），维持 CLI 面
+        commands.register(ctx, new CommandDefinition("permission",
+                "查看或切换权限预设：/permission [read-only|workspace-write|danger-full-access]",
+                CommandScope.ANY, true, context -> {
+                if (workspacePolicy == null) {
+                    return "workspace 服务未挂载（未装配 fs 工具插件），/permission 不可用。";
+                }
+                if (context.args().isEmpty()) {
+                    return "当前预设: " + workspacePolicy.mode().configName()
+                            + "（可选: read-only / workspace-write / danger-full-access）";
+                }
+                try {
+                    workspacePolicy.setMode(WorkspacePolicy.Mode.parse(context.args()));
+                    // 档位跟对话走（M19，ADR-0020 决策 10）：切档落会话事件——重开恢复
+                    context.session().append(
+                            dev.duo.harness.session.SessionEvent.permissionMode(
+                                    workspacePolicy.mode().configName()));
+                    return "已切换: " + workspacePolicy.mode().configName();
+                } catch (IllegalArgumentException e) {
+                    return e.getMessage();
+                }
+            }));
+        // /compact 与 /title（M19）：双面命令经共享装配器注册（查重先到先得——Web 侧
+        // 同款），会话取发起方当前值
+        PresenterAssembly.registerCompactCommand(
+                ctx, commands, governance);
+        PresenterAssembly.registerTitleCommand(ctx, commands);
+        commands.register(ctx, new CommandDefinition("plan",
+                "计划模式：/plan 进入（可携任务描述直接推进）、/plan off 退出",
+                CommandScope.CLI, false, context -> {
+                String rest = context.args();
+                if (rest.equals("off")) {
+                    if (plan.active) {
+                        holder.current().append(PlanMode.exitedEvent());
+                        disposeGuidance(plan);
+                        plan.active = false;
+                        return "已退出计划模式。";
+                    }
+                    return "当前不在计划模式。";
+                }
+                String notice;
+                if (plan.active) {
+                    notice = "已在计划模式中。";
+                } else {
+                    holder.current().append(PlanMode.enteredEvent());
+                    plan.active = true;
+                    plan.guidance = prompts.register(ctx, new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
+                    notice = "已进入计划模式（先探索与设计，完成后调 exit_plan_mode 呈交计划；/plan off 退出）。";
+                }
+                if (!rest.isEmpty()) {
+                    context.forward(rest);
+                }
+                return notice;
+            }));
+    }
+
+    /**
+     * REPL 主循环（M19 起输入解释走命令注册表共享入口）：读行 → dispatch（命令 →
+     * 技能直调 → 未知命令报错）→ 命令即回显结果（/exit 经结束回调跳出），透传文本
+     * 交 agent 执行（单飞标志随执行期置位——busySafe 分级的探针）。
+     */
+    private void replLoop(CommandsRegistry commands, SkillRegistry skills, SessionHolder holder,
+                          PlanHolder plan, AgentHolder agentHolder, AtomicBoolean agentBusy) {
+        AtomicBoolean endRequested = new AtomicBoolean(false);
         try {
             while (!stopped.get()) {
                 out.print("你> ");
                 out.flush();
                 String line = in.readLine();
-                if (line == null || line.strip().equals("/exit")) {
+                if (line == null) {
                     break;
                 }
-                if (line.isBlank()) {
+                String input = line.strip();
+                if (input.isEmpty()) {
                     continue;
                 }
-                if (line.strip().equals("/new")) {
-                    Session previous = holder.session;
-                    holder.session = Session.create(sessionsDir);
-                    agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
-                            maxIterations, maxParallelToolCalls, governance);
-                    SessionTitles.attach(holder.session, llm);
-                    attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
-                    previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
-                    plan.active = false;
-                    disposeGuidance(plan);
-                    out.println("新会话 " + holder.session.id() + "。");
-                    out.flush();
-                    continue;
+                CommandOutcome outcome = commands.dispatch(input,
+                        new CommandEnv(CommandScope.CLI, holder::current, out::println,
+                                () -> endRequested.set(true), agentBusy::get),
+                        skills);
+                if (endRequested.get()) {
+                    break; // /exit：请求结束回调已置位（done 审计已落盘）
                 }
                 String userText;
-                if (line.strip().equals("/permission") || line.strip().startsWith("/permission ")) {
-                    String rest = line.strip().length() > 11 ? line.strip().substring(11).strip() : "";
-                    if (workspacePolicy == null) {
-                        out.println("workspace 服务未挂载（未装配 fs 工具插件），/permission 不可用。");
+                if (outcome.isCommand()) {
+                    if (!outcome.text().isEmpty()) {
+                        out.println(outcome.text());
                         out.flush();
+                    }
+                    if (outcome.forward() == null) {
                         continue;
                     }
-                    if (rest.isEmpty()) {
-                        out.println("当前预设: " + workspacePolicy.mode().configName()
-                                + "（可选: read-only / workspace-write / danger-full-access）");
-                    } else {
-                        try {
-                            workspacePolicy.setMode(WorkspacePolicy.Mode.parse(rest));
-                            out.println("已切换: " + workspacePolicy.mode().configName());
-                        } catch (IllegalArgumentException e) {
-                            out.println(e.getMessage());
-                        }
-                    }
-                    out.flush();
-                    continue;
-                }
-            if (line.strip().equals("/plan") || line.strip().startsWith("/plan ")) {
-                    userText = handlePlanCommand(ctx, prompts, holder, plan,
-                            line.strip().length() > 5 ? line.strip().substring(5).strip() : "");
-                    if (userText == null) {
-                        continue;
-                    }
+                    userText = outcome.forward(); // /plan 携任务描述：回显结果后再推进
                 } else {
-                    userText = resolveSkillInvocation(line.strip(), skills);
-                    if (userText == null) {
-                        List<String> available = skills.all().stream().map(Skill::name).toList();
-                        out.println("未知命令: " + line.strip().split("\\s+", 2)[0]
-                                + (available.isEmpty() ? "" : "（可用技能: " + String.join(", ", available) + "）"));
-                        out.flush();
-                        continue;
-                    }
+                    userText = outcome.text();
                 }
+                agentBusy.set(true);
                 try {
-                    var reply = agent.send(userText, new AgentListener() {
+                    var reply = agentHolder.agent.send(userText, new AgentListener() {
                         @Override
                         public void onChunk(String text) {
                             out.print(text);
@@ -366,6 +462,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     }
                 } catch (PluginException e) {
                     out.println("  [错误] " + e.getMessage());
+                } finally {
+                    agentBusy.set(false);
                 }
                 out.println();
                 out.flush();
@@ -374,34 +472,6 @@ public final class CliPlugin implements Plugin<JsonNode> {
             // stop() 关闭输入流打断阻塞读——按 /exit 同语义收尾（idle）
         }
         goIdle(holder, plan);
-    }
-
-    /** /plan 与 /plan off：进入/退出计划模式；携带任务描述时按普通输入推进。返回 null = 已处理完毕。 */
-    private String handlePlanCommand(Context ctx, PromptRegistry prompts,
-                                     SessionHolder holder, PlanHolder plan, String rest) {
-        if (rest.equals("off")) {
-            if (plan.active) {
-                holder.current().append(PlanMode.exitedEvent());
-                disposeGuidance(plan);
-                plan.active = false;
-                out.println("已退出计划模式。");
-            } else {
-                out.println("当前不在计划模式。");
-            }
-            out.flush();
-            return null;
-        }
-        if (plan.active) {
-            out.println("已在计划模式中。");
-            out.flush();
-        } else {
-            holder.current().append(PlanMode.enteredEvent());
-            plan.active = true;
-            plan.guidance = prompts.register(ctx, new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
-            out.println("已进入计划模式（先探索与设计，完成后调 exit_plan_mode 呈交计划；/plan off 退出）。");
-            out.flush();
-        }
-        return rest.isEmpty() ? null : rest;
     }
 
     /** 摘除计划指导片段（Disposable 声明受检异常；失败不阻断流程）。 */
@@ -482,6 +552,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
     }
 
+    /** 可变引用：/new 换绑即换 agent 实例（旧 agent 随旧会话弃用）。 */
+    private static final class AgentHolder {
+        ChatAgent agent;
+
+        AgentHolder(ChatAgent agent) {
+            this.agent = agent;
+        }
+    }
+
     /** 计划模式装配态：激活标志 + 指导片段的注销器（批准/退出时摘除）。 */
     private static final class PlanHolder {
         boolean active;
@@ -489,22 +568,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
     }
 
     /**
-     * 技能直调识别（用户直调路，M7 三路触发之三）：`/技能名 [其余输入]` →
-     * 技能指令全文前缀注入（"指令\n\n用户输入：其余"）；未匹配技能名返回 null
-     * （内置命令 /exit /new /plan 由调用方先行处理，优先于技能名）。
+     * 技能直调识别已上移命令注册表共享入口（M19，ADR-0020 决策 3）：
+     * {@link CommandsRegistry#dispatch} 按"命令 → 技能直调 → 未知命令报错"解释输入，
+     * 两呈现位同款；本类不再自带技能解析。
      */
-    static String resolveSkillInvocation(String line, SkillRegistry skills) {
-        if (!line.startsWith("/")) {
-            return line;
-        }
-        String[] parts = line.split("\\s+", 2);
-        Skill skill = skills.find(parts[0].substring(1));
-        if (skill == null) {
-            return null;
-        }
-        String rest = parts.length > 1 ? parts[1].strip() : "";
-        return rest.isBlank() ? skill.content() : skill.content() + "\n\n用户输入：" + rest;
-    }
 
     /** tools 服务的视图接口（方法名即服务名）。 */
     interface CliToolsView {
@@ -528,6 +595,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliSkillsView {
 
         SkillRegistry skills();
+    }
+
+    /** 命令注册表的视图接口（方法名即服务名 "commands"）。 */
+    interface CliCommandsView {
+
+        CommandsRegistry commands();
     }
 
     /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */

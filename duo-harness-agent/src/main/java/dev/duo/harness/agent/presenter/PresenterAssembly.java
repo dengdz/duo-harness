@@ -1,6 +1,9 @@
 package dev.duo.harness.agent.presenter;
 
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandDefinition;
+import dev.duo.harness.agent.commands.CommandScope;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.plan.ExitPlanModeTool;
 import dev.duo.harness.agent.prompt.PromptRegistry;
@@ -17,6 +20,7 @@ import dev.duo.harness.tools.AskUserTool;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.PipelineTimeout;
 import dev.duo.harness.tools.ToolDefinition;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 import dev.duo.harness.tools.ToolsService;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -32,6 +36,9 @@ import java.util.function.Supplier;
  * 传新会话即可（ToolCallingAgent 持有 final 会话引用，不重建即分脑）。</p>
  */
 public final class PresenterAssembly {
+
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(PresenterAssembly.class);
 
     private PresenterAssembly() {
     }
@@ -175,14 +182,16 @@ public final class PresenterAssembly {
     }
 
     /**
-     * 对话执行者（并发度显式版，ADR-0018）：呈现位经 {@link #parseMaxParallelToolCalls}
-     * 传入——单轮并发安全工具的并行池在飞上限。
+     * 对话执行者（并发度显式 + 呈现位标记版，M19 亲和路由 ADR-0020 决策 7）：
+     * 标记随 agent 的工具执行进管线——审批/提问的 ask 请求据此路由给发起呈现位的
+     * 回答者（"谁发起谁作答"）。
      */
     public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
                                       PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance) {
+                                      int maxParallelToolCalls, ContextGovernance governance,
+                                      String presenterId) {
         return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance);
+                maxParallelToolCalls, governance, presenterId);
     }
 
     /**
@@ -241,17 +250,115 @@ public final class PresenterAssembly {
 
     /**
      * HITL 交互工具注册（查重先到先得）：ask_user 与计划呈交随呈现位装配注册——
-     * 任意单呈现位部署下 HITL 完整；多呈现位共存（如 cli + web 双开）时先到方胜出，
-     * 不触发内核重复注册拒绝。计划退出的状态清理回调由呈现位给出（Web 无计划指导
-     * 片段可清，传空 Runnable）。
+     * 任意单呈现位部署下 HITL 完整；多呈现位共存（如 cli + web 双开）时工具实例
+     * 先到方胜出、不触发内核重复注册拒绝，**会话供给各记各账**（M19 亲和路由，
+     * ADR-0020 决策 7）：后来呈现位把自己的 {@code presenterId → 会话供给} 补记进
+     * 既有 exit_plan_mode 实例——批准/打回的 plan/mode 事件写进发起方会话，双开下
+     * 计划状态不串位。计划退出的状态清理回调由呈现位给出（Web 无计划指导片段可清，
+     * 传空 Runnable）。
      */
     public static void registerInteractionTools(Context ctx, ToolsService tools,
                                                 InteractionService answers,
+                                                String presenterId,
                                                 Supplier<Session> currentSession,
                                                 Runnable onPlanExited) {
+        tools.list().stream()
+                .filter(definition -> "exit_plan_mode".equals(definition.name()))
+                .findFirst()
+                .ifPresentOrElse(
+                        existing -> {
+                            if (existing instanceof ExitPlanModeTool tool) {
+                                tool.bindSession(presenterId, currentSession, onPlanExited);
+                            } else {
+                                LOG.warn("exit_plan_mode 已被非本库实现占用（{}），呈现位 [{}] 的"
+                                        + "会话供给与批准回调未记账——计划状态可能串位",
+                                        existing.getClass().getName(), presenterId);
+                            }
+                        },
+                        () -> tools.register(ctx, new ExitPlanModeTool(answers, presenterId,
+                                currentSession, onPlanExited)));
         registerIfAbsent(tools, ctx, "ask_user", () -> new AskUserTool(answers));
-        registerIfAbsent(tools, ctx, "exit_plan_mode",
-                () -> new ExitPlanModeTool(answers, currentSession, onPlanExited));
+    }
+
+    /**
+     * 权限档恢复（M19，ADR-0020 决策 10）：呈现位打开/换绑会话后调用——读会话
+     * {@code permission/mode} 投影写回全局 workspace 档位（latest-wins，重开恢复最后
+     * 切定档）。workspace 服务缺席（纯对话装配）零感跳过。双开语义：档位是全局治理态，
+     * 后恢复者生效（与单例 volatile 模型一致）。恢复事件不落盘（读侧恢复非治理动作）。
+     *
+     * <p>BUG-20260919-03（验收实测）：双开重启时 Web 先恢复切定档、CLI 占用被迫改开
+     * 新会话——若"无切档记录即重置缺省"对启动路径也生效，CLI 会把刚恢复的档位覆盖
+     * 回缺省。故重置语义只对**显式换绑**（/new、页面新话题/切换——用户主动开新话题，
+     * "切档不跨会话惊吓"）生效；**启动续接**（含占用被迫改开）只恢复、不重置——用户
+     * 没有开新话题的动作意图，治理态延续。</p>
+     *
+     * @param resetToInitialIfAbsent true = 无切档记录时重置回装配档（显式换绑场景）；
+     *                               false = 无记录保持现状（启动续接场景）
+     */
+    public static void restorePermissionMode(Context ctx, Session session,
+                                             boolean resetToInitialIfAbsent) {
+        WorkspacePolicy workspace;
+        try {
+            workspace = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
+                    ? ctx.as(WorkspaceView.class).workspace() : null;
+        } catch (Exception e) {
+            LOG.warn("权限档恢复跳过：workspace 服务解析失败（视为缺席）", e);
+            return; // 服务解析失败等同缺席——恢复是尽力而为的还账，不阻断呈现位启动
+        }
+        if (workspace == null) {
+            return;
+        }
+        String saved = session.permissionMode();
+        if (saved != null) {
+            WorkspacePolicy.Mode target;
+            try {
+                target = WorkspacePolicy.Mode.parse(saved);
+            } catch (IllegalArgumentException e) {
+                // 会话事件文本非法（手改/向前兼容）：与占用继承路径同口径——回退缺省不留坏档
+                LOG.warn("权限档恢复跳过：会话记录档位非法 [{}]，保持当前档", saved);
+                return;
+            }
+            if (target != workspace.mode()) {
+                workspace.setMode(target);
+            }
+        } else if (resetToInitialIfAbsent && workspace.mode() != workspace.initialMode()) {
+            workspace.setMode(workspace.initialMode());
+        }
+    }
+
+    /**
+     * /title 注册（M19，ADR-0020 决策 11，查重先到先得）：改名命令——双面 ANY +
+     * busySafe=true（纯事件写）；再 append {@code session/title} 即改名（latest-wins
+     * 投影现成，侧栏即时生效）。标题随对话自动演进不做（一次生成 + 可改名已覆盖）。
+     */
+    public static void registerTitleCommand(Context ctx, CommandsRegistry commands) {
+        if (commands.find("title") == null) {
+            commands.register(ctx, new CommandDefinition("title",
+                    "改会话标题：/title 新标题（侧栏与标签页即时生效）",
+                    CommandScope.ANY, true, context -> {
+                    if (context.args().isEmpty()) {
+                        return "用法：/title 新标题";
+                    }
+                    context.session().append(dev.duo.harness.session.SessionEvent.title(context.args()));
+                    return "已改名: " + context.args();
+                }));
+        }
+    }
+
+    /**
+     * /compact 注册（M19，ADR-0020 决策 6，查重先到先得）：手动压缩命令——双面 ANY
+     * （动上下文必须 idle，busySafe=false）；handler 的会话经 {@code CommandContext#session()}
+     * 取**发起方**当前会话（双开下各压各的，零串位），治理实例先到方胜出（等价配置，
+     * 压缩效果一致）。命令未注册时注册，已注册（另一呈现位先到）跳过。
+     */
+    public static void registerCompactCommand(Context ctx, CommandsRegistry commands,
+                                              ContextGovernance governance) {
+        if (commands.find("compact") == null) {
+            commands.register(ctx, new CommandDefinition("compact",
+                    "手动压缩上下文：远端历史折叠为摘要（会话日志留压缩点，后续请求按其拼接）",
+                    CommandScope.ANY, false,
+                    context -> governance.compactNow(context.session())));
+        }
     }
 
     /**
@@ -289,5 +396,10 @@ public final class PresenterAssembly {
             return; // 先到方胜出（多呈现位共存）
         }
         ctx.provide(SubagentHost.SERVICE_NAME, new SubagentHost(llm, tuning, currentSession));
+    }
+    /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */
+    interface WorkspaceView {
+
+        WorkspacePolicy workspace();
     }
 }

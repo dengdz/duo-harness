@@ -12,6 +12,11 @@ plugins:
   - id: answers
     name: dev.duo.harness.tools.InteractionPlugin
 
+  # 命令注册表（M19）：web 插件硬依赖 "commands"——斜杠入口统一走注册表
+  - id: commands
+    name: dev.duo.harness.agent.commands.CommandsPlugin
+    config: {}
+
   - id: web
     name: dev.duo.harness.web.WebPlugin
     config:

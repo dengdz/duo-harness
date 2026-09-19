@@ -29,6 +29,12 @@ plugins:
     config:
       disabled: []
 
+  # 命令注册表（M19，ADR-0020）：发布 "commands" 服务——斜杠命令统一入口
+  # （命令 → 技能直调 → 未知报错）；命令本体由呈现位插件注册，本行零配置
+  - id: commands
+    name: dev.duo.harness.agent.commands.CommandsPlugin
+    config: {}
+
   # 交互服务：回答者注册表（console / web answerer 随呈现位插件注册）
   - id: answers
     name: dev.duo.harness.tools.InteractionPlugin

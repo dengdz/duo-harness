@@ -46,17 +46,42 @@ class WorkspaceGatePolicyTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：WorkspaceGatePolicyTest —— 档位闸门映射："
-                + "ALLOW 短路 / ASK 委托全组合（6 用例） ===");
+                + "ALLOW 短路 / ASK 委托全组合、三参透传（7 用例） ===");
     }
 
-    @Test
-    void dangerAllowsEverythingWithoutConsultingInner() {
-        WorkspaceGatePolicy gate = gate(WorkspacePolicy.Mode.DANGER_FULL_ACCESS);
-        assertEquals(ApprovalDecision.allow("workspace"),
-                gate.decide("write", JsonNodeFactory.instance.objectNode().put("path", "a.txt")));
-        assertEquals(ApprovalDecision.allow("workspace"),
-                gate.decide("bash", JsonNodeFactory.instance.objectNode()));
-        assertTrue(innerCalls.isEmpty(), "danger 档短路——内层策略不应被咨询");
+        @Test
+    void threeArgDecidePassesPresenterIdToInnerOnAskOnly() {
+        // OCR #10 回归：三参入口是亲和路由的载体——ASK 委托时 presenterId 原样透传，
+        // ALLOW 短路与标记无关（不咨询内层）。内层用三参覆写观测收到的标记。
+        WorkspaceGatePolicy policy = gate(WorkspacePolicy.Mode.WORKSPACE_WRITE);
+        List<String> seen = new ArrayList<>();
+        var recordingInner = new ApprovalPolicyService() {
+            @Override
+            public ApprovalDecision decide(String toolName, com.fasterxml.jackson.databind.JsonNode args) {
+                return ApprovalDecision.allow("inner");
+            }
+
+            @Override
+            public ApprovalDecision decide(String toolName,
+                                           com.fasterxml.jackson.databind.JsonNode args,
+                                           String presenterId) {
+                seen.add(toolName + ":" + presenterId);
+                return ApprovalDecision.allow("inner");
+            }
+        };
+        policy = new WorkspaceGatePolicy(recordingInner, workspace);
+
+        // ASK 路径（workspace-write 档越界写）：presenterId 原样透传内层
+        var outsideArgs = JsonNodeFactory.instance.objectNode()
+                .put("path", tempDir.getParent().resolve("档外-ocr10.txt").toAbsolutePath().toString());
+        policy.decide("write", outsideArgs, "cli");
+        assertEquals(1, seen.size(), "恰委托一次");
+        assertEquals("write:cli", seen.get(0), "发起方标记原样透传");
+
+        // ALLOW 短路：档内路径不咨询内层（与标记无关）
+        var inArgs = JsonNodeFactory.instance.objectNode().put("path", "in-workspace.txt");
+        policy.decide("write", inArgs, "web");
+        assertEquals(1, seen.size(), "ALLOW 短路不咨询内层");
     }
 
     @Test

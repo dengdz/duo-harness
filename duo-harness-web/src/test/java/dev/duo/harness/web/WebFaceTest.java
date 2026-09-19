@@ -137,6 +137,12 @@ class WebFaceTest {
         return face;
     }
 
+    /** commands 服务的视图接口（方法名即服务名 "commands"）。 */
+    interface CommandsView {
+
+        dev.duo.harness.agent.commands.CommandsRegistry commands();
+    }
+
     /** answers 服务的视图接口（方法名即服务名 "answers"）。 */
     interface AnswersView {
 
@@ -294,7 +300,44 @@ class WebFaceTest {
     }
 
     @Test
-    void concurrentMessageRejectedWith409() throws Exception {
+    void concurrentMessageInjectedWhileBusy() throws Exception {
+        // 运行中治理（M19 steer，ADR-0020 决策 8）：执行中 POST 不再 409——进 agent
+        // 注入收件箱，202 + "已注入" 轻提示；注入文本由 agent 在迭代边界排干
+        AtomicReference<String> injected = new AtomicReference<>();
+        ChatAgent slow = new ChatAgent() {
+            @Override
+            public dev.duo.harness.agent.AgentReply send(String userText,
+                                                         dev.duo.harness.agent.AgentListener listener) {
+                listener.onChunk("慢回复");
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new AgentReply("慢回复", List.of(), true);
+            }
+
+            @Override
+            public boolean injectUserMessage(String text) {
+                injected.set(text);
+                return true;
+            }
+        };
+        start(Session.create(tempDir.resolve("sessions")), slow);
+
+        HttpResponse<String> first = post("/api/message", "{\"text\": \"第一条\"}");
+        assertEquals(202, first.statusCode());
+        Thread.sleep(100);
+        HttpResponse<String> second = post("/api/message", "{\"text\": \"第二条\"}");
+        assertEquals(202, second.statusCode(), "执行中再发 → 202（注入受理，非 409）");
+        assertTrue(second.body().contains("已注入，待当前步骤完成"),
+                "结构化受理随响应体返回: " + second.body());
+        assertEquals("第二条", injected.get(), "文本已交 agent 注入收件箱");
+    }
+
+    @Test
+    void concurrentMessageKeeps409WhenAgentCannotSteer() throws Exception {
+        // 兜底：不支持注入的 agent（测试桩/旧实现）保留 409 语义——行为不静默漂移
         ChatAgent slow = (userText, listener) -> {
             listener.onChunk("慢回复");
             try {
@@ -310,7 +353,188 @@ class WebFaceTest {
         assertEquals(202, first.statusCode());
         Thread.sleep(100);
         HttpResponse<String> second = post("/api/message", "{\"text\": \"第二条\"}");
-        assertEquals(409, second.statusCode(), "执行中再发 → 409（单入口串行）");
+        assertEquals(409, second.statusCode(), "不支持注入的 agent → 409（单入口串行保留）");
+    }
+
+    // ---- M19 工单 02：Web 斜杠入口（ADR-0020 决策 3/5） ----
+
+    /** 斜杠用例夹具：基础树后挂 commands（+skills）服务并注册三条例子命令。 */
+    private dev.duo.harness.agent.commands.CommandsRegistry mountCommands(boolean withSkills) {
+        faceCtx.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(),
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode())
+                .awaitStartup();
+        if (withSkills) {
+            faceCtx.plugin(new dev.duo.harness.agent.prompt.PromptPlugin(),
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                            .put("systemPrompt", "测试")).awaitStartup();
+            faceCtx.plugin(new dev.duo.harness.agent.skills.SkillsPlugin(),
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                            .putArray("disabled")).awaitStartup();
+        }
+        var commands = faceCtx.as(CommandsView.class).commands();
+        var factory = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+        commands.register(faceCtx, new dev.duo.harness.agent.commands.CommandDefinition(
+                "webping", "回声测试", dev.duo.harness.agent.commands.CommandScope.WEB, false,
+                context -> "pong:" + context.args()));
+        commands.register(faceCtx, new dev.duo.harness.agent.commands.CommandDefinition(
+                "cliping", "仅终端", dev.duo.harness.agent.commands.CommandScope.CLI, false,
+                context -> "cli-only"));
+        commands.register(faceCtx, new dev.duo.harness.agent.commands.CommandDefinition(
+                "safeview", "busySafe 查看", dev.duo.harness.agent.commands.CommandScope.ANY, true,
+                context -> "safe-ok"));
+        return commands;
+    }
+
+    @Test
+    void slashCommandExecutesInWebWithoutTouchingAgent() throws Exception {
+        // 斜杠前置命令解释：命中命令同步执行于 Web 进程内——run/done 审计落会话
+        // （经 SSE 推送、前端渲染、刷新回放可见），agent 不被打扰、无 user/message
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, (userText, listener) -> {
+            throw new AssertionError("斜杠命令不得触达 agent");
+        });
+        mountCommands(false);
+
+        HttpResponse<String> res = post("/api/message", "{\"text\": \"/webping world\"}");
+        assertEquals(202, res.statusCode());
+        assertTrue(res.body().contains("\"outcome\":\"command\""),
+                "命中执行的结构化受理: " + res.body());
+
+        for (int i = 0; i < 50 && session.events().size() < 2; i++) {
+            Thread.sleep(50);
+        }
+        assertEquals(2, session.events().size(), "command/run + command/done 恰两事件");
+        var run = session.events().get(0);
+        assertEquals(SessionEvent.COMMAND_RUN, run.type());
+        assertEquals("webping", run.toolName());
+        assertEquals("world", run.text());
+        var done = session.events().get(1);
+        assertEquals(SessionEvent.COMMAND_DONE, done.type());
+        assertEquals("pong:world", done.text());
+        assertTrue(session.events().stream().noneMatch(e ->
+                        SessionEvent.USER_MESSAGE.equals(e.type())),
+                "斜杠命令不 append user/message（不进模型历史）");
+    }
+
+    @Test
+    void unknownCommandRefusedWithPresenterFilteredDigest() throws Exception {
+        // 未知命令：报错附可用清单——命令按发起面（Web）过滤适用性，CLI 专属不列
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, (userText, listener) -> new AgentReply("答", List.of(), true));
+        mountCommands(false);
+
+        HttpResponse<String> res = post("/api/message", "{\"text\": \"/nope\"}");
+        assertEquals(202, res.statusCode());
+        assertTrue(res.body().contains("未知命令: /nope（可用命令: webping, safeview"),
+                "清单按发起面过滤（cliping 为 CLI 专属不列）: " + res.body());
+        assertTrue(session.events().isEmpty(), "拒绝类无审计事件");
+    }
+
+    @Test
+    void cliOnlyCommandRefusedWithScopeHint() throws Exception {
+        Session session = Session.create(tempDir.resolve("sessions"));
+        start(session, (userText, listener) -> new AgentReply("答", List.of(), true));
+        mountCommands(false);
+
+        HttpResponse<String> res = post("/api/message", "{\"text\": \"/cliping\"}");
+        assertTrue(res.body().contains("该命令仅在 CLI 可用"),
+                "适用面不符提示: " + res.body());
+        assertTrue(session.events().isEmpty());
+    }
+
+    @Test
+    void busySafeCommandRunsWhileBusyAndUnsafeRefused() throws Exception {
+        // busySafe 分级（HTTP 层面语义明确）：agent 执行中 busySafe 命令照常执行；
+        // 非 busySafe 得到"执行中，需等待空闲"而非无差别 409
+        Session session = Session.create(tempDir.resolve("sessions"));
+        ChatAgent slow = (userText, listener) -> {
+            try {
+                Thread.sleep(1500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new AgentReply("慢答", List.of(), true);
+        };
+        start(session, slow);
+        mountCommands(false);
+
+        HttpResponse<String> first = post("/api/message", "{\"text\": \"长任务\"}");
+        assertEquals(202, first.statusCode());
+        Thread.sleep(100);
+
+        HttpResponse<String> safe = post("/api/message", "{\"text\": \"/safeview\"}");
+        assertEquals(202, safe.statusCode());
+        assertFalse(safe.body().contains("text"), "busySafe 命中无拒绝文案: " + safe.body());
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (session.events().stream().noneMatch(e ->
+                SessionEvent.COMMAND_DONE.equals(e.type()))
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+        assertTrue(session.events().stream().anyMatch(e ->
+                        SessionEvent.COMMAND_DONE.equals(e.type()) && "safe-ok".equals(e.text())),
+                "busySafe 命令执行中照常执行: " + session.events());
+
+        HttpResponse<String> unsafe = post("/api/message", "{\"text\": \"/webping busy\"}");
+        assertTrue(unsafe.body().contains("执行中，需等待空闲"),
+                "非 busySafe 明确等待提示: " + unsafe.body());
+
+        Thread.sleep(2000); // 等 slow agent 跑完再关 face，避免竞态
+    }
+
+    @Test
+    void skillInvocationStillGoesToAgentWithPrefixInjection() throws Exception {
+        // 技能直调在 Web 同样成立（两表一入口顺序双面一致）：命令表未命中 → 技能
+        // 前缀注入走 agent（进模型历史）——/release-notes 为仓库 .agents/skills 实技能
+        Session session = Session.create(tempDir.resolve("sessions"));
+        List<String> sent = new java.util.concurrent.CopyOnWriteArrayList<>();
+        start(session, (userText, listener) -> {
+            sent.add(userText);
+            return new AgentReply("答", List.of(), true);
+        });
+        mountCommands(true);
+
+        HttpResponse<String> res = post("/api/message",
+                "{\"text\": \"/release-notes 0.3.0\"}");
+        assertEquals(202, res.statusCode());
+        assertEquals("", res.body(), "技能直调落普通受理（前端进思考态）");
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (sent.isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50);
+        }
+        assertEquals(1, sent.size());
+        assertTrue(sent.get(0).contains("用户输入：0.3.0"),
+                "技能指令前缀注入文本照旧进模型历史: " + sent.get(0));
+    }
+
+    @Test
+    void pageSizeConfigDrivesSnapshotWindow() throws Exception {
+        // 页长可配（M19 还账，ADR-0020 决策 12）：pageSize=3 —— 6 条投影消息的会话
+        // 首屏快照只回 3 条（从第 2 条消息起），头帧 hasMore=true、更早计数=3
+        Session session = Session.create(tempDir.resolve("sessions"));
+        for (int i = 0; i < 3; i++) {
+            session.append(SessionEvent.userMessage("问" + i));
+            session.append(SessionEvent.assistantMessage("答" + i));
+        }
+        Context ctx = Context.root();
+        faceCtx = ctx;
+        ctx.plugin(new ToolsPlugin(), null).awaitStartup();
+        ToolsService tools = ctx.as(ToolsView.class).tools();
+        face = WebFace.start(0, ctx, tools, session,
+                (userText, listener) -> new AgentReply("ok", List.of(), true), null, null,
+                tempDir.resolve("web-sessions"), 3);
+        face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
+        face.onSessionChanged(changed -> changedSessions.add(changed));
+
+        String stream;
+        try (SseCollector sse = openSse(null)) {
+            stream = sse.awaitText(800);
+        }
+        assertTrue(stream.contains("\"hasMore\":true") && stream.contains("\"earlierCount\":3"),
+                "页长 3 生效（6 条投影取尾 3）: " + stream);
+        assertTrue(stream.contains("答1"), "窗口首条为第 4 条消息（尾 3 条之首）");
+        assertTrue(!stream.contains("问1") && !stream.contains("问0"),
+                "窗口外消息不下发: " + stream);
     }
 
     @Test

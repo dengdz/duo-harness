@@ -3,6 +3,10 @@ package dev.duo.harness.web;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandEnv;
+import dev.duo.harness.agent.commands.CommandOutcome;
+import dev.duo.harness.agent.commands.CommandScope;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.session.Session;
@@ -58,8 +62,16 @@ public final class WebFace {
     static final long FAIL_CLOSED_GRACE_MS = 2_000;
     /** SSE 游标请求头（浏览器重连自动携带，值为最后收到的 id）。 */
     private static final String LAST_EVENT_ID_HEADER = "Last-Event-ID";
-    /** 首屏尾部窗口的消息数（ADR-0013：常量起步不进 yml，页长配置化为已知限制）。 */
+    /** 首屏尾部窗口的消息数缺省（ADR-0013 常量起步；M19 起经 web 插件 config 可配）。 */
     static final int TAIL_WINDOW_MESSAGES = 50;
+
+    /** 首屏/每页消息数（config.pageSize 可配，M19 还账；缺省 50 不变）。 */
+    private final int pageSize;
+
+    /** 首屏/每页消息数（状态面与分页端点共用）。 */
+    int pageSize() {
+        return pageSize;
+    }
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
@@ -75,8 +87,10 @@ public final class WebFace {
     private volatile Session session;
     /** 对话执行者（/new 重建；volatile 保证跨线程可见）。 */
     private volatile ChatAgent agent;
-    /** 单飞标志：一次只跑一轮 send（CLI 单入口同约定）。 */
+    /** 单飞标志：一次只跑一轮 send 或一个非 busySafe 命令（CLI 单入口同约定）。 */
     private final AtomicBoolean busy = new AtomicBoolean(false);
+    /** agent send 执行中标志：busySafe 分级的探针（busy 兼作命令互斥，两者分离）。 */
+    private final AtomicBoolean agentRunning = new AtomicBoolean(false);
     /** 心跳调度器（保活 + 死连接摘除）。 */
     private final java.util.concurrent.ScheduledExecutorService heartbeat =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -99,7 +113,8 @@ public final class WebFace {
             new AtomicReference<>();
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
-                    WebAnswerer webAnswerer, Path sessionsDir) {
+                    WebAnswerer webAnswerer, Path sessionsDir, int pageSize) {
+        this.pageSize = pageSize;
         this.server = server;
         this.ctx = ctx;
         this.tools = tools;
@@ -127,6 +142,18 @@ public final class WebFace {
                                 ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
                                 WebAnswerer webAnswerer, Path sessionsDir)
             throws IOException {
+        return start(port, ctx, tools, session, agent, governance, webAnswerer, sessionsDir,
+                TAIL_WINDOW_MESSAGES);
+    }
+
+    /**
+     * 启动（页长可配版，M19 还账）：{@code pageSize} 为首屏与每页消息数（ADR-0013
+     * 尾窗与分页同值语义不变），须为正——由 WebPlugin 的 config 解析把关。
+     */
+    public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
+                                ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
+                                WebAnswerer webAnswerer, Path sessionsDir, int pageSize)
+            throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
@@ -137,7 +164,7 @@ public final class WebFace {
         }
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir);
+        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize);
         face.governance = governance;
         face.bindSession(session);
         face.agent = agent;
@@ -407,20 +434,43 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
+        // 斜杠前置命令解释（M19，ADR-0020 决策 3/5）：命令注册表 → 技能直调 → 未知报错，
+        // 与 CLI 共享同一入口顺序——斜杠文本从此不再透传进模型历史（M12-03 事故销账）。
+        // 技能直调（prompt outcome）落回下方普通提交路径，注入文本照旧进模型历史
+        final String userText;
+        String stripped = text.strip();
+        if (stripped.startsWith("/")) {
+            String skillInjected = handleCommand(exchange, stripped);
+            if (skillInjected == null) {
+                return; // 命令分支已响应（命中执行或拒绝）
+            }
+            userText = skillInjected; // 技能直调：指令前缀注入文本照旧走 agent
+        } else {
+            userText = text;
+        }
         ChatAgent current = agent;
         if (current == null) {
             respondText(exchange, 503, "对话面未就绪（agent 未装配）");
             return;
         }
         if (!busy.compareAndSet(false, true)) {
-            respondText(exchange, 409, "已有对话在执行中（单入口串行）");
+            // 运行中治理（M19 steer，ADR-0020 决策 8）：agent 执行中的消息进注入收件箱
+            // （迭代边界排干为普通 user/message，下一轮请求可见）；agent 未执行（busy 被
+            // 非 busySafe 命令互斥持有）时不入收件箱——保留 409（消息不会被"当前步骤"消化）
+            if (agentRunning.get() && current.injectUserMessage(userText)) {
+                respondJson(exchange, 202,
+                        "{\"outcome\":\"injected\",\"text\":\"已注入，待当前步骤完成\"}");
+            } else {
+                respondText(exchange, 409, "已有对话在执行中（单入口串行）");
+            }
             return;
         }
         exchange.sendResponseHeaders(202, -1);
+        agentRunning.set(true);
         Thread.ofVirtual().start(() -> {
             try {
                 dev.duo.harness.agent.AgentReply reply =
-                        current.send(text, new dev.duo.harness.agent.AgentListener() {
+                        current.send(userText, new dev.duo.harness.agent.AgentListener() {
                             @Override
                             public void onChunk(String chunk) {
                                 session.append(SessionEvent.assistantChunk(chunk));
@@ -438,10 +488,88 @@ public final class WebFace {
                 log.warn("消息处理失败", e);
                 pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
             } finally {
+                agentRunning.set(false);
                 busy.set(false);
             }
         });
     }
+    /**
+     * 斜杠命令分支（M19）：经命令注册表共享入口解释输入——命中命令同步执行于 Web
+     * 进程内（不占 agent 单飞窗口、不 append user/message），run/done 审计事件经
+     * 会话监听器走既有 SSE 推送（前端渲染轻量命令行，刷新/回放可见）；拒绝三类
+     * （未知/适用面/busy）无审计事件，文本经响应体交前端 toast。命中返回 null；
+     * 技能直调返回注入文本（调用方落回普通 agent 提交路径）。命令的 forward 转发文本
+     * 在 Web 面不消费（当前唯一转发方 /plan 为 CLI 专属）——转发型命令上 Web 前须先
+     * 补呈现位消费路径。
+     */
+    private String handleCommand(HttpExchange exchange, String line) throws IOException {
+        CommandsRegistry commands;
+        try {
+            // 惰性寻址（InteractivePolicy 同款）：命令服务由装配保证在场（web 插件 inject），
+            // 测试骨架等缺席场景不误透传——斜杠透传正是 M12-03 事故
+            commands = ctx.as(CommandsView.class).commands();
+        } catch (Exception e) {
+            respondText(exchange, 503, "命令服务未挂载（装配缺 commands 插件行）");
+            return null;
+        }
+        // 非 busySafe 命令（如 /compact 动上下文）执行期占住单飞标志：agent send 与命令
+        // 互斥——压缩摘要走 LLM 的窗口内不会再启动 agent 轮次（投影结构不被交错改写）。
+        // agent 执行中不抢互斥——交 dispatch 的 busySafe 分级回应（"执行中，需等待空闲"）
+        String commandName = line.split("\\s+", 2)[0].substring(1);
+        dev.duo.harness.agent.commands.CommandDefinition matched = commands.find(commandName);
+        boolean needsMutex = matched != null && !matched.busySafe();
+        boolean mutexHeld = false;
+        if (needsMutex && !agentRunning.get()) {
+            if (!busy.compareAndSet(false, true)) {
+                respondJson(exchange, 202, "{\"outcome\":\"command\",\"text\":"
+                        + JSON.writeValueAsString("已有命令在执行中，请稍候再试。") + "}");
+                return null;
+            }
+            mutexHeld = true;
+        }
+        try {
+            CommandOutcome outcome = commands.dispatch(line,
+                    new CommandEnv(CommandScope.WEB, () -> session, s -> { }, () -> { },
+                            agentRunning::get),
+                    skillsOrNull());
+            if (!outcome.isCommand()) {
+                return outcome.text(); // 技能直调注入文本
+            }
+            if (outcome.audited()) {
+                respondJson(exchange, 202, "{\"outcome\":\"command\"}");
+            } else {
+                respondJson(exchange, 202, "{\"outcome\":\"command\",\"text\":"
+                        + JSON.writeValueAsString(outcome.text()) + "}");
+            }
+            return null;
+        } finally {
+            if (mutexHeld) {
+                busy.set(false);
+            }
+        }
+    }
+
+    /** 技能注册表惰性寻址（技能直调入口第二级；缺席即无技能，null 安全）。 */
+    private dev.duo.harness.agent.skills.SkillRegistry skillsOrNull() {
+        try {
+            return ctx.as(SkillsView.class).skills();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 命令注册表视图接口（方法名即服务名 "commands"）。 */
+    interface CommandsView {
+
+        CommandsRegistry commands();
+    }
+
+    /** 技能注册表视图接口（方法名即服务名 "skills"）。 */
+    interface SkillsView {
+
+        dev.duo.harness.agent.skills.SkillRegistry skills();
+    }
+
     /** 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）。 */
     private void handleSessionNew(HttpExchange exchange) throws IOException {
         byte[] discarded = readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
@@ -582,7 +710,7 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
-        Session.TailWindow window = bound.windowBefore(before, TAIL_WINDOW_MESSAGES); // 首屏/每页同值（ADR-0013）
+        Session.TailWindow window = bound.windowBefore(before, pageSize); // 首屏/每页同值（ADR-0013）
         var root = JSON.createObjectNode()
                 .put("startEvent", window.startEvent())
                 .put("hasMore", window.earlierMessages() > 0)
@@ -655,7 +783,7 @@ public final class WebFace {
             String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
             Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
             List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
-            ReplayWindow window = resolveReplayWindow(cursor, events, bound);
+            ReplayWindow window = resolveReplayWindow(cursor, events, bound, pageSize);
             // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
             log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
             var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
@@ -731,11 +859,12 @@ public final class WebFace {
 
     /**
      * 解析重连游标决定回放窗口：游标合法且落在日志范围内 → 只补其后事件（增量，ADR-0010）；
-     * 无游标或游标非法/越界 → 尾部窗口快照（ADR-0013）——投影取尾部 {@link #TAIL_WINDOW_MESSAGES}
+     * 无游标或游标非法/越界 → 尾部窗口快照（ADR-0013）——投影取尾部页长（config.pageSize 可配，M19）
      * 条消息的事件区间，头帧带 hasMore（是否还有更早消息）与更早计数。日志 append-only、
      * 治理为纯读侧（不改编号），越界游标只见于跨会话误用——按首连同样兜底。
      */
-    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events, Session bound) {
+    private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events,
+                                                    Session bound, int pageSize) {
         if (cursor != null && !cursor.isBlank()) {
             try {
                 int parsed = Integer.parseInt(cursor.strip());
@@ -746,7 +875,7 @@ public final class WebFace {
                 // 非法游标按无游标处理（尾部快照兜底）
             }
         }
-        Session.TailWindow tail = bound.tailWindow(TAIL_WINDOW_MESSAGES);
+        Session.TailWindow tail = bound.tailWindow(pageSize);
         return new ReplayWindow(tail.startEvent(), "tail-snapshot", true,
                 tail.earlierMessages() > 0, tail.earlierMessages());
     }

@@ -73,7 +73,8 @@ class ExitPlanModeToolTest {
         if (answerer != null) {
             answers.register(root, answerer);
         }
-        tools.register(root, new ExitPlanModeTool(answers, () -> session, approvals::incrementAndGet));
+        tools.register(root, new ExitPlanModeTool(answers, "cli", () -> session,
+                approvals::incrementAndGet));
         return tools;
     }
 
@@ -87,6 +88,36 @@ class ExitPlanModeToolTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void approvalRunsOriginPresentersCallbackNotFirstRegistrants() throws IOException {
+        // OCR #22 回归：回调按发起呈现位绑定——Web-first 装配（实例携空回调）下，
+        // CLI 发起的计划批准必须跑 CLI 的清理回调（指导片段卸载），而非实例构造方的
+        AtomicInteger cliCleanups = new AtomicInteger();
+        Session webSession = newSession();
+        Session cliSession = newSession();
+        cliSession.append(dev.duo.harness.agent.plan.PlanMode.enteredEvent());
+        root = Context.root();
+        root.plugin(new dev.duo.harness.tools.InteractionPlugin(), null).awaitStartup();
+        root.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+        InteractionService answers = root.as(AnswersView.class).answers();
+        answers.register(root, request ->
+                InteractionAnswer.answered(List.of(ExitPlanModeTool.APPROVE_OPTION), "console"));
+        // Web-first 装配：实例由 web 呈现位创建（空回调），cli 后补记绑定（会话 + 清理回调）
+        ExitPlanModeTool tool = new ExitPlanModeTool(
+                answers, "web", () -> webSession, () -> { });
+        tool.bindSession("cli", () -> cliSession, cliCleanups::incrementAndGet);
+        root.as(ToolsView.class).tools().register(root, tool);
+
+        ToolResult result = root.as(ToolsView.class).tools().execute(ExitPlanModeTool.NAME,
+                args("1. 计划"), "cli");
+
+        assertTrue(String.valueOf(result.value()).contains("已获批准"));
+        assertEquals(1, cliCleanups.get(), "批准回调跑发起方（cli）的");
+        assertEquals("exited", cliSession.events().get(1).text(), "事件落发起方会话");
+        webSession.close();
+        cliSession.close();
     }
 
     @Test

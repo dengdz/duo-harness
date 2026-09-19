@@ -65,7 +65,7 @@ class ToolCatalogTest {
                 tools.register(root, new AskUserTool(answers));
             }
             if (tools.list().stream().noneMatch(d -> "exit_plan_mode".equals(d.name()))) {
-                tools.register(root, new ExitPlanModeTool(answers, () -> session, () -> { }));
+                tools.register(root, new ExitPlanModeTool(answers, "cli", () -> session, () -> { }));
             }
 
             List<String> names = tools.list().stream().map(ToolDefinition::name).toList();

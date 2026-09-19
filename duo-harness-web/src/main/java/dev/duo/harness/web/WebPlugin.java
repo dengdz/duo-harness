@@ -12,6 +12,7 @@ import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
@@ -52,7 +53,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
-                InteractionService.SERVICE_NAME);
+                InteractionService.SERVICE_NAME, CommandsRegistry.SERVICE_NAME);
     }
 
     @Override
@@ -67,6 +68,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         ToolsService tools = ctx.as(WebToolsView.class).tools();
         PromptRegistry prompts = ctx.as(WebPromptsView.class).prompts();
         InteractionService answers = ctx.as(WebAnswersView.class).answers();
+        CommandsRegistry commands = ctx.as(WebCommandsView.class).commands();
 
         // 执行链装配（呈现位共享单点，ADR-0011）：LLM 配置 → 重试 adapter；
         // LLM 未配置 → 插件 FAILED 点名
@@ -95,13 +97,17 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 管线缺省超时（ADR-0018）：config.pipelineTimeoutMs 可省，缺省 120s——挂工具执行段兜底
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
-                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance);
+                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
+                ChatAgent.PRESENTER_WEB);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
+        // 页长解析在 start 之前——PluginException 不入下方 IOException catch，
+        // 确保配置错误路径也走 session.close() 释放独占锁（OCR #17）
+        int pageSize = parsePageSize(config);
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
-                    DuoHome.resolve().resolveDir("agent-sessions"));
+                    DuoHome.resolve().resolveDir("agent-sessions"), pageSize);
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -109,11 +115,18 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 审计桥包装（ADR-0008 决策 5）：approval/requested、approval/decided 事件落会话
         // ——会话监听器推 SSE，页面据此渲染审批卡；会话经 face 延迟解析（/new 换绑后留新会话）
         answers.register(ctx, new AuditingAnswerer(face::currentSession, webAnswerer));
+        // /compact（M19，ADR-0020 决策 6）：双面命令随 Web 装配注册（查重先到先得——
+        // CLI 已注册则跳过），会话经 face 延迟解析取当前值
+        PresenterAssembly.registerCompactCommand(ctx, commands, governance);
+        PresenterAssembly.registerTitleCommand(ctx, commands);
+        // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置（BUG-20260919-03
+        // ——双开下另一呈现位可能刚恢复过档位）；换绑恢复在 onSessionChanged 回调里执行
+        PresenterAssembly.restorePermissionMode(ctx, session, false);
         // HITL 交互工具补全（共享装配器，查重先到先得）：ask_user 与计划呈交随 Web 装配
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
         PresenterAssembly.registerInteractionTools(
-                ctx, tools, answers, face::currentSession, () -> { });
+                ctx, tools, answers, ChatAgent.PRESENTER_WEB, face::currentSession, () -> { });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, face::currentSession);
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
@@ -128,8 +141,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // attach，双开时与 CLI 共享静态去重表
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
-                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance));
+                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
+                    ChatAgent.PRESENTER_WEB));
             SessionTitles.attach(fresh, adapter);
+            // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
+            PresenterAssembly.restorePermissionMode(ctx, fresh, true);
         });
         SessionTitles.attach(session, adapter);
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
@@ -153,4 +169,38 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
         InteractionService answers();
     }
+
+    /** commands 服务的视图接口（方法名即服务名 "commands"）。 */
+    interface WebCommandsView {
+
+        CommandsRegistry commands();
+    }
+    /**
+     * 解析 web 插件 config 的可选页长（{@code config.pageSize}，M19 还账）：首屏与每页
+     * 消息数（ADR-0013 尾窗与分页同值）。缺席或 null 返回缺省 50（行为不变）；在场必须
+     * 是正整数——非整数/非正一律异常点名（与 maxIterations 同规，配置错误不做静默纠正）。
+     *
+     * @throws PluginException 值非正整数
+     */
+    static int parsePageSize(JsonNode config) {
+        if (config == null || !config.hasNonNull("pageSize")) {
+            return WebFace.TAIL_WINDOW_MESSAGES;
+        }
+        JsonNode value = config.get("pageSize");
+        if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            throw new PluginException("pageSize 必须是整数: " + value);
+        }
+        int parsed = value.asInt();
+        if (parsed < 1) {
+            throw new PluginException("pageSize 必须为正: " + parsed);
+        }
+        if (parsed > MAX_PAGE_SIZE) {
+            throw new PluginException("pageSize 过大（上限 " + MAX_PAGE_SIZE + "）: " + parsed
+                    + "——尾窗快照按页长分配缓冲，配置错误不应演变为运行期内存耗尽");
+        }
+        return parsed;
+    }
+
+    /** 页长上界：尾窗快照缓冲与页长成正比，防配置错误演变为内存耗尽（OCR #21）。 */
+    static final int MAX_PAGE_SIZE = 1_000;
 }

@@ -1,6 +1,8 @@
 package dev.duo.harness.agent.presenter;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.commands.CommandScope;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.prompt.PromptRegistry;
@@ -16,6 +18,7 @@ import dev.duo.harness.tools.InteractionPlugin;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolsPlugin;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 import dev.duo.harness.tools.ToolsService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -26,6 +29,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +50,11 @@ class PresenterAssemblyTest {
     interface ToolsView {
 
         ToolsService tools();
+    }
+
+    interface CommandsView {
+
+        dev.duo.harness.agent.commands.CommandsRegistry commands();
     }
 
     interface AnswersView {
@@ -105,14 +115,106 @@ class PresenterAssemblyTest {
             ToolsService tools = root.as(ToolsView.class).tools();
             InteractionService answers = root.as(AnswersView.class).answers();
 
-            PresenterAssembly.registerInteractionTools(root, tools, answers,
+            PresenterAssembly.registerInteractionTools(root, tools, answers, "cli",
                     () -> { throw new IllegalStateException("本用例不触发会话解析"); }, () -> { });
-            PresenterAssembly.registerInteractionTools(root, tools, answers,
+            // 二次注册（另一呈现位）：工具实例跳过，但亲和会话供给应补记进既有实例
+            PresenterAssembly.registerInteractionTools(root, tools, answers, "web",
                     () -> { throw new IllegalStateException("重复注册应被跳过"); }, () -> { });
 
             List<String> names = tools.list().stream().map(ToolDefinition::name).toList();
             assertEquals(1, names.stream().filter("ask_user"::equals).count(), "ask_user 恰注册一次");
             assertEquals(1, names.stream().filter("exit_plan_mode"::equals).count(), "exit_plan_mode 恰注册一次");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
+    void compactCommandRegistersOncePerName() {
+        // /compact 查重先到先得（M19）：双呈现位共存时二次注册跳过——同名 fail-fast 的
+        // 注册表语义下，装配层的查重是双面命令的唯一安全注册方式
+        Context root = Context.root();
+        try {
+            root.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(),
+                    JsonNodeFactory.instance.objectNode()).awaitStartup();
+            var commands = root.as(CommandsView.class).commands();
+            ContextGovernance governance = ContextGovernanceTestHarness.dummy();
+
+            PresenterAssembly.registerCompactCommand(root, commands, governance);
+            PresenterAssembly.registerCompactCommand(root, commands, governance);
+
+            assertEquals(1, commands.all().size(), "compact 恰注册一次");
+            assertEquals(CommandScope.ANY, commands.find("compact").scope(), "双面可用");
+            assertFalse(commands.find("compact").busySafe(), "动上下文必须 idle（busySafe=false）");
+        } finally {
+            root.dispose();
+        }
+    }
+
+    /** 治理测试桩：compactNow 不被本用例触发，仅占位。 */
+    private static final class ContextGovernanceTestHarness {
+        private static ContextGovernance dummy() {
+            return new ContextGovernance(new dev.duo.harness.llm.LlmAdapter() {
+                @Override
+                public void stream(dev.duo.harness.llm.ChatRequest request,
+                                   java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public dev.duo.harness.llm.LlmTurn streamTurn(
+                        dev.duo.harness.llm.ChatRequest request,
+                        java.util.function.Consumer<String> textSink) {
+                    throw new UnsupportedOperationException();
+                }
+            });
+        }
+    }
+
+    @Test
+    void permissionModeRestoreRespectsResetPolicy() throws Exception {
+        // BUG-20260919-03（M19-06 验收实测）：恢复语义分档——启动续接（reset=false）
+        // 无切档记录保持现状不重置（双开下不得覆盖另一呈现位刚恢复的档位）；
+        // 显式换绑（reset=true）无记录重置回装配档
+        Context root = Context.root();
+        try {
+            root.plugin(new ToolsPlugin(), null).awaitStartup();
+            root.plugin(new dev.duo.harness.tools.fs.FsToolsPlugin(),
+                    JsonNodeFactory.instance.objectNode().put("mode", "workspace-write"))
+                    .awaitStartup();
+            WorkspacePolicy workspace = root.as(WorkspaceView.class).workspace();
+
+            // 会话无切档记录
+            dev.duo.harness.session.Session fresh = dev.duo.harness.session.Session.create(
+                    java.nio.file.Path.of(tempDir.toAbsolutePath().toString(), "s"));
+            // 模拟"另一呈现位刚恢复过 read-only"的全局现状
+            workspace.setMode(WorkspacePolicy.Mode.parse("read-only"));
+
+            PresenterAssembly.restorePermissionMode(root, fresh, false);
+            assertEquals("read-only", workspace.mode().configName(),
+                    "启动续接：无记录保持现状（不覆盖另一呈现位的恢复）");
+
+            PresenterAssembly.restorePermissionMode(root, fresh, true);
+            assertEquals("workspace-write", workspace.mode().configName(),
+                    "显式换绑：无记录重置回装配档");
+            fresh.close();
+
+            // 有切档记录：两种模式都恢复记录档
+            dev.duo.harness.session.Session switched = dev.duo.harness.session.Session.create(
+                    java.nio.file.Path.of(tempDir.toAbsolutePath().toString(), "s"));
+            switched.append(dev.duo.harness.session.SessionEvent.permissionMode("read-only"));
+            PresenterAssembly.restorePermissionMode(root, switched, false);
+            assertEquals("read-only", workspace.mode().configName(), "有记录照常恢复");
+            switched.close();
+
+            // 非法档位串（手改/向前兼容）：回退保持当前档，不抛异常不落坏档
+            dev.duo.harness.session.Session corrupt = dev.duo.harness.session.Session.create(
+                    java.nio.file.Path.of(tempDir.toAbsolutePath().toString(), "s"));
+            corrupt.append(dev.duo.harness.session.SessionEvent.permissionMode("不存在的档"));
+            assertDoesNotThrow(() -> PresenterAssembly.restorePermissionMode(root, corrupt, false));
+            assertEquals("read-only", workspace.mode().configName(),
+                    "非法档位串保持当前档（与占用继承路径同口径）");
+            corrupt.close();
         } finally {
             root.dispose();
         }
@@ -248,5 +350,10 @@ class PresenterAssemblyTest {
         assertThrows(PluginException.class,
                 () -> PresenterAssembly.parsePipelineTimeoutMs(config("{\"pipelineTimeoutMs\":0}")),
                 "非正点名拒绝");
+    }
+    /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */
+    interface WorkspaceView {
+
+        dev.duo.harness.tools.fs.WorkspacePolicy workspace();
     }
 }

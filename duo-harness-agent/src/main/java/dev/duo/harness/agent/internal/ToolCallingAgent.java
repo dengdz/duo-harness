@@ -68,6 +68,15 @@ public final class ToolCallingAgent implements ChatAgent {
     private final int maxParallelToolCalls;
     /** 上下文治理管线（M9；null = 未装配，投影直通——治理可选零残留）。 */
     private final ContextGovernance governance;
+    /** 发起呈现位标记（null = 无呈现位，如子代理内部 agent）：随工具执行携带进管线。 */
+    private final String presenterId;
+    /**
+     * 运行中消息注入收件箱（父级 steer，M19 ADR-0020 决策 8）：busy 期间外部线程
+     * 经 {@link #injectUserMessage} 投递，send 循环在迭代边界排干——并发队列隔离
+     * 注入线程与 send 线程，多条照排。
+     */
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> inbox =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /** 便捷构造：迭代上限取默认值，单一 system 提示（包装为用户指令片段）。 */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session, String systemPrompt) {
@@ -116,6 +125,19 @@ public final class ToolCallingAgent implements ChatAgent {
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             PromptRegistry prompts, int maxIterations,
                             int maxParallelToolCalls, ContextGovernance governance) {
+        this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls, governance, null);
+    }
+
+    /**
+     * 完整构造（呈现位标记版，M19 亲和路由）：标记随工具执行进管线——审批/提问的
+     * ask 请求据此路由给发起呈现位的回答者，hooks 载荷顺带透传。
+     *
+     * @param presenterId 呈现位标记（如 {@code "cli"} / {@code "web"}；子代理等无呈现位为 null）
+     */
+    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
+                            PromptRegistry prompts, int maxIterations,
+                            int maxParallelToolCalls, ContextGovernance governance,
+                            String presenterId) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
@@ -129,6 +151,7 @@ public final class ToolCallingAgent implements ChatAgent {
         this.maxIterations = maxIterations;
         this.maxParallelToolCalls = maxParallelToolCalls;
         this.governance = governance;
+        this.presenterId = presenterId;
     }
 
     @Override
@@ -141,6 +164,7 @@ public final class ToolCallingAgent implements ChatAgent {
         boolean completed = false;
 
         for (int iteration = 1; iteration <= maxIterations && !completed; iteration++) {
+            drainInbox();
             LlmTurn turn = llm.streamTurn(buildRequest(), text -> {
                 listener.onChunk(text);
                 finalReply.append(text);
@@ -173,6 +197,32 @@ public final class ToolCallingAgent implements ChatAgent {
             return new AgentReply(failure, invocations, false);
         }
         return new AgentReply(finalReply.toString(), invocations, true);
+    }
+
+    /**
+     * 运行中注入（M19 ADR-0020 决策 8）：入收件箱即返回——排干只在 send 线程的
+     * 迭代边界发生（会话单写者约定不被破坏）；send 空闲期间投递的文本由下一次
+     * send 的首个迭代边界排干，不丢。
+     */
+    @Override
+    public boolean injectUserMessage(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        inbox.add(text);
+        return true;
+    }
+
+    /**
+     * 迭代边界排干：逐条落普通 {@code user/message} 后即进入下一轮请求构造——
+     * 不发明 steer 专属事件，多条照排（投影与回放对连续 user/message 天然兼容）；
+     * 飞行中的工具组不受影响（排干只发生在工具组完整跑完之后）。
+     */
+    private void drainInbox() {
+        String injected;
+        while ((injected = inbox.poll()) != null) {
+            session.append(SessionEvent.userMessage(injected));
+        }
     }
 
     /**
@@ -220,7 +270,7 @@ public final class ToolCallingAgent implements ChatAgent {
                 futures.add(pool.submit(() -> {
                     permits.acquire();
                     try {
-                        return tools.execute(call.name(), args);
+                        return tools.execute(call.name(), args, presenterId);
                     } finally {
                         permits.release();
                     }
@@ -236,7 +286,8 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 独占调用：当前线程执行 + 成对提交（屏障语义下池已排空，独享执行期）。 */
     private void executeOneToolCall(ToolCallRequest call, LlmTurn turn,
                                     AgentListener listener, List<ToolInvocation> invocations) {
-        ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()));
+        ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()),
+                presenterId);
         commitToolCall(call, result, turn, listener, invocations);
     }
 

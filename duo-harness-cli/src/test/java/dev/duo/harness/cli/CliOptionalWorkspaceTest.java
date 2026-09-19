@@ -55,6 +55,8 @@ class CliOptionalWorkspaceTest {
             root.plugin(new InteractionPlugin(), null).awaitStartup();
             root.plugin(new SkillsPlugin(), JsonNodeFactory.instance.objectNode()
                     .putArray("disabled")).awaitStartup();
+            root.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(),
+                    JsonNodeFactory.instance.objectNode()).awaitStartup();
             BufferedReader in = new BufferedReader(new InputStreamReader(
                     new ByteArrayInputStream(scripted.getBytes(StandardCharsets.UTF_8)),
                     StandardCharsets.UTF_8));

@@ -92,6 +92,11 @@ public final class ToolsServiceImpl implements ToolsService {
 
     @Override
     public ToolResult execute(String toolName, JsonNode args) {
+        return execute(toolName, args, null);
+    }
+
+    @Override
+    public ToolResult execute(String toolName, JsonNode args, String presenterId) {
         if (toolName == null || toolName.isBlank()) {
             throw new ToolNotFoundException("工具名不能为空");
         }
@@ -99,7 +104,7 @@ public final class ToolsServiceImpl implements ToolsService {
         if (tool == null) {
             throw new ToolNotFoundException("工具 \"" + toolName + "\" 未注册");
         }
-        ToolExecution execution = new ToolExecution(toolName, args);
+        ToolExecution execution = new ToolExecution(toolName, args, presenterId);
         // 工具自身声明需审批（"或工具可声明"）：先置位，pre-execute 的策略解析者才看得到
         if (tool.requiresApproval()) {
             execution.requestApproval();

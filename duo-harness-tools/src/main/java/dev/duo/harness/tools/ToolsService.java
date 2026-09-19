@@ -76,4 +76,16 @@ public interface ToolsService {
      * @throws ToolNotFoundException 工具未注册（点名）
      */
     ToolResult execute(String toolName, JsonNode args);
+
+    /**
+     * 经三段管线执行工具（携发起呈现位标记，M19 亲和路由 ADR-0020 决策 7）：
+     * 标记随 {@link ToolExecution#presenterId()} 贯穿管线——审批/提问的 ask 请求
+     * 据此优先路由给发起方的回答者，hooks 载荷顺带透传。
+     *
+     * @param presenterId 发起呈现位标记（agent 循环传入；直调/无发起方传 null）
+     * @throws ToolNotFoundException 工具未注册（点名）
+     */
+    default ToolResult execute(String toolName, JsonNode args, String presenterId) {
+        return execute(toolName, args); // 缺省忽略标记：实现未升级时行为不变
+    }
 }

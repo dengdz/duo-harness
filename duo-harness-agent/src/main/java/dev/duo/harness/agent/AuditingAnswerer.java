@@ -33,6 +33,12 @@ public final class AuditingAnswerer implements Answerer {
         this.delegate = delegate;
     }
 
+    /** 亲和路由透传（M19，ADR-0020 决策 7）：装饰不改回答者的呈现位归属。 */
+    @Override
+    public String presenterId() {
+        return delegate.presenterId();
+    }
+
     @Override
     public InteractionAnswer answer(InteractionRequest request) {
         if (!InteractionRequest.KIND_APPROVAL.equals(request.kind())

@@ -16,6 +16,12 @@ public final class ToolExecution {
     private final String toolName;
     /** 调用参数（NullNode 表示无参）。 */
     private final JsonNode args;
+    /**
+     * 发起呈现位标记（M19 亲和路由，ADR-0020 决策 7；agent 循环执行工具时携带，
+     * 直调 execute 为 null）：ask 请求据此优先路由给发起方的回答者（"谁发起谁作答"），
+     * hooks 载荷顺带透传。只读——执行全程不变。
+     */
+    private final String presenterId;
 
     /** pre-execute 否决理由；非 null 即已否决。 */
     private String denyReason;
@@ -31,9 +37,19 @@ public final class ToolExecution {
     private boolean resultFrozen;
 
     public ToolExecution(String toolName, JsonNode args) {
+        this(toolName, args, null);
+    }
+
+    /**
+     * 完整构造：携发起呈现位标记（agent 循环执行时传入；直调为 null）。
+     *
+     * @param presenterId 发起呈现位标记（如 {@code "cli"} / {@code "web"}；可 null）
+     */
+    public ToolExecution(String toolName, JsonNode args, String presenterId) {
         // 公共类的 null 契约自足：不依赖唯一构造点（ToolsServiceImpl）的先行校验
         this.toolName = java.util.Objects.requireNonNull(toolName, "toolName");
         this.args = args == null ? com.fasterxml.jackson.databind.node.NullNode.getInstance() : args;
+        this.presenterId = presenterId == null || presenterId.isBlank() ? null : presenterId;
     }
 
     /** 工具名。 */
@@ -44,6 +60,11 @@ public final class ToolExecution {
     /** 调用参数（无参为 NullNode，不返回 null）。 */
     public JsonNode args() {
         return args;
+    }
+
+    /** 发起呈现位标记（agent 循环携带；直调 execute 或缺省为 null）。 */
+    public String presenterId() {
+        return presenterId;
     }
 
     /** pre-execute 监听器否决本次执行；理由将呈现在错误结果中。 */
