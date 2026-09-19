@@ -7,6 +7,7 @@
 ### Changed
 
 - **技能经验文档归位 references/ 并全量预建**：duo-* 技能的 experience.md 从 SKILL.md 平级迁至 `references/experience.md`（对齐技能规范格式，references 承载辅助文档）；经验文档 14 技能全量就位——duo-code-review / duo-skill-evolution 迁移保留既有内容，其余 12 个按元技能规范预建模板；全部 SKILL.md 增补"经验参考"段（执行前读经验、任务后复盘追加同一文件）并统一新路径引用——修正自我进化收尾流程不被触发的问题
+- DSH web 工具族研究落盘（`docs/research/DSH/web工具族/` 三件套，锚点 ddefc45f = release 0.1.6-alpha.2）：ctx.web seam 双注册表与执行期选路（配置点名三态 / 唯一可用自动选 / 多可用报歧义）、web-fetch-http 的 SSRF 纵深防线（URL 字面预检 → DNS 全地址集公网校验含 NAT64 → 连接 pinning 防 rebinding → 重定向同源且每跳重校验）、tool-web 的 web_fetch（turndown GFM 转换 + 深度护栏 + 三层限额 + 不可信数据声明）与 web_search（多 query 并发合并、provider 可配、无 key 时工具仍注册执行期报结构化错误）及 deepseek/exa/perplexity 三 provider 对照——供 M20 web 工具族（ADR-0016）设计访谈对照
 
 ## 0.14.0（2026-09-20）
 
