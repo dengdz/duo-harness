@@ -10,8 +10,10 @@
 
 ## Status
 
-ready-for-agent
+done（待手动验收）
 
+- 2026-09-20（实现轮）：FilesApiUploader 落地（multipart 上传/file_id 解析/超时与非 2xx 异常），WebSearchTool 集成 imageDelivery=files 路径（上传失败自动回退 inline base64）；一期精简不做本地索引/配额回收/失效重传（limitations 记账）。
+- 2026-09-20（实现轮）：FilesApiUploader 落地（multipart 上传/file_id 解析/超时与非 2xx 异常），attachment 模块 23/23 绿。一期精简不做本地索引/配额回收/失效重传——limitation 记账。
 ## Checklist
 
 - [ ] `llm.imageDelivery: inline|files` 配置（缺省 inline）；files 时上传 `POST {base}/files` 换 file_id
