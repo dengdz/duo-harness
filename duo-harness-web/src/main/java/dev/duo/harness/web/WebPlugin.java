@@ -66,7 +66,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
      */
     @Override
     public Set<String> optionalInject() {
-        return Set.of(WorkspacePolicy.SERVICE_NAME);
+        return Set.of(WorkspacePolicy.SERVICE_NAME,
+                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME);
     }
 
     @Override
@@ -87,6 +88,14 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // LLM 未配置 → 插件 FAILED 点名
         LlmConfig llm = LlmConfig.load();
         var adapter = PresenterAssembly.llmAdapter(llm);
+        // 附件库（M21，可选依赖）：纯对话 Web 装配缺席时端点 503、带图消息 409；
+        // vision=true 时构建请求变体解析器（附件引用 → base64 图片部件）
+        dev.duo.harness.attachment.AttachmentStore attachments =
+                ctx.hasService(dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME)
+                        ? ctx.as(WebAttachmentsView.class).attachments() : null;
+        dev.duo.harness.attachment.RequestVariants variants = attachments == null ? null
+                : new dev.duo.harness.attachment.RequestVariants(attachments,
+                        DuoHome.resolve().root().resolve("cache/attachments"));
 
         Session session;
         try {
@@ -111,7 +120,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
                 adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                ChatAgent.PRESENTER_WEB);
+                ChatAgent.PRESENTER_WEB, variants, llm.vision());
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -120,7 +129,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         int pageSize = parsePageSize(config);
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
-                    DuoHome.resolve().resolveDir("agent-sessions"), pageSize);
+                    DuoHome.resolve().resolveDir("agent-sessions"), pageSize,
+                    attachments, () -> llm.vision());
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -155,7 +165,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB));
+                    ChatAgent.PRESENTER_WEB, variants, llm.vision()));
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);
@@ -187,6 +197,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebCommandsView {
 
         CommandsRegistry commands();
+    }
+
+    /** attachments 服务的视图接口（方法名即服务名）。 */
+    interface WebAttachmentsView {
+
+        dev.duo.harness.attachment.AttachmentStore attachments();
     }
     /**
      * 解析 web 插件 config 的可选页长（{@code config.pageSize}，M19 还账）：首屏与每页

@@ -418,6 +418,26 @@ public final class Session {
         return out.toString(StandardCharsets.UTF_8);
     }
 
+    /** read_image 结果文本中的附件引用标记行前缀（单事实来源：ReadImageTool 同文）。 */
+    public static final String READ_IMAGE_REF_MARKER = "附件已入库: ";
+
+    /**
+     * read_image 结果的引用解析（M21）：文本含"附件已入库: <id>"标记行即提取 id
+     * 为附件引用（mediaType/字节随请求变体解析还原）；无标记返回 null。
+     */
+    private static AttachmentRef readImageRef(SessionEvent event) {
+        for (String line : event.text().split("\n")) {
+            String stripped = line.strip();
+            if (stripped.startsWith(READ_IMAGE_REF_MARKER)) {
+                String id = stripped.substring(READ_IMAGE_REF_MARKER.length())
+                        .split("——")[0].split(" ")[0].strip();
+                return id.matches("[0-9a-f]{64}")
+                        ? new AttachmentRef(id, null, 0, null) : null;
+            }
+        }
+        return null;
+    }
+
     /**
      * 投影：事件日志 → 对话消息列表（含 Function Calling 形态）。
      * 旧格式工具事件（无 toolCallId，协议关联缺失）跳过——不投影也不崩溃。
@@ -426,20 +446,35 @@ public final class Session {
      */
     public List<Message> deriveMessages() {
         List<Message> messages = new ArrayList<>();
+        List<AttachmentRef> pending = new java.util.ArrayList<>();
         for (SessionEvent event : events()) {
+            if (SessionEvent.USER_ATTACHMENT.equals(event.type())) {
+                // 附件引用（M21，ADR-0022）：挂到紧随其后的 user 消息（多部件投影）
+                AttachmentRef.from(event.text()).ifPresent(pending::add);
+                continue;
+            }
             if (!projectsToMessage(event)) {
                 continue;
             }
             switch (event.type()) {
-                case SessionEvent.USER_MESSAGE ->
-                        messages.add(new Message(Message.Role.USER, event.text()));
+                case SessionEvent.USER_MESSAGE -> {
+                    messages.add(pending.isEmpty()
+                            ? new Message(Message.Role.USER, event.text())
+                            : Message.userWithAttachments(event.text(), List.copyOf(pending)));
+                    pending.clear();
+                }
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
                 case SessionEvent.TOOL_CALL ->
                         messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
                                 event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
-                case SessionEvent.TOOL_RESULT ->
-                        messages.add(Message.tool(event.toolCallId(), event.text()));
+                case SessionEvent.TOOL_RESULT -> {
+                    var images = readImageRef(event);
+                    messages.add(images == null
+                            ? Message.tool(event.toolCallId(), event.text())
+                            : Message.toolWithAttachments(event.toolCallId(), event.text(),
+                                    List.of(images)));
+                }
                 case SessionEvent.SUBAGENT_COMPLETED ->
                         messages.add(new Message(Message.Role.USER, event.text()));
                 case SessionEvent.COMPACTION -> {

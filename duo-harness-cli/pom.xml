@@ -29,6 +29,12 @@
       <artifactId>duo-harness-session</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- 附件域（M21 工单 05，ADR-0022）：read_image 结果的请求变体解析 -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-attachment</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>dev.duo</groupId>
       <artifactId>duo-harness-agent</artifactId>
