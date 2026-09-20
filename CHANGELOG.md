@@ -6,8 +6,16 @@
 
 ### Changed
 
+- **duo-code-review 第二轮审查切换委托模式**：OCR 行级审查由 `open-code-review`（LLM 端点，一次近 40 分钟）改为 `open-code-review-delegate`（委托模式，约 5 分钟）——OCR 仅做文件选取与规则解析，行级审查由 agent 亲自执行；名单、覆盖率口径与报告模板不变
 - **技能自我进化机制改版——全局强制化**：复盘触发从 13 个 duo- 技能各自 SKILL.md 末尾的"任务结束后"章节（约 260 行模板复制，实测极少触发）收敛为 AGENTS.md 红线 8——"duo- 技能任务收尾必须先调用 duo-skill-evolution 复盘再输出最终总结，无进化点也须明确说'无需进化'"，并全局要求执行任何 duo- 技能前先读其 `references/experience.md`；各技能 SKILL.md 不再保留任何复盘章节（触发全靠红线 8 与 Stop hook），领域复盘维度（任务摘要/关键点/反馈/自我感知口径）迁入各自 `experience.md` 头部"复盘维度"段；duo-skill-evolution 2.1 接入规范同步改为新机制（新技能一步接入——仅在 experience.md 写复盘维度，勿再改 SKILL.md）；workspace 另配 `.zcode/config.json` Stop hook 每回合注入收尾自查提醒作机制兜底（本地生效，该目录不入库）
 - DSH 输入面与会话工具研究落盘（`docs/research/DSH/输入面与会话工具/` 三件套，锚点 ddefc45f = release 0.1.6-alpha.2）：附件内容寻址库（SHA-256 硬链接去重/0400 只读/无 GC）、read_image 多模态三层链路（存储规范化/请求变体/Files API 与非视觉模型三层降级）、@file 路径提及模式（补全索引 + system 指南，零内容注入——修正 ADR-0016"注入"措辞）、会话检索（FTS5"服务在、索引熄火"双层 opt-in）与 /export（ZIP 流式下载而非 Markdown/JSON，同修正 ADR 措辞）——供 M21 设计访谈对照
+
+### Added
+
+- **附件与视觉多模态**（M21，ADR-0022）：新插件 `attachment.AttachmentPlugin`（yml 一行 opt-in）——内容寻址图片库落 `~/.duo/attachments/v1`（SHA-256 硬链接去重、0400 只读、无 GC 永不自动删除）；Web 输入框拖拽/粘贴图片上传（vision 闸门：`llm.vision: false` 缺省时收图即拒 409、read_image 执行前即拒，非视觉部署零感知），消息图片经授权读取端点渲染（先验证会话日志确实引用该 id 再回字节）；`read_image` 工具（fs 工具族追加，附件行在场即注册）读本地图片先入库再返回引用；图片多部件化进请求（消息附件与 read_image 结果以 base64 图片部件随请求发出，附件引用块经框架过滤不进子代理上下文）；请求前按目标尺寸确定性缩放并缓存变体（variantId = sha256(附件+目标+编码版本)）省 token；`llm.imageDelivery: files` 时图片变体经 DeepSeek 形态 Files API 上传换 file_id 进请求（本地索引去重、配额满回收最旧自有文件、上传失败回退 inline），缺省 inline。新依赖 TwelveMonkeys ImageIO + Thumbnailator（纯 Java 零 native）
+- **@file 路径提及**（M21，ADR-0022）：消息里 `@路径` 即工作区文件引用（零内容注入——内容永远由模型 read 工具自取）；Web 输入框 `@` 补全下拉（候选/目录下钻/引号路径 `@"含 空格"`；索引懒构建 + tool/result 后台重建 + 未命中重建重试覆盖 IDE/终端带外改文件；排除 .git/node_modules/target 等）；system 指南约束"要内容调 read；未 read 不得声称已看过"（仅 read 工具在册的部署注入，双呈现位去重）；CLI 文本直打
+- **会话检索**（M21，ADR-0022）：新插件 `sessionquery.SessionQueryPlugin`（yml 一行 opt-in）——`session_search` 工具（模型侧）+ Web 侧栏搜索框（用户侧）共享后端无关检索服务：内存倒排索引懒构建（首次搜索才扫 + 文件戳增量，启动零成本、不装零感知），分词 AND（英文整词 + 中文单字）、汉字原词主排序键 + 摘录锚定原词；索引内容 = 消息/工具调用与结果/todo/turn 错误（reasoning 物理不入），子代理会话不索引
+- **/export 会话导出**（M21，ADR-0022）：双面命令 `/export [markdown|json]`（busySafe，缺省 markdown 人读记录：角色/时间戳 + 工具摘要行 + 尾部附件引用清单；json 为日志原样副本）——CLI 写盘当前目录 `duo-session-<id>.md/.jsonl`，Web 自动触发浏览器下载；附件字节不打包（库内永不删除，引用清单已覆盖）
 
 ## 0.15.0（2026-09-20）
 

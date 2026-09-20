@@ -97,6 +97,20 @@ public final class WebPlugin implements Plugin<JsonNode> {
         dev.duo.harness.attachment.RequestVariants variants = attachments == null ? null
                 : new dev.duo.harness.attachment.RequestVariants(attachments,
                         DuoHome.resolve().root().resolve("cache/attachments"));
+        // files 投递（M21 工单 06）：vision 且 imageDelivery=files 时变体上传 Files API
+        // 换 file_id（本地索引去重 + 配额回收）；上传失败由投递调用方回退 inline
+        dev.duo.harness.attachment.ImageFileDelivery fileDelivery =
+                attachments != null && llm.vision()
+                        && dev.duo.harness.llm.LlmConfig.DELIVERY_FILES.equals(llm.imageDelivery())
+                        ? new dev.duo.harness.attachment.ImageFileDelivery(
+                                new dev.duo.harness.attachment.FilesApiUploader(
+                                        llm.baseUrl(), llm.apiKey(), java.time.Duration.ofSeconds(60)),
+                                DuoHome.resolve().root()
+                                        .resolve("cache/attachments/files-index.json"))
+                        : null;
+        // read_image 视觉闸门回填（M21 收口修正）：fs 插件注册时 vision 真值不可得，
+        // 呈现位加载 llm 配置后回填（llm.vision）
+        PresenterAssembly.wireReadImageVisionGate(tools, llm.vision());
         // 会话检索（M21 工单 08，可选依赖）：session-query 行缺席时侧栏搜索 503 降级
         dev.duo.harness.sessionquery.SessionQueryService sessionQuery =
                 ctx.hasService(dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME)
@@ -133,7 +147,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
                 adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                ChatAgent.PRESENTER_WEB, variants, llm.vision());
+                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -181,7 +195,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB, variants, llm.vision()));
+                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery));
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);

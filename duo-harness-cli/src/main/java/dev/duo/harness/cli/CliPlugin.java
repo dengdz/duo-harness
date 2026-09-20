@@ -146,6 +146,14 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 : new dev.duo.harness.attachment.RequestVariants(attachments,
                         dev.duo.harness.core.api.boot.DuoHome.resolve().root()
                                 .resolve("cache/attachments"));
+        // files 投递（M21 工单 06）：vision 且 imageDelivery=files 时变体上传换 file_id
+        this.fileDelivery = attachments == null || !visionEnabled || !filesDeliveryEnabled
+                ? null
+                : new dev.duo.harness.attachment.ImageFileDelivery(
+                        new dev.duo.harness.attachment.FilesApiUploader(
+                                deliveryBaseUrl, deliveryApiKey, java.time.Duration.ofSeconds(60)),
+                        dev.duo.harness.core.api.boot.DuoHome.resolve().root()
+                                .resolve("cache/attachments/files-index.json"));
         Path sessionsDir = sessionsDir();
 
         // 会话续接/新建（独占锁，M10-03）：被占则提示后改开新会话——绝不静默共享日志
@@ -189,7 +197,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
                 maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                requestVariants, visionEnabled);
+                requestVariants, visionEnabled, fileDelivery);
         answererRegistration = answers.register(ctx,
                 new AuditingAnswerer(holder::current, new ConsoleAnswerer(in, out)));
         PlanHolder plan = new PlanHolder();
@@ -203,6 +211,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重——
         // CLI 无补全 UI（一期文本直打），指南照常注入
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
+        // read_image 视觉闸门回填（M21 收口修正）：loadLlm 已刷新 visionEnabled
+        PresenterAssembly.wireReadImageVisionGate(tools, visionEnabled);
         // /export（M21 工单 09，ADR-0022 决策 9）：双面命令随装配注册（查重先到先得
         // ——Web 已注册则跳过），CLI 写盘 cwd
         PresenterAssembly.registerExportCommand(ctx, commands, holder::current);
@@ -333,7 +343,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 holder.session = Session.create(sessionsDir);
                 agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
                         maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                        requestVariants, visionEnabled);
+                        requestVariants, visionEnabled, fileDelivery);
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
@@ -551,11 +561,22 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** 视觉能力开关（llm.vision，M21 工单 05；loadLlm 时刷新）。 */
     private static volatile boolean visionEnabled;
 
+    /** files 投递开关与 provider 连接（llm.imageDelivery=files 时，M21 工单 06；loadLlm 刷新）。 */
+    private static volatile boolean filesDeliveryEnabled;
+    private static volatile String deliveryBaseUrl;
+    private static volatile String deliveryApiKey;
+
+    /** files 投递服务实例（apply 时按开关构建；/new 换绑 rebuild 沿用）。 */
+    private volatile dev.duo.harness.attachment.ImageFileDelivery fileDelivery;
+
     /** LLM 装配：配置缺失时 FAILED 并给出示例（沿 CLI 既有提示形态）。 */
     private static LlmAdapter loadLlm() {
         try {
             dev.duo.harness.llm.LlmConfig cfg = dev.duo.harness.llm.LlmConfig.load();
             visionEnabled = cfg.vision();
+            filesDeliveryEnabled = dev.duo.harness.llm.LlmConfig.DELIVERY_FILES.equals(cfg.imageDelivery());
+            deliveryBaseUrl = cfg.baseUrl();
+            deliveryApiKey = cfg.apiKey();
             return PresenterAssembly.llmAdapter(cfg);
         } catch (PluginException e) {
             throw new PluginException("CLI 面无法启动——LLM 未配置: " + e.getMessage()

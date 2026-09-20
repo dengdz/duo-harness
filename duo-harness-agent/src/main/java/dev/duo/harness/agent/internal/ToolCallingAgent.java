@@ -72,6 +72,8 @@ public final class ToolCallingAgent implements ChatAgent {
     private final String presenterId;
     /** 附件引用的请求变体解析器（M21；null = 视觉未启用，请求中丢弃图片部件）。 */
     private final dev.duo.harness.attachment.RequestVariants requestVariants;
+    /** files 投递服务（M21 工单 06；null = inline 投递）。 */
+    private final dev.duo.harness.attachment.ImageFileDelivery fileDelivery;
     /** 视觉能力开关（llm.vision，ADR-0022）：true 时引用解析为 base64 图片部件。 */
     private final boolean vision;
     /**
@@ -143,7 +145,7 @@ public final class ToolCallingAgent implements ChatAgent {
                             int maxParallelToolCalls, ContextGovernance governance,
                             String presenterId) {
         this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, null, false);
+                governance, presenterId, null, false, null);
     }
 
     /** 全参构造（M21 工单 05）：requestVariants 非空且 vision=true 时附件引用进请求。 */
@@ -151,7 +153,7 @@ public final class ToolCallingAgent implements ChatAgent {
                             PromptRegistry prompts, int maxIterations,
                             int maxParallelToolCalls, ContextGovernance governance,
                             String presenterId, dev.duo.harness.attachment.RequestVariants requestVariants,
-                            boolean vision) {
+                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
@@ -167,6 +169,7 @@ public final class ToolCallingAgent implements ChatAgent {
         this.governance = governance;
         this.presenterId = presenterId;
         this.requestVariants = requestVariants;
+        this.fileDelivery = fileDelivery;
         this.vision = vision;
     }
 
@@ -362,7 +365,7 @@ public final class ToolCallingAgent implements ChatAgent {
             projected = governance.govern(projected, session);
         }
         return new ChatRequest(prompts.compose(),
-                Messages.toChatMessages(projected, requestVariants, vision), specs);
+                Messages.toChatMessages(projected, requestVariants, vision, fileDelivery), specs);
     }
 
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */

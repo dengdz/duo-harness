@@ -2,6 +2,7 @@ package dev.duo.harness.agent.internal;
 
 import dev.duo.harness.session.AttachmentRef;
 import dev.duo.harness.attachment.RequestVariant;
+import dev.duo.harness.attachment.FilesApiUploader;
 import dev.duo.harness.attachment.RequestVariants;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.MessageImage;
@@ -21,7 +22,7 @@ final class Messages {
 
     /** 会话投影消息逐条转换为 llm 契约消息（纯文本形态——vision 部署走带参重载）。 */
     static List<ChatMessage> toChatMessages(List<Message> messages) {
-        return toChatMessages(messages, null, false);
+        return toChatMessages(messages, null, false, null);
     }
 
     /**
@@ -32,11 +33,12 @@ final class Messages {
      * @param vision   视觉开关（llm.vision）：true 时引用解析为 base64 图片部件
      */
     static List<ChatMessage> toChatMessages(List<Message> messages,
-                                            RequestVariants variants, boolean vision) {
+                                            RequestVariants variants, boolean vision,
+                                            dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
         List<ChatMessage> chatMessages = new ArrayList<>();
         for (Message message : messages) {
             if (message.role() == Message.Role.TOOL) {
-                chatMessages.add(convertTool(message, variants, vision));
+                chatMessages.add(convertTool(message, variants, vision, fileDelivery));
                 continue;
             }
             if (message.toolCalls() != null) {
@@ -47,7 +49,7 @@ final class Messages {
                         message.content(), calls, message.reasoning()));
                 continue;
             }
-            List<MessageImage> images = resolveImages(message.attachments(), variants, vision);
+            List<MessageImage> images = resolveImages(message.attachments(), variants, vision, fileDelivery);
             if (images != null) {
                 chatMessages.add(ChatMessage.user(message.content(), images));
                 continue;
@@ -57,23 +59,39 @@ final class Messages {
         return chatMessages;
     }
 
-    /** 附件引用 → base64 图片部件（vision 关闭或解析器缺席时丢弃——上游闸门已拦）。 */
+    /**
+     * 附件引用 → 图片部件（vision 关闭或解析器缺席时丢弃——上游闸门已拦）。
+     * files 投递（delivery 非空）：变体上传 Files API 换 file_id，上传失败整体
+     * 回退 inline base64（ADR-0022 决策 5——投递优化不添堵）。
+     */
     private static List<MessageImage> resolveImages(List<AttachmentRef> refs,
-                                                    RequestVariants variants, boolean vision) {
+                                                    RequestVariants variants, boolean vision,
+                                                    dev.duo.harness.attachment.ImageFileDelivery delivery) {
         if (refs == null || refs.isEmpty() || variants == null || !vision) {
             return null;
         }
         List<MessageImage> images = new ArrayList<>();
         for (AttachmentRef ref : refs) {
             RequestVariant variant = variants.variantFor(ref.attachmentId());
-            images.add(new MessageImage(
-                    Base64.getEncoder().encodeToString(variant.bytes()), variant.mediaType()));
+            String base64 = Base64.getEncoder().encodeToString(variant.bytes());
+            if (delivery == null) {
+                images.add(new MessageImage(base64, variant.mediaType()));
+                continue;
+            }
+            try {
+                String fileId = delivery.deliver(variant.variantId(), variant.bytes(),
+                        variant.mediaType(), ref.name());
+                images.add(new MessageImage(base64, variant.mediaType(), fileId));
+            } catch (FilesApiUploader.FilesApiException e) {
+                images.add(new MessageImage(base64, variant.mediaType())); // 回退 inline
+            }
         }
         return images;
     }
 
-    private static ChatMessage convertTool(Message message, RequestVariants variants, boolean vision) {
-        List<MessageImage> images = resolveImages(message.attachments(), variants, vision);
+    private static ChatMessage convertTool(Message message, RequestVariants variants, boolean vision,
+                                           dev.duo.harness.attachment.ImageFileDelivery delivery) {
+        List<MessageImage> images = resolveImages(message.attachments(), variants, vision, delivery);
         return images == null
                 ? ChatMessage.tool(message.toolCallId(), message.content())
                 : ChatMessage.toolWithImages(message.toolCallId(), message.content(), images);

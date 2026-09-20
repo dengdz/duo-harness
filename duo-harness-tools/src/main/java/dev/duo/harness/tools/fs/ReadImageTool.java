@@ -27,14 +27,23 @@ public final class ReadImageTool implements ToolDefinition {
 
     private final WorkspacePolicy workspace;
     private final AttachmentStore attachments;
-    /** 视觉能力闸门（llm.vision，缺省 false——工单 05 接线真实配置）。 */
-    private final java.util.function.BooleanSupplier visionGate;
+    /** 视觉能力闸门（llm.vision，缺省 false——真实值由装配层经 {@link #setVisionGate} 回填）。 */
+    private volatile java.util.function.BooleanSupplier visionGate;
 
     public ReadImageTool(WorkspacePolicy workspace, AttachmentStore attachments,
                          java.util.function.BooleanSupplier visionGate) {
         this.workspace = workspace;
         this.attachments = attachments;
         this.visionGate = visionGate;
+    }
+
+    /**
+     * 回填视觉闸门（M21 收口修正）：fs 插件 apply 早于呈现位加载 llm 配置，
+     * 注册时拿不到 vision 真值——呈现位装配后按 llm.vision 回填（setAgent 同款
+     * 装配器直传模式）。
+     */
+    public void setVisionGate(java.util.function.BooleanSupplier gate) {
+        this.visionGate = java.util.Objects.requireNonNull(gate, "gate");
     }
 
     @Override public String name() { return NAME; }

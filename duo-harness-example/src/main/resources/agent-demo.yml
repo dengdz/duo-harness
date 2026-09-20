@@ -25,6 +25,13 @@ plugins:
       #   type: tavily
       #   apiKeyEnv: TAVILY_API_KEY
 
+  # 附件库（M21，ADR-0022）：发布 "attachments" 服务——内容寻址图片库
+  # （~/.duo/attachments/v1，SHA-256 硬链接去重、0400 只读、永不自动删除）。
+  # 行在场即启用 read_image 与 Web 图片上传/渲染；不装零感知
+  - id: attachment
+    name: dev.duo.harness.attachment.AttachmentPlugin
+    config: {}
+
   # 会话检索（M21，ADR-0022）：行在场即发布 sessionQuery 服务（Web 侧栏搜索框
   # 数据源），tools 服务在册时同时注册 session_search 工具（模型侧）。
   # 索引懒构建——首次搜索才扫会话目录，启动零成本；子代理会话不索引，

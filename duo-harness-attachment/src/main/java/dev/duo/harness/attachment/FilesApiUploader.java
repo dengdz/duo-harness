@@ -83,4 +83,42 @@ public class FilesApiUploader {
         public FilesApiException(String message) { super(message); }
         public FilesApiException(String message, Throwable cause) { super(message, cause); }
     }
+
+    /**
+     * 删除自有文件（配额回收用，M21 工单 06）：DELETE /files/{file_id}；
+     * 404 视为已删除（幂等）。网络类异常上抛（回收失败交由调用方重试策略）。
+     */
+    public void delete(String fileId) {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/files/" + fileId))
+                .DELETE()
+                .timeout(timeout)
+                .header("Authorization", "Bearer " + apiKey)
+                .build();
+        HttpResponse<String> response;
+        try {
+            response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (java.net.http.HttpTimeoutException e) {
+            throw new FilesApiException("Files API 删除超时", e);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new FilesApiException("Files API 删除失败: " + e.getMessage(), e);
+        }
+        int status = response.statusCode();
+        if (status == 404) {
+            return; // 已不存在 = 回收目标达成
+        }
+        if (status < 200 || status >= 300) {
+            throw new FilesApiException("Files API 删除返回 HTTP " + status + ": " + response.body());
+        }
+    }
+
+    /** 配额类失败启发判定：4xx/429 且响应体提及 quota/limit/exceed/full（provider 间措辞有差异）。 */
+    public boolean looksLikeQuotaFailure(FilesApiException e) {
+        String message = e.getMessage() == null ? "" : e.getMessage();
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        boolean statusShape = lower.contains("http 400") || lower.contains("http 403")
+                || lower.contains("http 413") || lower.contains("http 429");
+        return statusShape && (lower.contains("quota") || lower.contains("limit")
+                || lower.contains("exceed") || lower.contains("full"));
+    }
 }

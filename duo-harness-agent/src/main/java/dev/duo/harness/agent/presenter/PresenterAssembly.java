@@ -204,8 +204,23 @@ public final class PresenterAssembly {
                                       String presenterId,
                                       dev.duo.harness.attachment.RequestVariants variants,
                                       boolean vision) {
+        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
+                governance, presenterId, variants, vision, null);
+    }
+
+    /**
+     * 对话执行者（M21 工单 06 files 投递版）：{@code fileDelivery} 非空时图片变体
+     * 上传 Files API 换 file_id 进请求（上传失败自动回退 inline base64）。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      int maxParallelToolCalls, ContextGovernance governance,
+                                      String presenterId,
+                                      dev.duo.harness.attachment.RequestVariants variants,
+                                      boolean vision,
+                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
         return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance, presenterId, variants, vision);
+                maxParallelToolCalls, governance, presenterId, variants, vision, fileDelivery);
     }
 
     /**
@@ -459,6 +474,25 @@ public final class PresenterAssembly {
         }
         prompts.register(ctx, new dev.duo.harness.agent.prompt.PromptFragment(
                 FILE_MENTION_GUIDE_SOURCE, FILE_MENTION_GUIDE));
+    }
+
+    /**
+     * read_image 视觉闸门回填（M21 收口修正）：fs 插件注册 read_image 时视觉闸门
+     * 缺省 false（apply 早于呈现位加载 llm 配置，真值不可得）——呈现位装配后按
+     * {@code llm.vision} 回填。双呈现位幂等（同一工具实例重复回填无副作用）。
+     */
+    public static void wireReadImageVisionGate(ToolsService tools, boolean vision) {
+        tools.list().stream()
+                .filter(definition -> "read_image".equals(definition.name()))
+                .findFirst()
+                .ifPresent(definition -> {
+                    if (definition instanceof dev.duo.harness.tools.fs.ReadImageTool tool) {
+                        tool.setVisionGate(() -> vision);
+                    } else {
+                        LOG.warn("read_image 已被非本库实现占用（{}），视觉闸门未回填",
+                                definition.getClass().getName());
+                    }
+                });
     }
 
     /** @file 指南片段来源标识（审计与双呈现位查重键）。 */
