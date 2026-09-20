@@ -87,6 +87,8 @@ public final class WebFace {
     private final java.util.function.BooleanSupplier visionGate;
     /** 会话检索服务（M21 工单 08，可选依赖：null = session-query 行未装——端点 503）。 */
     private final SessionQueryService sessionQuery;
+    /** @file 补全服务（M21 工单 07，可选依赖：装配层经 {@link #setFileRefs} 直传，不走服务声明）。 */
+    private volatile dev.duo.harness.agent.fileref.FileReferenceService fileRefs;
     /** SSE 客户端连接（多客户端广播，心跳写失败即摘除）。 */
     private final CopyOnWriteArrayList<SseClient> sseOutputs = new CopyOnWriteArrayList<>();
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
@@ -269,6 +271,11 @@ public final class WebFace {
         this.agent = agent;
     }
 
+    /** 补全服务直传（装配层调用；WebPlugin 自产自用不经服务声明，见 WebPlugin fileRefs 注释）。 */
+    void setFileRefs(dev.duo.harness.agent.fileref.FileReferenceService service) {
+        this.fileRefs = service;
+    }
+
     /** 当前会话（装配层重建 agent 时取用）。 */
     Session currentSession() {
         return session;
@@ -385,6 +392,7 @@ public final class WebFace {
         route("/api/sessions", this::handleSessions);
         route("/api/session/switch", this::handleSessionSwitch);
         route("/api/search", this::handleSearch);
+        route("/api/file-complete", this::handleFileComplete);
         route("/api/answer", this::handleAnswer);
         route("/api/session/page", this::handleSessionPage);
         route("/api/subagent/events", this::handleSubagentEvents);
@@ -764,6 +772,41 @@ public final class WebFace {
 
     /** 侧栏搜索单次返回的命中上限（呈现位侧常量；工具侧上限由插件配置管）。 */
     static final int SEARCH_LIMIT = 20;
+
+    /** @ 补全单次返回候选上限（下拉一屏可读的量）。 */
+    static final int FILE_COMPLETE_LIMIT = 20;
+
+    /**
+     * @file 路径补全（M21 工单 07）：{@code GET /api/file-complete?q=<@ 后的 token>}
+     * → 工作区路径候选。fileRefs 服务未装配（无 workspace 的纯对话装配）503。
+     */
+    private void handleFileComplete(HttpExchange exchange) throws IOException {
+        try {
+            dev.duo.harness.agent.fileref.FileReferenceService refs = this.fileRefs;
+            if (refs == null) {
+                respondText(exchange, 503, "补全服务未装配（无 workspace）");
+                return;
+            }
+            // queryParam 不做 URL 解码——路径 token 显式 decode
+            String q;
+            try {
+                q = java.net.URLDecoder.decode(queryParam(exchange, "q"),
+                        java.nio.charset.StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException e) {
+                respondText(exchange, 400, "token 编码非法");
+                return;
+            }
+            var root = JSON.createObjectNode();
+            var arr = root.putArray("suggestions");
+            for (var c : refs.complete(q, FILE_COMPLETE_LIMIT)) {
+                arr.addObject().put("path", c.path()).put("directory", c.directory());
+            }
+            respondJson(exchange, 200, root.toString());
+        } catch (Throwable t) {
+            log.error("/api/file-complete 处理失败", t);
+            respondText(exchange, 500, "补全处理失败: " + t);
+        }
+    }
 
     /**
      * 会话检索（M21 工单 08）：{@code GET /api/search?q=关键词} → 命中列表

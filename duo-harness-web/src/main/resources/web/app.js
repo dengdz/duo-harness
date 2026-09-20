@@ -926,6 +926,7 @@ const app = (() => {
     const text = input.value.trim();
     const attachments = pendingAttachments.splice(0); // 取走待发清单
     if ((!text && !attachments.length) || sendInFlight) return; // 受理中重入忽略
+    atClose(); // 发送即收起 @ 补全（下拉态不应跨消息残留）
     if (!attachments.length) attChips.innerHTML = ''; // 无附件发送时清可能残留的空壳
     input.value = '';
     sendInFlight = true;
@@ -970,6 +971,136 @@ const app = (() => {
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
   // 附件入口（M21 工单 04）：粘贴与拖拽图片 → 上传入列（vision 关闭时端点 409 提示）
   $('#input').addEventListener('paste', (e) => handleAttachmentFiles(e.clipboardData.files));
+
+  // ---- @file 补全下拉（M21 工单 07，ADR-0022 决策 7）----
+  // 触发规则与 agent.fileref.FileMentionGrammar 同口径：@ 前须行首/空白；@"..." 引号
+  // 路径可含空格；选中即插入 mention 文本（零内容注入——内容永远由模型 read）
+  function activeAtToken(text, caret) {
+    for (let p = Math.min(caret, text.length) - 1; p >= 0; p--) {
+      if (text[p] !== '@') continue;
+      if (p !== 0 && !/\s/.test(text[p - 1])) continue; // @ 前须行首/空白
+      if (text[p + 1] === '"') {
+        const close = text.indexOf('"', p + 2);
+        if (close >= 0 && close < caret) {
+          return { token: text.slice(p + 2, close), start: p, end: close + 1 };
+        }
+        return { token: text.slice(p + 2, caret), start: p, end: caret, quoted: true };
+      }
+      const body = text.slice(p + 1, caret);
+      if (/\s/.test(body)) return null; // 非引号路径含空白 = token 已闭合
+      return { token: body, start: p, end: caret };
+    }
+    return null;
+  }
+
+  function formatMention(path, isDirectory) {
+    let p = isDirectory && !path.endsWith('/') ? path + '/' : path;
+    return /\s/.test(p) ? '@"' + p + '"' : '@' + p;
+  }
+
+  let atState = { items: [], selected: 0, open: false, requestId: 0 };
+
+  function atClose() {
+    atState.open = false;
+    atState.items = [];
+    $('#atDropdown').hidden = true;
+    $('#atDropdown').innerHTML = '';
+  }
+
+  function atRenderList() {
+    const box = $('#atDropdown');
+    box.innerHTML = '';
+    if (!atState.items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'at-empty';
+      empty.textContent = '无匹配路径';
+      box.appendChild(empty);
+      return;
+    }
+    atState.items.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.className = 'at-item' + (i === atState.selected ? ' selected' : '');
+      const dir = document.createElement('span');
+      dir.className = 'at-dir';
+      dir.textContent = item.directory ? '[目录]' : '[文件]';
+      const path = document.createElement('span');
+      path.textContent = item.path;
+      row.append(dir, path);
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); atPick(i); });
+      box.appendChild(row);
+    });
+    const sel = box.children[atState.selected];
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+
+  function atPick(i) {
+    const item = atState.items[i];
+    if (!item) return;
+    const input = $('#input');
+    // 换行/多行输入下 activeAtToken 以整值 + 光标计算，选中替换 [start, end) 区间
+    const active = activeAtToken(input.value, input.selectionStart || input.value.length);
+    const mention = formatMention(item.path, item.directory) + ' ';
+    if (active) {
+      const before = input.value.slice(0, active.start);
+      const after = input.value.slice(active.end);
+      input.value = before + mention + after;
+      const caret = before.length + mention.length;
+      input.setSelectionRange(caret, caret);
+    } else {
+      input.value += mention;
+    }
+    atClose();
+    input.focus();
+  }
+
+  async function atRefresh() {
+    const input = $('#input');
+    const active = activeAtToken(input.value, input.selectionStart || input.value.length);
+    if (!active) { atClose(); return; }
+    const rid = ++atState.requestId;
+    try {
+      const res = await fetch('/api/file-complete?q=' + encodeURIComponent(active.token));
+      if (rid !== atState.requestId) return; // 过期响应丢弃
+      if (!res.ok) { atClose(); return; }
+      const data = await res.json();
+      atState.items = data.suggestions || [];
+      atState.selected = 0;
+      atState.open = true;
+      const box = $('#atDropdown');
+      box.hidden = false;
+      atRenderList();
+    } catch (e) { atClose(); }
+  }
+
+  function initAtCompletion() {
+    const input = $('#input');
+    let timer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(atRefresh, 120);
+    });
+    // capture：下拉打开时按键先于发送监听处理（Enter 选词不发消息）
+    input.addEventListener('keydown', (e) => {
+      if (!atState.open || !atState.items.length) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        atState.selected = (atState.selected + delta + atState.items.length) % atState.items.length;
+        atRenderList();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        atPick(atState.selected);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        atClose();
+      }
+    }, true);
+    // 点击面板外收起（mousedown 在 pick 的 preventDefault 之后不误关）
+    document.addEventListener('mousedown', (e) => {
+      if (atState.open && !$('#atDropdown').contains(e.target) && e.target !== input) atClose();
+    });
+  }
   const composerEl = document.querySelector('.composer');
   composerEl.addEventListener('dragover', (e) => e.preventDefault());
   composerEl.addEventListener('drop', (e) => { e.preventDefault(); handleAttachmentFiles(e.dataTransfer.files); });
@@ -1234,6 +1365,7 @@ const app = (() => {
   refreshStatus();
   refreshSessions();
   initSessionSearch();
+  initAtCompletion();
   setInterval(refreshStatus, 5000);
 
   // 滚动到顶加载更早历史（工单 02）：loading 标志防重入，加载后由 finally 补发直至占位耗尽

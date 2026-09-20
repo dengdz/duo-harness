@@ -101,6 +101,14 @@ public final class WebPlugin implements Plugin<JsonNode> {
         dev.duo.harness.sessionquery.SessionQueryService sessionQuery =
                 ctx.hasService(dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME)
                         ? ctx.as(WebSessionQueryView.class).sessionQuery() : null;
+        // @file 补全服务（M21 工单 07，ADR-0022 决策 7）：workspace 在场才建——
+        // 索引以 workspace 根为界。本插件自产自用（补全端点直取），**不进
+        // optionalInject 声明**：自产自依赖会让内核 recheck 循环重跑 apply
+        dev.duo.harness.agent.fileref.FileReferenceService fileRefs =
+                ctx.hasService(WorkspacePolicy.SERVICE_NAME)
+                        ? new dev.duo.harness.agent.fileref.FileReferenceService(
+                                ctx.as(WebWorkspaceView.class).workspace().root())
+                        : null;
 
         Session session;
         try {
@@ -174,8 +182,29 @@ public final class WebPlugin implements Plugin<JsonNode> {
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);
+            // 换绑后的会话同样挂 tool/result 监听（旧会话随 close 清空监听器，不泄漏）
+            if (fileRefs != null) {
+                fresh.addListener((index, event) -> {
+                    if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
+                        fileRefs.markStale();
+                    }
+                });
+            }
         });
         SessionTitles.attach(session, adapter);
+        // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重
+        PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
+        // 补全服务交给 face（自产自用直传，不走服务声明——见上方 fileRefs 注释）
+        face.setFileRefs(fileRefs);
+        // tool/result 后台重建（bash/write 改文件树后索引陈旧）：初始会话监听——
+        // 换绑在 onSessionChanged 回调里重挂；旧会话 close 清空监听器，不泄漏
+        if (fileRefs != null) {
+            session.addListener((index, event) -> {
+                if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
+                    fileRefs.markStale();
+                }
+            });
+        }
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
         return face::stop;
     }
@@ -214,6 +243,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebSessionQueryView {
 
         dev.duo.harness.sessionquery.SessionQueryService sessionQuery();
+    }
+
+    /** workspace 服务的视图接口（方法名即服务名）。 */
+    interface WebWorkspaceView {
+
+        WorkspacePolicy workspace();
     }
     /**
      * 解析 web 插件 config 的可选页长（{@code config.pageSize}，M19 还账）：首屏与每页

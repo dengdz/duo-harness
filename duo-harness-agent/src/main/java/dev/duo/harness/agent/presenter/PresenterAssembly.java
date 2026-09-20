@@ -393,6 +393,33 @@ public final class PresenterAssembly {
     }
 
     /**
+     * @file 提及指南注入（M21 工单 07，ADR-0022 决策 7）：**仅 read 工具在册时**
+     * 注册进 prompt 注册表——指南约束"要内容调 read；未 read 不得声称已看过"，
+     * 无 read 的部署（纯对话/自定义工具族）注入了也无法兑现，零注入。双呈现位
+     * 去重按片段来源先到先得（{@link PromptRegistry#hasSource}）——Web 与 CLI 各自
+     * apply 都调用本方法，同源片段只注一份。
+     */
+    public static void registerFileMentionGuide(Context ctx, ToolsService tools,
+                                                PromptRegistry prompts) {
+        boolean readPresent = tools.list().stream()
+                .anyMatch(definition -> "read".equals(definition.name()));
+        if (!readPresent || prompts.hasSource(FILE_MENTION_GUIDE_SOURCE)) {
+            return;
+        }
+        prompts.register(ctx, new dev.duo.harness.agent.prompt.PromptFragment(
+                FILE_MENTION_GUIDE_SOURCE, FILE_MENTION_GUIDE));
+    }
+
+    /** @file 指南片段来源标识（审计与双呈现位查重键）。 */
+    public static final String FILE_MENTION_GUIDE_SOURCE = "file-mention-guide";
+
+    /** @file 指南片段正文（零内容注入——文件内容永远经 read 工具，ADR-0022 决策 7）。 */
+    public static final String FILE_MENTION_GUIDE =
+            "消息中的 @路径 是工作区文件/目录的引用（如 @src/Main.java、@docs/、@\"含 空格 的名\"），"
+                    + "不是已读入的内容。要基于某个文件回答，必须先用 read 工具读取它——"
+                    + "未被 read 过的文件不得声称已看过其内容。";
+
+    /**
      * subagent 宿主发布（M15，ADR-0015）：呈现位把子代理执行链所需的父侧构件
      * （LLM adapter / 治理阈值 / 当前会话供给）发布为 {@code subagent-host} 服务
      * ——{@code SubagentPlugin} 经 inject 读取它自行装配五件工具。**依赖方向由

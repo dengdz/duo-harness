@@ -39,11 +39,16 @@ final class FileReferenceIndex {
                 String name = entry.getFileName().toString();
                 if (EXCLUDED.contains(name)) continue;
                 String rel = prefix.isEmpty() ? name : prefix + "/" + name;
-                boolean isDir = Files.isDirectory(entry);
+                // 目录 symlink 只列候选不下钻（ADR-0022 决策 7：目录 symlink 不跟随——
+                // 防止索引逃出 workspace 或绕进排除目录的符号链接别名）
+                boolean isDir = Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                boolean isSymlink = Files.isSymbolicLink(entry);
                 out.add(new Candidate(rel, isDir));
-                if (isDir) collect(entry, rel, out, depth + 1);
+                if (isDir && !isSymlink) collect(entry, rel, out, depth + 1);
             }
-        } catch (IOException ignored) { }
+        } catch (IOException ignored) {
+            // 子树不可读贡献 0 候选：防护矩阵语义，不炸穿整表构建
+        }
     }
 
     Path resolve(String relativePath) {

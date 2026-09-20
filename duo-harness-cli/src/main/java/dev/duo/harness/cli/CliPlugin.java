@@ -200,6 +200,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
         });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, holder::current);
+        // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重——
+        // CLI 无补全 UI（一期文本直打），指南照常注入
+        PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, llm, governanceTuning, holder::current);
