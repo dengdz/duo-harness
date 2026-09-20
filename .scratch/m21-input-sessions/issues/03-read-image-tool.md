@@ -10,8 +10,9 @@
 
 ## Status
 
-ready-for-agent
+in-progress
 
+- 2026-09-20（实现轮）：ReadImageTool 落地（闸门零 I/O 先于路径解析、魔数嗅探、先持久化再返回引用）；归本地读类三档放行；FsToolsPlugin 可选依赖 attachments 在场才注册（DSH 同款）；视觉闸门暂恒 false 待工单 05 接线 llm.vision。tools 180 全绿、全仓 SUCCESS。
 ## Checklist
 
 - [ ] tools 模块 `fs` 子包 `ReadImageTool`：单参数 `file_path`；`requiresApproval` 恒 false、归读类三档放行（档位矩阵测试钉住）

@@ -19,6 +19,12 @@
       <artifactId>duo-harness-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- read_image 的附件库依赖（M21 工单 03，ADR-0022；attachments 服务可选在场） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-attachment</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 工具输出契约校验；版本跟随 SDK（mcp-json-jackson2 要求 2.0.0），见根 pom -->
     <dependency>
       <groupId>com.networknt</groupId>

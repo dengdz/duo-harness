@@ -7,7 +7,7 @@ import dev.duo.harness.core.api.PluginException;
  * 附件域配置（ADR-0022）：源图与规范化产物的尺寸/字节预算。字段可省（省略即缺省，
  * 对齐 DSH 量级），类型/数值非法启动即 FAILED 点名，不做静默纠正。
  */
-record AttachmentConfig(
+public record AttachmentConfig(
         long maxImageBytes,
         int maxImagesPerMessage,
         long maxMessageImageBytes,
@@ -26,7 +26,7 @@ record AttachmentConfig(
     static final int DEFAULT_NORMALIZED_IMAGE_MAX_DIMENSION = 8192;
     static final long DEFAULT_NORMALIZED_IMAGE_MAX_BYTES = 4L * 1024 * 1024;
 
-    static AttachmentConfig defaults() {
+    public static AttachmentConfig defaults() {
         return new AttachmentConfig(DEFAULT_MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGES_PER_MESSAGE,
                 DEFAULT_MAX_MESSAGE_IMAGE_BYTES, DEFAULT_MAX_IMAGE_PIXELS, DEFAULT_MAX_IMAGE_DIMENSION,
                 DEFAULT_NORMALIZED_IMAGE_MAX_PIXELS, DEFAULT_NORMALIZED_IMAGE_MAX_DIMENSION,
@@ -34,7 +34,7 @@ record AttachmentConfig(
     }
 
     /** yml config 解析：config 块可省；字段可省；类型/数值非法点名。 */
-    static AttachmentConfig parse(JsonNode config) {
+    public static AttachmentConfig parse(JsonNode config) {
         if (config == null || config.isNull()) {
             return defaults();
         }

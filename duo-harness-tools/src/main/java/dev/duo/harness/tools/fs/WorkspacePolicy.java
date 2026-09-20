@@ -49,7 +49,7 @@ public final class WorkspacePolicy {
         ALLOW, ASK
     }
 
-    private static final Set<String> READ_TOOLS = Set.of("read", "glob", "grep");
+    private static final Set<String> READ_TOOLS = Set.of("read", "glob", "grep", ReadImageTool.NAME);
     private static final Set<String> WRITE_TOOLS = Set.of("write", "edit");
     /** 网络读（M20，ADR-0021 决策 8）：出网拉取类工具——独立于本地读集合分档。 */
     private static final Set<String> NETWORK_READ_TOOLS = Set.of("web_fetch", "web_search");
