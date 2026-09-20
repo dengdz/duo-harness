@@ -500,6 +500,16 @@ const render = (() => {
 
   function commandResult(ev) {
     if (!ev.text) return; // 空结果（如 /exit）不渲染
+    if (ev.toolName === 'export' && ev.text.startsWith('/api/session/export')) {
+      // /export（M21 工单 09）：done 结果即下载端点 URL——触发下载流
+      // （Content-Disposition 命名，浏览器直接落盘）；URL 文本照常渲染可查
+      const a = document.createElement('a');
+      a.href = ev.text;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('正在下载导出文件…', 'info');
+    }
     showMessages();
     const div = document.createElement('div');
     div.className = 'msg cmdresult';

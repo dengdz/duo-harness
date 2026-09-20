@@ -393,6 +393,7 @@ public final class WebFace {
         route("/api/session/switch", this::handleSessionSwitch);
         route("/api/search", this::handleSearch);
         route("/api/file-complete", this::handleFileComplete);
+        route("/api/session/export", this::handleSessionExport);
         route("/api/answer", this::handleAnswer);
         route("/api/session/page", this::handleSessionPage);
         route("/api/subagent/events", this::handleSubagentEvents);
@@ -845,6 +846,39 @@ public final class WebFace {
                     .put("snippet", hit.snippet());
         }
         respondJson(exchange, 200, root.toString());
+    }
+
+    /**
+     * 会话导出下载流（M21 工单 09，ADR-0022 决策 9）：
+     * {@code GET /api/session/export?format=markdown|json} → 附件下载
+     * （Content-Disposition 命名 duo-session-&lt;id&gt;.md/.jsonl，浏览器直接落盘）。
+     * 只导当前会话；非法格式 400 点名。
+     */
+    private void handleSessionExport(HttpExchange exchange) throws IOException {
+        try {
+            String formatArg = queryParam(exchange, "format");
+            dev.duo.harness.session.SessionExport.Format parse =
+                    dev.duo.harness.session.SessionExport.Format.parse(formatArg);
+            if (parse == null) {
+                respondText(exchange, 400, "未知格式: \"" + formatArg + "\"（可选 markdown | json）");
+                return;
+            }
+            Session current = session;
+            String fileName = dev.duo.harness.session.SessionExport.fileName(current.id(), parse);
+            String body = parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
+                    ? dev.duo.harness.session.SessionExport.markdown(current)
+                    : dev.duo.harness.session.SessionExport.jsonl(current);
+            exchange.getResponseHeaders().set("Content-Disposition",
+                    "attachment; filename=\"" + fileName + "\"");
+            respond(exchange, 200,
+                    parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
+                            ? "text/markdown; charset=utf-8"
+                            : "application/x-ndjson",
+                    body.getBytes(StandardCharsets.UTF_8));
+        } catch (Throwable t) {
+            log.error("/api/session/export 处理失败", t);
+            respondText(exchange, 500, "导出失败: " + t);
+        }
     }
 
     /**

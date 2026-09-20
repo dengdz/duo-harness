@@ -657,6 +657,24 @@ public final class Session {
     public record TailWindow(int startEvent, int earlierMessages) { }
 
     /**
+     * 导出用 JSONL 原样行（M21 工单 09）：与落盘同一序列化器对快照逐行重放。
+     * 屏障语义由数据结构保证——append 先落盘 force 再入快照（CoW 原子发布），
+     * 快照既无半行撕裂、又是已持久化事件的视图（导出即持久化视图，无 pending）。
+     * 坏行不存在（快照只含本类写出的合法行）；序列化失败 fail-loud 不给截断导出。
+     */
+    public List<String> jsonlLines() {
+        List<String> out = new ArrayList<>(snapshot.size());
+        for (SessionEvent event : snapshot) {
+            try {
+                out.add(toJsonLine(event));
+            } catch (IOException e) {
+                throw new PluginException("会话导出序列化失败: " + event.type(), e);
+            }
+        }
+        return out;
+    }
+
+    /**
      * 会话标题（latest-wins）：最新 {@code session/title} 事件的文本；无标题事件
      * 返回 null（调用方回退 id 呈现）。标题生成器（工单 M13-06）一次写入，重写由
      * latest-wins 自然覆盖——当前产品形态不重生成、不可改名。

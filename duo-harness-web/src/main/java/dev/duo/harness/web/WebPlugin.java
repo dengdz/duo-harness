@@ -155,6 +155,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // CLI 已注册则跳过），会话经 face 延迟解析取当前值
         PresenterAssembly.registerCompactCommand(ctx, commands, governance);
         PresenterAssembly.registerTitleCommand(ctx, commands);
+        // /export（M21 工单 09，ADR-0022 决策 9）：双面命令（查重先到先得）；Web 发起
+        // 时返回下载端点 URL，前端拦截自动触发下载流
+        PresenterAssembly.registerExportCommand(ctx, commands, face::currentSession);
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置（BUG-20260919-03
         // ——双开下另一呈现位可能刚恢复过档位）；换绑恢复在 onSessionChanged 回调里执行
         PresenterAssembly.restorePermissionMode(ctx, session, false);

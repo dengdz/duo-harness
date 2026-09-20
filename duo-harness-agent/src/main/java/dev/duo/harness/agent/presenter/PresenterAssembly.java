@@ -393,6 +393,57 @@ public final class PresenterAssembly {
     }
 
     /**
+     * /export 导出命令（M21 工单 09，ADR-0022 决策 9）：双面、busySafe（纯读渲染，
+     * agent 执行中可导）、command/run+done 审计随分发白得。按发起面分流：CLI 写盘
+     * 目录并回显落盘路径；Web 返回下载端点相对 URL（前端拦截自动触发下载流）。
+     * 命令未注册时注册，已注册（另一呈现位先到）跳过。
+     */
+    public static void registerExportCommand(Context ctx, CommandsRegistry commands,
+                                             Supplier<Session> currentSession) {
+        registerExportCommand(ctx, commands, currentSession,
+                java.nio.file.Paths.get("").toAbsolutePath());
+    }
+
+    /** 重载（测试注入导出目录；生产 cwd 语义见上）。 */
+    static void registerExportCommand(Context ctx, CommandsRegistry commands,
+                                      Supplier<Session> currentSession,
+                                      java.nio.file.Path exportDir) {
+        if (commands.find("export") != null) {
+            return;
+        }
+        commands.register(ctx, new CommandDefinition("export",
+                "导出当前会话：/export [markdown|json]，缺省 markdown（人读记录）；"
+                        + "json 为会话日志原样副本。CLI 写盘当前目录，Web 自动下载",
+                CommandScope.ANY, true,
+                context -> {
+                    dev.duo.harness.session.SessionExport.Format format =
+                            dev.duo.harness.session.SessionExport.Format.parse(context.args());
+                    Session session = context.session();
+                    if (format == null) {
+                        return "[/export 错误] 未知格式: \"" + context.args()
+                                + "\"（可选 markdown | json，缺省 markdown）";
+                    }
+                    String fileName = dev.duo.harness.session.SessionExport
+                            .fileName(session.id(), format);
+                    if (context.presenter() == CommandScope.WEB) {
+                        return "/api/session/export?format=" + format.argName;
+                    }
+                    java.nio.file.Path target = exportDir.resolve(fileName);
+                    try {
+                        java.nio.file.Files.writeString(target,
+                                format == dev.duo.harness.session.SessionExport.Format.MARKDOWN
+                                        ? dev.duo.harness.session.SessionExport.markdown(session)
+                                        : dev.duo.harness.session.SessionExport.jsonl(session),
+                                java.nio.charset.StandardCharsets.UTF_8);
+                    } catch (java.io.IOException e) {
+                        // fail-loud：写失败向上抛（分发器收敛为错误文本），不留半截文件承诺
+                        throw new IllegalStateException("导出写盘失败: " + target, e);
+                    }
+                    return "已导出: " + target.toAbsolutePath();
+                }));
+    }
+
+    /**
      * @file 提及指南注入（M21 工单 07，ADR-0022 决策 7）：**仅 read 工具在册时**
      * 注册进 prompt 注册表——指南约束"要内容调 read；未 read 不得声称已看过"，
      * 无 read 的部署（纯对话/自定义工具族）注入了也无法兑现，零注入。双呈现位
