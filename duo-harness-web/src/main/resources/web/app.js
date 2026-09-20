@@ -33,11 +33,26 @@ const api = {
     if (!res.ok) throw new Error('分页请求失败（HTTP ' + res.status + '）');
     return res.json();
   },
-  async sendMessage(text) {
+  async sendMessage(text, attachments) {
     return fetch('/api/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify(attachments && attachments.length ? { text, attachments } : { text })
     });
+  },
+  // 附件上传（M21 工单 04）：文件 → base64 → 入库，返回引用元数据（发送时随消息提交）
+  async uploadAttachment(file) {
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+    const res = await fetch('/api/attachment/upload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, name: file.name })
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || ('HTTP ' + res.status));
+    return res.json();
   },
   // 结构化回答协议（M16 工单 07）：审批 {decision}，提问/计划 {answers}——两形态互斥，
   // 服务端不做字符串嗅探（自由文本里的"拒绝"是普通回答，不是判定语义）
@@ -171,6 +186,19 @@ const render = (() => {
     b.className = 'bubble';
     b.textContent = text;
     div.appendChild(b);
+    t.container.appendChild(div);
+    scroll();
+  }
+
+  function userImage(src, alt) {
+    showMessages();
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    const img = document.createElement('img');
+    img.className = 'att-image';
+    img.src = src;
+    img.alt = alt || '附件图片';
+    div.appendChild(img);
     t.container.appendChild(div);
     scroll();
   }
@@ -571,7 +599,14 @@ const render = (() => {
    * 收口整段覆盖——进行中轮次刷新不空窗，且不复发 0913-04 碎片化（防碎片化不以丢弃为手段）。
    */
   function dispatch(ev) {
-    if (ev.type === 'user/message') {
+    if (ev.type === 'user/attachment') {
+      // 附件引用块（M21 工单 04）：text 为引用 JSON，图片经授权读取端点回字节
+      try {
+        const ref = JSON.parse(ev.text);
+        userImage('/api/attachment/read?id=' + ref.attachmentId, ref.name || '附件图片');
+      } catch (e) { /* 坏行跳过 */ }
+    }
+    else if (ev.type === 'user/message') {
       user(ev.text);
       todoPanel.clear(); // 新轮开始：上一轮清单使命结束（与 todoProjection 清空语义一致）
     }
@@ -838,16 +873,61 @@ const app = (() => {
 
   let sendInFlight = false; // 请求在途闸：只拦重入，不拦"思考中"——执行中发消息是合法注入
 
+  // ---- 附件（M21 工单 04）：拖拽/粘贴上传入列，发送时随消息提交 ----
+  const pendingAttachments = [];
+  const attChips = document.createElement('div');
+  attChips.className = 'att-chips';
+  document.querySelector('.composer').appendChild(attChips);
+
+  function addPendingAttachment(meta) {
+    if (pendingAttachments.some(a => a.attachmentId === meta.attachmentId)) return; // 同图不重列入列
+    pendingAttachments.push(meta);
+    renderAttChips();
+  }
+
+  function renderAttChips() {
+    attChips.innerHTML = '';
+    for (const meta of pendingAttachments) {
+      const chip = document.createElement('span');
+      chip.className = 'att-chip';
+      chip.textContent = (meta.name || meta.attachmentId.slice(0, 8)) + ' · ' + Math.max(1, Math.round(meta.bytes / 1024)) + 'KB';
+      const remove = document.createElement('button');
+      remove.className = 'att-remove';
+      remove.textContent = '×';
+      remove.onclick = () => {
+        const i = pendingAttachments.indexOf(meta);
+        if (i >= 0) pendingAttachments.splice(i, 1);
+        renderAttChips();
+      };
+      chip.appendChild(remove);
+      attChips.appendChild(chip);
+    }
+  }
+
+  function handleAttachmentFiles(files) {
+    for (const file of files) {
+      if (!file.type || !file.type.startsWith('image/')) {
+        showToast('仅支持图片附件（png/jpeg/gif/webp）', 'err');
+        continue;
+      }
+      api.uploadAttachment(file)
+        .then(addPendingAttachment)
+        .catch(err => showToast('上传失败：' + errText(err), 'err'));
+    }
+  }
+
   async function send() {
     const input = $('#input');
     const text = input.value.trim();
-    if (!text || sendInFlight) return; // 受理中重入忽略（注入受理后按钮即恢复，可连发）
+    const attachments = pendingAttachments.splice(0); // 取走待发清单
+    if ((!text && !attachments.length) || sendInFlight) return; // 受理中重入忽略
+    if (!attachments.length) attChips.innerHTML = ''; // 无附件发送时清可能残留的空壳
     input.value = '';
     sendInFlight = true;
     setSendBusy(true, '…');
     render.showMessages();
     try {
-      const res = await api.sendMessage(text);
+      const res = await api.sendMessage(text, attachments);
       if (res.status === 202) {
         // 202 空体 = 正常受理（异步执行）；带体 = 结构化受理（M19）：
         // injected = 运行中注入；command = 斜杠命令（命中执行的结果走事件流渲染，
@@ -870,7 +950,11 @@ const app = (() => {
       setSendBusy(false);
       if (res.status === 409) showToast('已有对话在执行中，请稍候', 'info');
       else showToast('消息发送失败（HTTP ' + res.status + '）');
+      pendingAttachments.unshift(...attachments); // 失败返还：附件不丢
+      renderAttChips();
     } catch (err) {
+      pendingAttachments.unshift(...attachments);
+      renderAttChips();
       setSendBusy(false);
       showToast('消息发送失败：' + errText(err));
     } finally {
@@ -879,6 +963,11 @@ const app = (() => {
   }
   $('#send').addEventListener('click', send);
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  // 附件入口（M21 工单 04）：粘贴与拖拽图片 → 上传入列（vision 关闭时端点 409 提示）
+  $('#input').addEventListener('paste', (e) => handleAttachmentFiles(e.clipboardData.files));
+  const composerEl = document.querySelector('.composer');
+  composerEl.addEventListener('dragover', (e) => e.preventDefault());
+  composerEl.addEventListener('drop', (e) => { e.preventDefault(); handleAttachmentFiles(e.dataTransfer.files); });
 
   // ---- 新话题：无刷新换绑（工单 03）——断 SSE → POST new → 空态反馈 → 重连收新会话尾部快照 ----
   $('#newSession').addEventListener('click', async () => {

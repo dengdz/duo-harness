@@ -319,3 +319,20 @@
     border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
     padding: 6px 4px; margin: 4px 0;
   }
+
+/* ===== 附件（M21 工单 04，ADR-0022） ===== */
+.att-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 4px; }
+.att-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 2px 6px; border-radius: 10px;
+  background: var(--bubble-user, #e5e7eb); color: inherit;
+}
+.att-chip .att-remove {
+  border: none; background: none; cursor: pointer; font-size: 12px;
+  color: inherit; opacity: .6; padding: 0 2px;
+}
+.att-chip .att-remove:hover { opacity: 1; }
+.msg.user .att-image {
+  max-width: min(360px, 80%); max-height: 280px;
+  border-radius: 8px; display: block;
+}

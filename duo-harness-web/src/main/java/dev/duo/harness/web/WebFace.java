@@ -11,6 +11,10 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
+import dev.duo.harness.attachment.AdmittedImage;
+import dev.duo.harness.attachment.AttachmentStore;
+import dev.duo.harness.attachment.AttachmentException;
+import dev.duo.harness.session.AttachmentRef;
 import dev.duo.harness.tools.ToolsService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -75,6 +79,10 @@ public final class WebFace {
     private final HttpServer server;
     private final Context ctx;
     private final ToolsService tools;
+    /** 附件库（M21，可空 = 纯对话装配——附件端点 503、消息带附件 409/400）。 */
+    private final AttachmentStore attachments;
+    /** 视觉能力闸门（llm.vision；null = 未启用）。工单 05 接线真实配置。 */
+    private final java.util.function.BooleanSupplier visionGate;
     /** SSE 客户端连接（多客户端广播，心跳写失败即摘除）。 */
     private final CopyOnWriteArrayList<SseClient> sseOutputs = new CopyOnWriteArrayList<>();
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
@@ -113,11 +121,14 @@ public final class WebFace {
             new AtomicReference<>();
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
-                    WebAnswerer webAnswerer, Path sessionsDir, int pageSize) {
+                    WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
+                    AttachmentStore attachments, java.util.function.BooleanSupplier visionGate) {
         this.pageSize = pageSize;
         this.server = server;
         this.ctx = ctx;
         this.tools = tools;
+        this.attachments = attachments;
+        this.visionGate = visionGate;
         this.session = session;
         this.webAnswerer = webAnswerer;
         this.sessionsDir = sessionsDir;
@@ -143,7 +154,7 @@ public final class WebFace {
                                 WebAnswerer webAnswerer, Path sessionsDir)
             throws IOException {
         return start(port, ctx, tools, session, agent, governance, webAnswerer, sessionsDir,
-                TAIL_WINDOW_MESSAGES);
+                TAIL_WINDOW_MESSAGES, null, null);
     }
 
     /**
@@ -153,6 +164,20 @@ public final class WebFace {
     public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
                                 ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
                                 WebAnswerer webAnswerer, Path sessionsDir, int pageSize)
+            throws IOException {
+        return start(port, ctx, tools, session, agent, governance, webAnswerer, sessionsDir,
+                pageSize, null, null);
+    }
+
+    /**
+     * 启动（M21 附件版）：{@code attachments} 为附件库（可空 = 纯对话装配——附件
+     * 端点 503、消息带附件 409/400）；{@code visionGate} 为视觉能力闸门（可空 =
+     * 未启用——Web 收图即拒、read_image 执行前即拒；工单 05 接线 llm.vision）。
+     */
+    public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
+                                ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
+                                WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
+                                AttachmentStore attachments, java.util.function.BooleanSupplier visionGate)
             throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
@@ -164,7 +189,8 @@ public final class WebFace {
         }
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
-        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize);
+        WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize,
+                attachments, visionGate);
         face.governance = governance;
         face.bindSession(session);
         face.agent = agent;
@@ -333,6 +359,8 @@ public final class WebFace {
         route("/web/", this::handleStatic);
         route("/api/status", this::handleStatus);
         route("/api/message", this::handleMessage);
+        route("/api/attachment/upload", this::handleAttachmentUpload);
+        route("/api/attachment/read", this::handleAttachmentRead);
         route("/api/session/new", this::handleSessionNew);
         route("/api/sessions", this::handleSessions);
         route("/api/session/switch", this::handleSessionSwitch);
@@ -413,6 +441,91 @@ public final class WebFace {
      * user/message、tool/call、tool/result、assistant/message 由 agent 侧追加（经会话监听器广播），
      * assistant/chunk 由本端 AgentListener 追加（Web 面只补这一种会话事件）。
      */
+    private boolean visionEnabled() {
+        return visionGate != null && visionGate.getAsBoolean();
+    }
+
+    /** 附件上传（M21 工单 04）：vision 闸门 → base64 解码 → 准入入库 → 返回元数据。 */
+    private void handleAttachmentUpload(HttpExchange exchange) throws IOException {
+        if (!requirePost(exchange)) {
+            return;
+        }
+        if (attachments == null) {
+            respondText(exchange, 503, "附件服务未装配");
+            return;
+        }
+        if (!visionEnabled()) {
+            respondText(exchange, 409, "当前模型不支持图片（llm.vision 未启用）");
+            return;
+        }
+        byte[] raw = readBodyLimited(exchange, attachments.maxImageBytes() * 2L);
+        if (raw == null) {
+            respondText(exchange, 413, "图片过大");
+            return;
+        }
+        JsonNode node;
+        try {
+            node = JSON.readTree(new String(raw, StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        String data = node.path("data").asText("");
+        String name = node.path("name").asText("");
+        if (data.isBlank()) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        byte[] bytes;
+        try {
+            bytes = java.util.Base64.getDecoder().decode(data.strip());
+        } catch (IllegalArgumentException e) {
+            respondText(exchange, 400, "base64 非法");
+            return;
+        }
+        AdmittedImage admitted;
+        try {
+            admitted = attachments.storeImage(bytes, null);
+        } catch (AttachmentException e) {
+            respondText(exchange, 422, e.getMessage());
+            return;
+        }
+        var root = JSON.createObjectNode()
+                .put("attachmentId", admitted.attachmentId())
+                .put("mediaType", admitted.mediaType())
+                .put("bytes", admitted.bytes())
+                .put("width", admitted.width())
+                .put("height", admitted.height())
+                .put("name", name);
+        respondJson(exchange, 200, root.toString());
+    }
+
+    /** 附件授权读取（M21 工单 04）：先验证当前会话日志确实引用了此 id，再回字节。 */
+    private void handleAttachmentRead(HttpExchange exchange) throws IOException {
+        if (attachments == null) {
+            respondEmpty(exchange, 503);
+            return;
+        }
+        String id = queryParam(exchange, "id");
+        if (id == null || !id.matches("[0-9a-f]{64}")) {
+            respondEmpty(exchange, 400);
+            return;
+        }
+        AttachmentRef ref = session.referencedAttachments().stream()
+                .filter(r -> r.attachmentId().equals(id))
+                .findFirst().orElse(null);
+        if (ref == null || !attachments.exists(id)) {
+            respondEmpty(exchange, 404);
+            return;
+        }
+        byte[] bytes = Files.readAllBytes(attachments.objectPath(id));
+        exchange.getResponseHeaders().set("Content-Type", ref.mediaType());
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (var out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
+    }
+
     private void handleMessage(HttpExchange exchange) throws IOException {
         if (!requirePost(exchange)) {
             return;
@@ -423,20 +536,50 @@ public final class WebFace {
             return;
         }
         String text;
+        java.util.List<AttachmentRef> attachmentRefs = new java.util.ArrayList<>();
         try {
             JsonNode node = JSON.readTree(new String(raw, StandardCharsets.UTF_8));
             text = node.path("text").asText("");
+            JsonNode atts = node.path("attachments");
+            if (atts.isArray()) {
+                for (JsonNode n : atts) {
+                    attachmentRefs.add(new AttachmentRef(n.path("attachmentId").asText(""),
+                            n.path("mediaType").asText(""), n.path("bytes").asLong(0),
+                            n.path("name").asText("")));
+                }
+            }
         } catch (Exception e) {
+            e.printStackTrace();
             respondEmpty(exchange, 400);
             return;
         }
-        if (text.isBlank()) {
+        if (!attachmentRefs.isEmpty()) {
+            if (attachments == null) {
+                respondText(exchange, 503, "附件服务未装配");
+                return;
+            }
+            if (!visionEnabled()) {
+                respondText(exchange, 409, "当前模型不支持图片（llm.vision 未启用）");
+                return;
+            }
+            for (AttachmentRef ref : attachmentRefs) {
+                if (ref.attachmentId().isBlank() || !attachments.exists(ref.attachmentId())) {
+                    respondText(exchange, 400, "附件未上传或不存在: " + ref.attachmentId());
+                    return;
+                }
+            }
+        }
+        if (text.isBlank() && attachmentRefs.isEmpty()) {
             respondEmpty(exchange, 400);
             return;
         }
         // 斜杠前置命令解释（M19，ADR-0020 决策 3/5）：命令注册表 → 技能直调 → 未知报错，
         // 与 CLI 共享同一入口顺序——斜杠文本从此不再透传进模型历史（M12-03 事故销账）。
         // 技能直调（prompt outcome）落回下方普通提交路径，注入文本照旧进模型历史
+        if (!attachmentRefs.isEmpty() && text.strip().startsWith("/")) {
+            respondText(exchange, 400, "斜杠命令不支持附件");
+            return;
+        }
         final String userText;
         String stripped = text.strip();
         if (stripped.startsWith("/")) {
@@ -458,6 +601,7 @@ public final class WebFace {
             // （迭代边界排干为普通 user/message，下一轮请求可见）；agent 未执行（busy 被
             // 非 busySafe 命令互斥持有）时不入收件箱——保留 409（消息不会被"当前步骤"消化）
             if (agentRunning.get() && current.injectUserMessage(userText)) {
+                attachmentRefs.forEach(session::appendUserAttachment); // 引用先于注入的 user/message
                 respondJson(exchange, 202,
                         "{\"outcome\":\"injected\",\"text\":\"已注入，待当前步骤完成\"}");
             } else {
@@ -465,6 +609,7 @@ public final class WebFace {
             }
             return;
         }
+        attachmentRefs.forEach(session::appendUserAttachment); // 引用先于 agent 侧 user/message
         exchange.sendResponseHeaders(202, -1);
         agentRunning.set(true);
         Thread.ofVirtual().start(() -> {
@@ -820,6 +965,7 @@ public final class WebFace {
 
     /** 无体响应（错误码形态：400/404/405/413/503 等）。 */
     private static void respondEmpty(HttpExchange exchange, int status) throws IOException {
+        new Exception("[诊断] 空体响应 status=" + status + " path=" + exchange.getRequestURI().getPath()).printStackTrace();
         respond(exchange, status, null, null);
     }
 
@@ -965,8 +1111,14 @@ public final class WebFace {
 
     /** 读取请求体并施加大小上限：超限返回 null（调用方回 413），最多读上限+1 字节防内存放大。 */
     private static byte[] readBodyLimited(HttpExchange exchange) throws IOException {
-        byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
-        return body.length > MAX_BODY_BYTES ? null : body;
+        return readBodyLimited(exchange, MAX_BODY_BYTES);
+    }
+
+    /** 读取请求体并施加自定义大小上限（附件上传的 base64 膨胀体需要大限额）。 */
+    private static byte[] readBodyLimited(HttpExchange exchange, long maxBytes) throws IOException {
+        int cap = (int) Math.min(maxBytes + 1, Integer.MAX_VALUE);
+        byte[] body = exchange.getRequestBody().readNBytes(cap);
+        return body.length > maxBytes ? null : body;
     }
 
     /** 取查询参数原值（缺参返回空串，由调用方解析并决定成败——不做 URL 解码，参数集仅限简单值）。 */

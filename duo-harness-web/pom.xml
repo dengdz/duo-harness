@@ -19,6 +19,12 @@
       <artifactId>duo-harness-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- 附件库（M21 工单 04，ADR-0022）：上传/渲染端点的存储域 -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-attachment</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>dev.duo</groupId>
       <artifactId>duo-harness-tools</artifactId>

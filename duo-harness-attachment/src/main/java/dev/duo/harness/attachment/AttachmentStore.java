@@ -37,6 +37,11 @@ public final class AttachmentStore {
         return root;
     }
 
+    /** 单图源字节上限（上传端点请求体限额的推导基准）。 */
+    public long maxImageBytes() {
+        return config.maxImageBytes();
+    }
+
     /** 规范对象路径（授权读取端点按 id 取字节用）。 */
     public Path objectPath(String attachmentId) {
         return root.resolve("objects").resolve(attachmentId.substring(0, 2)).resolve(attachmentId);

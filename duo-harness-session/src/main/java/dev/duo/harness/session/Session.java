@@ -349,6 +349,28 @@ public final class Session {
      * @throws IllegalStateException 会话已关闭（close 后写入属调用方错误——锁已释放，
      *                               继续写会与可能接手的新属主形成无锁并发）
      */
+    /**
+     * 追加一条附件引用事件（M21，ADR-0022）：发送带图消息时先于 user/message 落盘，
+     * 字节在附件库、日志零字节；授权读取端点以本事件为归属凭证。
+     */
+    public void appendUserAttachment(AttachmentRef ref) {
+        append(SessionEvent.userAttachment(ref.toJson()));
+    }
+
+    /**
+     * 本会话日志引用的全部附件（按首次引用序）：授权读取端点的归属校验数据源；
+     * 坏行跳过（引用 JSON 解析失败不炸穿扫描）。
+     */
+    public java.util.List<AttachmentRef> referencedAttachments() {
+        java.util.List<AttachmentRef> refs = new java.util.ArrayList<>();
+        for (SessionEvent event : events()) {
+            if (SessionEvent.USER_ATTACHMENT.equals(event.type())) {
+                AttachmentRef.from(event.text()).ifPresent(refs::add);
+            }
+        }
+        return refs;
+    }
+
     public void append(SessionEvent event) {
         if (closed.get()) {
             throw new IllegalStateException("会话已关闭，不能再写入: " + id);
@@ -504,6 +526,7 @@ public final class Session {
             // 命令操作 harness 不进模型历史（ADR-0020 决策 5）——排除由本投影纯函数保证，
             // 不参与 tool 配对（只认 tool/call|result）、不占消息窗口计数（只数本判定为真者）
             case SessionEvent.COMMAND_RUN, SessionEvent.COMMAND_DONE -> false;
+            case SessionEvent.USER_ATTACHMENT -> false; // 附件引用块（M21）：随工单 05 的多部件投影进入模型视野，子代理种子天然过滤
             default -> false; // subagent/spawned 卡片专用，同 approval/title 不投影
         };
     }

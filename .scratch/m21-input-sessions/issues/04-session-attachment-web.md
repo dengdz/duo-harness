@@ -10,8 +10,9 @@
 
 ## Status
 
-ready-for-agent
+in-progress
 
+- 2026-09-20（实现轮）：会话词汇/上传与授权读取端点/Web 渲染与拖拽粘贴入口/子代理过滤全部落地；WebAttachmentEndpointTest 6 条 + SessionAttachmentTest 4 条绿；全仓 SUCCESS。库级+端点级：随 05 端到端里程碑演示一并手动验收（vision=true 全链）。
 ## Checklist
 
 - [ ] 会话词汇扩展：user 消息附件引用块（attachmentId/mediaType/bytes/name，向前兼容新块类型；字节不进日志）
