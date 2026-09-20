@@ -28,7 +28,7 @@ import java.util.Map;
  */
 public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
                         int retryMaxAttempts, long retryInitialBackoffMs,
-                        long streamIdleTimeoutMs) {
+                        long streamIdleTimeoutMs, boolean vision) {
 
     /** systemPrompt 未配置时的缺省指令。 */
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
@@ -42,10 +42,10 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /** 流式空闲超时缺省值（90s：思考模型的长间隔不误伤，半开连接不至于久等）。 */
     public static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
-    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s）。 */
+    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s），vision 关闭。 */
     public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
         this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS,
-                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, false);
     }
 
 
@@ -91,7 +91,8 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
         return new LlmConfig(baseUrl, apiKey, model,
                 systemPrompt != null && !systemPrompt.isBlank() ? systemPrompt : DEFAULT_SYSTEM_PROMPT,
                 parseRetryMaxAttempts(llm), parseRetryInitialBackoffMs(llm),
-                parseStreamIdleTimeoutMs(llm));
+                parseStreamIdleTimeoutMs(llm),
+                llm != null && llm.path("vision").asBoolean(false));
     }
 
     /** 解析可选 retry.maxAttempts（非正数回落默认）。 */

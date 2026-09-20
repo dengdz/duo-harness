@@ -190,8 +190,22 @@ public final class PresenterAssembly {
                                       PromptRegistry prompts, int maxIterations,
                                       int maxParallelToolCalls, ContextGovernance governance,
                                       String presenterId) {
+        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
+                governance, presenterId, null, false);
+    }
+
+    /**
+     * 对话执行者（M21 工单 05 视觉版，ADR-0022）：{@code variants} 非空且
+     * {@code vision=true} 时，消息附件引用解析为请求变体并以 base64 图片部件进请求。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      int maxParallelToolCalls, ContextGovernance governance,
+                                      String presenterId,
+                                      dev.duo.harness.attachment.RequestVariants variants,
+                                      boolean vision) {
         return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance, presenterId);
+                maxParallelToolCalls, governance, presenterId, variants, vision);
     }
 
     /**

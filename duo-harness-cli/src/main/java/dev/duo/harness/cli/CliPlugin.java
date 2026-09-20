@@ -76,6 +76,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private final Path sessionsDirOverride;
     /** 注入的 LLM 执行链（null = apply 时按 LlmConfig 装配；测试注入 mock）。 */
     private final LlmAdapter llmOverride;
+    /** 请求变体解析器（M21 工单 05；apply 时按附件库与 vision 构建，null = 视觉未启用）。 */
+    private dev.duo.harness.attachment.RequestVariants requestVariants;
 
     private final AtomicBoolean stopped = new AtomicBoolean(false);
     private Thread replThread;
@@ -113,7 +115,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
      */
     @Override
     public Set<String> optionalInject() {
-        return Set.of(WorkspacePolicy.SERVICE_NAME);
+        return Set.of(WorkspacePolicy.SERVICE_NAME,
+                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME);
     }
 
     @Override
@@ -134,6 +137,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 ? ctx.as(CliWorkspaceView.class).workspace() : null;
 
         LlmAdapter llm = llmOverride != null ? llmOverride : loadLlm();
+        // 视觉链路（M21 工单 05）：llm.vision=true 且附件库在册时构建请求变体解析器
+        dev.duo.harness.attachment.AttachmentStore attachments =
+                ctx.hasService(dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME)
+                        ? ctx.as(CliAttachmentsView.class).attachments() : null;
+        // 请求变体解析器（M21 工单 05）：vision=true 且附件库在册时构建（引用 → base64 图片部件）
+        this.requestVariants = attachments == null || !visionEnabled ? null
+                : new dev.duo.harness.attachment.RequestVariants(attachments,
+                        dev.duo.harness.core.api.boot.DuoHome.resolve().root()
+                                .resolve("cache/attachments"));
         Path sessionsDir = sessionsDir();
 
         // 会话续接/新建（独占锁，M10-03）：被占则提示后改开新会话——绝不静默共享日志
@@ -176,7 +188,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
-                maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI);
+                maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
+                requestVariants, visionEnabled);
         answererRegistration = answers.register(ctx,
                 new AuditingAnswerer(holder::current, new ConsoleAnswerer(in, out)));
         PlanHolder plan = new PlanHolder();
@@ -313,7 +326,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 Session previous = holder.session;
                 holder.session = Session.create(sessionsDir);
                 agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
-                        maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI);
+                        maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
+                        requestVariants, visionEnabled);
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
@@ -528,10 +542,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
     }
 
+    /** 视觉能力开关（llm.vision，M21 工单 05；loadLlm 时刷新）。 */
+    private static volatile boolean visionEnabled;
+
     /** LLM 装配：配置缺失时 FAILED 并给出示例（沿 CLI 既有提示形态）。 */
     private static LlmAdapter loadLlm() {
         try {
-            return PresenterAssembly.llmAdapter(LlmConfig.load());
+            dev.duo.harness.llm.LlmConfig cfg = dev.duo.harness.llm.LlmConfig.load();
+            visionEnabled = cfg.vision();
+            return PresenterAssembly.llmAdapter(cfg);
         } catch (PluginException e) {
             throw new PluginException("CLI 面无法启动——LLM 未配置: " + e.getMessage()
                     + "\n示例（~/.duo/config.yml）:\n  llm:\n    baseUrl: https://api.deepseek.com"
@@ -601,6 +620,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliCommandsView {
 
         CommandsRegistry commands();
+    }
+
+    /** attachments 服务的视图接口（方法名即服务名 "attachments"）。 */
+    interface CliAttachmentsView {
+
+        dev.duo.harness.attachment.AttachmentStore attachments();
     }
 
     /** workspace 服务的视图接口（方法名即服务名 "workspace"）。 */

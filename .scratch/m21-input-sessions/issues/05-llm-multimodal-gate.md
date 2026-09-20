@@ -10,8 +10,9 @@ llm 模块消息 content 从纯文本扩展为多部件（text + image base64 da
 
 ## Status
 
-ready-for-agent
+in-progress
 
+- 2026-09-20（实现轮）：llm 层 MessageImage/ChatMessage.images/序列化多部件；LlmConfig.vision（缺省 false）；agent 层 Messages.toChatMessages 带参重载（vision 时引用→变体→base64 部件）；WebPlugin/CliPlugin 全线接线（llm.vision 驱动 WebFace 闸门 + agent 投影 + read_image 闸门）；llm 28/web 54/cli 24/agent/tools/session/attachment 全模块测试绿，全仓 BUILD SUCCESS。
 ## Checklist
 
 - [ ] 消息 content 多部件建模（text/image 部件；附件引用 → 变体解析 → base64 data URI）
