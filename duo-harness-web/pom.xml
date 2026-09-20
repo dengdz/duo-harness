@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.duo</groupId>
     <artifactId>duo-harness</artifactId>
-    <version>0.15.0</version>
+    <version>0.16.0</version>
   </parent>
 
   <artifactId>duo-harness-web</artifactId>
@@ -19,6 +19,12 @@
       <artifactId>duo-harness-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- 附件库（M21 工单 04，ADR-0022）：上传/渲染端点的存储域 -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-attachment</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>dev.duo</groupId>
       <artifactId>duo-harness-tools</artifactId>
@@ -27,6 +33,12 @@
     <dependency>
       <groupId>dev.duo</groupId>
       <artifactId>duo-harness-session</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 会话检索服务（M21 工单 08，ADR-0022）：侧栏搜索框数据源（可选依赖，缺席端点 503） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session-query</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

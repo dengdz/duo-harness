@@ -40,3 +40,4 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 5. UI 改动必须视觉验证后才算完成
 6. CHANGELOG.md 是版本唯一锚点，用户可见变更同 diff 记账
 7. 开发提交不落 main，main 只收验收后的版本合并（M9 起严格执行：里程碑启动第一步切版本分支如 `0.3.0`；M3-M8 直落 main 为既成历史不追改，见 duo-workflow 版本号规范）
+8. duo- 技能任务收尾必须先调用 `duo-skill-evolution` 复盘，再输出最终总结——无进化点也要走完快速判断并明确说"无需进化"，不得静默跳过；执行任何 duo- 技能前先读该技能 `references/experience.md`（复盘维度在文件头部"复盘维度"段）

@@ -25,10 +25,19 @@ import java.util.Map;
  * @param retryMaxAttempts      重试总尝试次数（含首次，默认 {@link #DEFAULT_RETRY_MAX_ATTEMPTS}）
  * @param retryInitialBackoffMs 首次重试退避毫秒（×2 递增，默认 {@link #DEFAULT_RETRY_INITIAL_BACKOFF_MS}）
  * @param streamIdleTimeoutMs  流式空闲超时毫秒（连续无新字节即中止，默认 {@link #DEFAULT_STREAM_IDLE_TIMEOUT_MS}）
+ * @param vision      视觉开关（true = 接受图片输入）
+ * @param imageDelivery 图片投递形态：inline（base64 data URI，缺省）| files（DeepSeek 形态
+ *                      Files API 上传换 file_id，仅视觉部署可及）
  */
 public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
                         int retryMaxAttempts, long retryInitialBackoffMs,
-                        long streamIdleTimeoutMs) {
+                        long streamIdleTimeoutMs, boolean vision, String imageDelivery) {
+
+    /** imageDelivery inline（缺省）。 */
+    public static final String DELIVERY_INLINE = "inline";
+
+    /** imageDelivery files（DeepSeek 形态 Files API）。 */
+    public static final String DELIVERY_FILES = "files";
 
     /** systemPrompt 未配置时的缺省指令。 */
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
@@ -42,10 +51,27 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /** 流式空闲超时缺省值（90s：思考模型的长间隔不误伤，半开连接不至于久等）。 */
     public static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
-    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s）。 */
+    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s），vision 关闭、inline 投递。 */
     public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
         this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS,
-                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, false, DELIVERY_INLINE);
+    }
+
+    /** 兼容构造：vision 显式、投递 inline。 */
+    public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
+                     int retryMaxAttempts, long retryInitialBackoffMs,
+                     long streamIdleTimeoutMs, boolean vision) {
+        this(baseUrl, apiKey, model, systemPrompt, retryMaxAttempts,
+                retryInitialBackoffMs, streamIdleTimeoutMs, vision, DELIVERY_INLINE);
+    }
+
+    /** 投递形态归一（校验在 load 处 fail-loud）。 */
+    public LlmConfig {
+        if (imageDelivery == null || imageDelivery.isBlank()) {
+            imageDelivery = DELIVERY_INLINE;
+        } else {
+            imageDelivery = imageDelivery.strip().toLowerCase(java.util.Locale.ROOT);
+        }
     }
 
 
@@ -91,7 +117,26 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
         return new LlmConfig(baseUrl, apiKey, model,
                 systemPrompt != null && !systemPrompt.isBlank() ? systemPrompt : DEFAULT_SYSTEM_PROMPT,
                 parseRetryMaxAttempts(llm), parseRetryInitialBackoffMs(llm),
-                parseStreamIdleTimeoutMs(llm));
+                parseStreamIdleTimeoutMs(llm),
+                llm != null && llm.path("vision").asBoolean(false),
+                parseImageDelivery(llm));
+    }
+
+    /**
+     * 解析可选 imageDelivery（缺省 inline）：非 inline/files 的值启动即 FAILED 点名
+     * （M21 工单 06，拼写错误不该静默降级为 inline）。
+     */
+    private static String parseImageDelivery(JsonNode llm) {
+        if (llm == null || !llm.hasNonNull("imageDelivery")) {
+            return DELIVERY_INLINE;
+        }
+        String value = llm.path("imageDelivery").asText(DELIVERY_INLINE).strip();
+        String normalized = value.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.equals(DELIVERY_FILES) || normalized.equals(DELIVERY_INLINE)) {
+            return normalized;
+        }
+        throw new dev.duo.harness.core.api.PluginException("llm.imageDelivery 非法: \"" + value
+                + "\"（可选 inline | files）");
     }
 
     /** 解析可选 retry.maxAttempts（非正数回落默认）。 */

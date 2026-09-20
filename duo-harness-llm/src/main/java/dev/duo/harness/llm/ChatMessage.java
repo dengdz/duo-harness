@@ -18,7 +18,8 @@ import java.util.Objects;
  * 回传字段——工具调用链中 DeepSeek 等兼容 provider 要求原样传回。</p>
  */
 public record ChatMessage(Role role, String content, String toolCallId,
-                          List<ToolCallRequest> toolCalls, String reasoningContent) {
+                          List<ToolCallRequest> toolCalls, String reasoningContent,
+                          List<MessageImage> images) {
 
     /** 消息角色（与 OpenAI 兼容协议的 role 字段对齐）。 */
     public enum Role {
@@ -35,6 +36,13 @@ public record ChatMessage(Role role, String content, String toolCallId,
         Objects.requireNonNull(role, "role");
         Objects.requireNonNull(content, "content");
         toolCalls = toolCalls == null ? null : List.copyOf(toolCalls);
+        images = images == null ? null : List.copyOf(images);
+    }
+
+    /** 兼容构造：无图片部件（纯文本/工具调用形态）。 */
+    public ChatMessage(Role role, String content, String toolCallId,
+                       List<ToolCallRequest> toolCalls, String reasoningContent) {
+        this(role, content, toolCallId, toolCalls, reasoningContent, null);
     }
 
     /** 兼容构造：无思考内容。 */
@@ -47,6 +55,16 @@ public record ChatMessage(Role role, String content, String toolCallId,
         return new ChatMessage(Role.USER, content, null, null, null);
     }
 
+    /** USER 角色 + 图片部件（多部件 content：文本 + image_url，M21 工单 05）。 */
+    public static ChatMessage user(String content, List<MessageImage> images) {
+        return new ChatMessage(Role.USER, content, null, null, null, images);
+    }
+
+    /** USER 角色图片访问器（无图返回 null——序列化与闸门判定共用）。 */
+    public List<MessageImage> images() {
+        return images;
+    }
+
     /** ASSISTANT 角色的便捷工厂（纯文本回复）。 */
     public static ChatMessage assistant(String content) {
         return new ChatMessage(Role.ASSISTANT, content, null, null, null);
@@ -55,6 +73,12 @@ public record ChatMessage(Role role, String content, String toolCallId,
     /** TOOL 角色的便捷工厂：工具结果回填（id 关联模型发起的调用）。 */
     public static ChatMessage tool(String toolCallId, String content) {
         return new ChatMessage(Role.TOOL, content, toolCallId, null, null);
+    }
+
+    /** TOOL 角色 + 图片部件（read_image 结果回填，M21 工单 05）。 */
+    public static ChatMessage toolWithImages(String toolCallId, String content,
+                                             List<MessageImage> images) {
+        return new ChatMessage(Role.TOOL, content, toolCallId, null, null, images);
     }
 
     /** ASSISTANT 角色 + 工具调用清单 + 思考内容（模型请求执行工具）。 */

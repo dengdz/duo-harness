@@ -222,6 +222,16 @@ public final class Session {
     }
 
     /**
+     * 该会话文件是否被**本进程**持有独占锁（M21 收口修正，POSIX 释放陷阱的规避
+     * 探针）：只查持锁登记表，不开 fd——任何新开 fd 的关闭都会释放本进程在该
+     * 文件上的全部锁（见 load / permissionModeOf 的记档）。会话检索的索引扫描
+     * 据此跳过活跃会话文件：内容在内存里是活的，绝不因索引触碰属主锁。
+     */
+    public static boolean heldByThisProcess(Path jsonl) {
+        return HELD_LOCKS.containsKey(jsonl.toAbsolutePath().normalize());
+    }
+
+    /**
      * 关闭会话：释放独占锁与文件通道、摘除全部事件监听器（幂等）。本进程不再独占该会话，
      * 其他进程与实例可重新打开；调用方应在会话生命周期结束时调用（Web 停止、CLI 退出、
      * 换绑到其他会话时）。关闭后写入与订阅均失效——应停止使用本实例。
@@ -349,6 +359,28 @@ public final class Session {
      * @throws IllegalStateException 会话已关闭（close 后写入属调用方错误——锁已释放，
      *                               继续写会与可能接手的新属主形成无锁并发）
      */
+    /**
+     * 追加一条附件引用事件（M21，ADR-0022）：发送带图消息时先于 user/message 落盘，
+     * 字节在附件库、日志零字节；授权读取端点以本事件为归属凭证。
+     */
+    public void appendUserAttachment(AttachmentRef ref) {
+        append(SessionEvent.userAttachment(ref.toJson()));
+    }
+
+    /**
+     * 本会话日志引用的全部附件（按首次引用序）：授权读取端点的归属校验数据源；
+     * 坏行跳过（引用 JSON 解析失败不炸穿扫描）。
+     */
+    public java.util.List<AttachmentRef> referencedAttachments() {
+        java.util.List<AttachmentRef> refs = new java.util.ArrayList<>();
+        for (SessionEvent event : events()) {
+            if (SessionEvent.USER_ATTACHMENT.equals(event.type())) {
+                AttachmentRef.from(event.text()).ifPresent(refs::add);
+            }
+        }
+        return refs;
+    }
+
     public void append(SessionEvent event) {
         if (closed.get()) {
             throw new IllegalStateException("会话已关闭，不能再写入: " + id);
@@ -396,6 +428,34 @@ public final class Session {
         return out.toString(StandardCharsets.UTF_8);
     }
 
+    /** read_image 结果文本中的附件引用标记行前缀（单事实来源：ReadImageTool 同文）。 */
+    public static final String READ_IMAGE_REF_MARKER = "附件已入库: ";
+
+    /**
+     * read_image 结果的引用解析（M21）：文本含"附件已入库: <id>"标记行即提取 id
+     * 为附件引用（mediaType/字节随请求变体解析还原）；无标记返回 null。
+     */
+    private static AttachmentRef readImageRef(SessionEvent event) {
+        return readImageRefOf(event.text());
+    }
+
+    /**
+     * 文本中的 read_image 入库引用提取（M21 收口共享：会话投影与导出渲染
+     * 单一事实来源）；无标记返回 null。
+     */
+    public static AttachmentRef readImageRefOf(String text) {
+        for (String line : text.split("\n")) {
+            String stripped = line.strip();
+            if (stripped.startsWith(READ_IMAGE_REF_MARKER)) {
+                String id = stripped.substring(READ_IMAGE_REF_MARKER.length())
+                        .split("——")[0].split(" ")[0].strip();
+                return id.matches("[0-9a-f]{64}")
+                        ? new AttachmentRef(id, null, 0, null) : null;
+            }
+        }
+        return null;
+    }
+
     /**
      * 投影：事件日志 → 对话消息列表（含 Function Calling 形态）。
      * 旧格式工具事件（无 toolCallId，协议关联缺失）跳过——不投影也不崩溃。
@@ -404,20 +464,35 @@ public final class Session {
      */
     public List<Message> deriveMessages() {
         List<Message> messages = new ArrayList<>();
+        List<AttachmentRef> pending = new java.util.ArrayList<>();
         for (SessionEvent event : events()) {
+            if (SessionEvent.USER_ATTACHMENT.equals(event.type())) {
+                // 附件引用（M21，ADR-0022）：挂到紧随其后的 user 消息（多部件投影）
+                AttachmentRef.from(event.text()).ifPresent(pending::add);
+                continue;
+            }
             if (!projectsToMessage(event)) {
                 continue;
             }
             switch (event.type()) {
-                case SessionEvent.USER_MESSAGE ->
-                        messages.add(new Message(Message.Role.USER, event.text()));
+                case SessionEvent.USER_MESSAGE -> {
+                    messages.add(pending.isEmpty()
+                            ? new Message(Message.Role.USER, event.text())
+                            : Message.userWithAttachments(event.text(), List.copyOf(pending)));
+                    pending.clear();
+                }
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
                 case SessionEvent.TOOL_CALL ->
                         messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
                                 event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
-                case SessionEvent.TOOL_RESULT ->
-                        messages.add(Message.tool(event.toolCallId(), event.text()));
+                case SessionEvent.TOOL_RESULT -> {
+                    var images = readImageRef(event);
+                    messages.add(images == null
+                            ? Message.tool(event.toolCallId(), event.text())
+                            : Message.toolWithAttachments(event.toolCallId(), event.text(),
+                                    List.of(images)));
+                }
                 case SessionEvent.SUBAGENT_COMPLETED ->
                         messages.add(new Message(Message.Role.USER, event.text()));
                 case SessionEvent.COMPACTION -> {
@@ -504,6 +579,7 @@ public final class Session {
             // 命令操作 harness 不进模型历史（ADR-0020 决策 5）——排除由本投影纯函数保证，
             // 不参与 tool 配对（只认 tool/call|result）、不占消息窗口计数（只数本判定为真者）
             case SessionEvent.COMMAND_RUN, SessionEvent.COMMAND_DONE -> false;
+            case SessionEvent.USER_ATTACHMENT -> false; // 附件引用块（M21）：随工单 05 的多部件投影进入模型视野，子代理种子天然过滤
             default -> false; // subagent/spawned 卡片专用，同 approval/title 不投影
         };
     }
@@ -597,6 +673,24 @@ public final class Session {
 
     /** 尾部窗口映射结果（ADR-0013）：事件起点 + 起点之前的投影消息数。 */
     public record TailWindow(int startEvent, int earlierMessages) { }
+
+    /**
+     * 导出用 JSONL 原样行（M21 工单 09）：与落盘同一序列化器对快照逐行重放。
+     * 屏障语义由数据结构保证——append 先落盘 force 再入快照（CoW 原子发布），
+     * 快照既无半行撕裂、又是已持久化事件的视图（导出即持久化视图，无 pending）。
+     * 坏行不存在（快照只含本类写出的合法行）；序列化失败 fail-loud 不给截断导出。
+     */
+    public List<String> jsonlLines() {
+        List<String> out = new ArrayList<>(snapshot.size());
+        for (SessionEvent event : snapshot) {
+            try {
+                out.add(toJsonLine(event));
+            } catch (IOException e) {
+                throw new PluginException("会话导出序列化失败: " + event.type(), e);
+            }
+        }
+        return out;
+    }
 
     /**
      * 会话标题（latest-wins）：最新 {@code session/title} 事件的文本；无标题事件

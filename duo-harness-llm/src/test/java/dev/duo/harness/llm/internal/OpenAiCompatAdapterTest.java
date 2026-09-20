@@ -46,7 +46,7 @@ class OpenAiCompatAdapterTest {
     /** 指定空闲超时的适配器（空闲超时用例：短超时让测试不等 90s）。 */
     private OpenAiCompatAdapter adapterWithIdleTimeout(long idleTimeoutMs) throws IOException {
         return new OpenAiCompatAdapter(new LlmConfig(server.baseUrl(), "sk-test", "test-model",
-                LlmConfig.DEFAULT_SYSTEM_PROMPT, 1, 0, idleTimeoutMs));
+                LlmConfig.DEFAULT_SYSTEM_PROMPT, 1, 0, idleTimeoutMs, false));
     }
 
     private ChatRequest request(String text) {

@@ -12,10 +12,12 @@
 <link rel="stylesheet" href="/web/theme.css">
 </head>
 <body>
-  <!-- ===== §骨架层 · 会话侧栏（列出 / 切换 / 新建） ===== -->
+  <!-- ===== §骨架层 · 会话侧栏（列出 / 切换 / 新建 / 内容检索） ===== -->
   <section id="sessions">
     <h2>会话 <span class="hint">agent-sessions</span></h2>
     <button id="newSession">＋ 新话题</button>
+    <input id="sessionSearch" placeholder="搜索会话内容…（回车检索）">
+    <div id="searchResults" hidden></div>
     <div id="sessionList" style="overflow-y:auto;flex:1;padding-top:4px"></div>
   </section>
 
@@ -31,6 +33,7 @@
     </div>
     <div id="todoPanel" class="todo-panel" hidden></div>
     <div class="composer">
+      <div id="atDropdown" hidden></div>
       <input id="input" placeholder="输入消息，回车发送…（/技能名 直调）">
       <button id="send">发送</button>
     </div>

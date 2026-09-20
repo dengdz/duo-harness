@@ -23,6 +23,15 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
         return Set.of(ToolsService.SERVICE_NAME);
     }
 
+    /**
+     * attachments 为可选依赖（ADR-0019）：attachment 插件行缺席的部署不注册
+     * read_image（DSH 同款——附件服务不在场则工具不存在），其余六件照常。
+     */
+    @Override
+    public Set<String> optionalInject() {
+        return Set.of(dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME);
+    }
+
     @Override
     public Class<JsonNode> configType() {
         return JsonNode.class;
@@ -37,6 +46,11 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
 
         ReadGate readGate = new ReadGate();
         tools.register(ctx, new FsReadTool(policy, readGate));
+        // 视觉闸门缺省关：工单 05 接线 llm.vision 真实配置（缺省 false 的保守语义不变）
+        if (ctx.hasService(dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME)) {
+            var attachments = ctx.as(FsAttachmentsView.class).attachments();
+            tools.register(ctx, new ReadImageTool(policy, attachments, () -> false));
+        }
         tools.register(ctx, new FsWriteTool(policy, readGate));
         tools.register(ctx, new FsEditTool(policy, readGate));
         tools.register(ctx, new FsGlobTool(policy));
@@ -72,5 +86,11 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
     interface FsToolsView {
 
         ToolsService tools();
+    }
+
+    /** attachments 服务的视图接口（方法名即服务名）。 */
+    interface FsAttachmentsView {
+
+        dev.duo.harness.attachment.AttachmentStore attachments();
     }
 }

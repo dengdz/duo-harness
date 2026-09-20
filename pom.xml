@@ -6,18 +6,20 @@
 
   <groupId>dev.duo</groupId>
   <artifactId>duo-harness</artifactId>
-  <version>0.15.0</version>
+  <version>0.16.0</version>
   <packaging>pom</packaging>
 
   <description>Java 插件化 AI agent harness：内核为自研轻量插件容器，能力以插件组装</description>
 
   <modules>
     <module>duo-harness-core</module>
+    <module>duo-harness-attachment</module>
     <module>duo-harness-tools</module>
     <module>duo-harness-hooks</module>
     <module>duo-harness-mcp</module>
     <module>duo-harness-llm</module>
     <module>duo-harness-session</module>
+    <module>duo-harness-session-query</module>
     <module>duo-harness-agent</module>
     <module>duo-harness-web</module>
     <module>duo-harness-cli</module>
@@ -35,6 +37,9 @@
     <networknt.version>2.0.0</networknt.version>
     <!-- web 工具族 HTML 解析清洗（M20，ADR-0021；单 jar 零传递依赖，新依赖已获 grill 同意） -->
     <jsoup.version>1.18.3</jsoup.version>
+    <!-- 附件规范化/缩放（M21，ADR-0022；纯 Java 零 native，新依赖已获 grill 同意 A1） -->
+    <twelvemonkeys.version>3.10.1</twelvemonkeys.version>
+    <thumbnailator.version>0.4.20</thumbnailator.version>
     <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>
     <!-- reactor 模式：exec:java 仅在 example 模块启用（其余模块跳过） -->
     <exec.skip>true</exec.skip>
@@ -80,6 +85,22 @@
         <artifactId>jsoup</artifactId>
         <version>${jsoup.version}</version>
       </dependency>
+      <!-- 附件规范化/缩放（M21，ADR-0022） -->
+      <dependency>
+        <groupId>com.twelvemonkeys.imageio</groupId>
+        <artifactId>imageio-jpeg</artifactId>
+        <version>${twelvemonkeys.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.twelvemonkeys.imageio</groupId>
+        <artifactId>imageio-webp</artifactId>
+        <version>${twelvemonkeys.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.coobird</groupId>
+        <artifactId>thumbnailator</artifactId>
+        <version>${thumbnailator.version}</version>
+      </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-simple</artifactId>
@@ -99,6 +120,10 @@
           <configuration>
             <!-- 用例内含子进程（MCP 夹具）：卡死要以失败+线程转储呈现，而不是无限挂起 -->
             <forkedProcessTimeoutInSeconds>240</forkedProcessTimeoutInSeconds>
+            <!-- 强制 headless：测试 JVM 不向 macOS AppKit 注册为 GUI 应用，
+                 Dock 不再随构建闪现 Java 图标；BufferedImage/ImageIO 照常可用。
+                 注意：后续引入 jacoco 等需要 argLine 的插件时须用 @{argLine} 合并 -->
+            <argLine>-Djava.awt.headless=true</argLine>
             <environmentVariables>
               <!-- 测试隔离：fork JVM 的 DuoHome 指向本模块构建目录——不触碰真实
                    ~/.duo（用户数据与在跑实例的会话独占锁）；LLM 三项以假值兜底，

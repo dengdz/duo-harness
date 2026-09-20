@@ -1,10 +1,17 @@
 package dev.duo.harness.agent.internal;
 
+import dev.duo.harness.session.AttachmentRef;
+import dev.duo.harness.attachment.RequestVariant;
+import dev.duo.harness.attachment.FilesApiUploader;
+import dev.duo.harness.attachment.RequestVariants;
 import dev.duo.harness.llm.ChatMessage;
+import dev.duo.harness.llm.MessageImage;
 import dev.duo.harness.llm.ToolCallRequest;
 import dev.duo.harness.session.Message;
 import dev.duo.harness.session.ToolCall;
 
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 
 /** 会话投影 → llm 消息的转换（唯一映射点；tool 消息携带协议关联 id）。 */
@@ -13,20 +20,90 @@ final class Messages {
     private Messages() {
     }
 
-    /** 会话投影消息逐条转换为 llm 契约消息（含 Function Calling 形态）。 */
+    /** 会话投影消息逐条转换为 llm 契约消息（纯文本形态——vision 部署走带参重载）。 */
     static List<ChatMessage> toChatMessages(List<Message> messages) {
-        return messages.stream().map(message -> {
+        return toChatMessages(messages, null, false, null);
+    }
+
+    /**
+     * 会话投影消息逐条转换为 llm 契约消息（含 Function Calling 与多部件图片形态）。
+     *
+     * @param variants 附件引用的请求变体解析器（null = 视觉未启用，附件引用丢弃——
+     *                 上游闸门已拦，此处是防线末端而非执法点）
+     * @param vision   视觉开关（llm.vision）：true 时引用解析为 base64 图片部件
+     */
+    static List<ChatMessage> toChatMessages(List<Message> messages,
+                                            RequestVariants variants, boolean vision,
+                                            dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
+        List<ChatMessage> chatMessages = new ArrayList<>();
+        for (Message message : messages) {
             if (message.role() == Message.Role.TOOL) {
-                return ChatMessage.tool(message.toolCallId(), message.content());
+                chatMessages.add(convertTool(message, variants, vision, fileDelivery));
+                continue;
             }
             if (message.toolCalls() != null) {
                 List<ToolCallRequest> calls = message.toolCalls().stream()
                         .map(call -> new ToolCallRequest(call.id(), call.name(), call.argumentsJson()))
                         .toList();
-                return ChatMessage.assistantWithToolCalls(message.content(), calls, message.reasoning());
+                chatMessages.add(ChatMessage.assistantWithToolCalls(
+                        message.content(), calls, message.reasoning()));
+                continue;
             }
-            return new ChatMessage(wireRole(message.role()), message.content(), null, null);
-        }).toList();
+            List<MessageImage> images = resolveImages(message.attachments(), variants, vision, fileDelivery);
+            if (images != null) {
+                chatMessages.add(ChatMessage.user(message.content(), images));
+                continue;
+            }
+            chatMessages.add(new ChatMessage(wireRole(message.role()), message.content(), null, null));
+        }
+        return chatMessages;
+    }
+
+    /**
+     * 附件引用 → 图片部件（vision 关闭或解析器缺席时丢弃——上游闸门已拦）。
+     * files 投递（delivery 非空）：变体上传 Files API 换 file_id，上传失败整体
+     * 回退 inline base64（ADR-0022 决策 5——投递优化不添堵）。
+     */
+    private static List<MessageImage> resolveImages(List<AttachmentRef> refs,
+                                                    RequestVariants variants, boolean vision,
+                                                    dev.duo.harness.attachment.ImageFileDelivery delivery) {
+        if (refs == null || refs.isEmpty() || variants == null || !vision) {
+            return null;
+        }
+        List<MessageImage> images = new ArrayList<>();
+        for (AttachmentRef ref : refs) {
+            RequestVariant variant;
+            try {
+                variant = variants.variantFor(ref.attachmentId());
+            } catch (dev.duo.harness.attachment.AttachmentException missing) {
+                // 伪造/已被清理的引用（如 tool/result 文本恰好含入库标记行）：
+                // 丢弃该部件保住整轮请求，绝不因单图坏引用炸投影
+                continue;
+            }
+            String base64 = null;
+            String fileId = null;
+            if (delivery != null) {
+                try {
+                    fileId = delivery.deliver(variant.variantId(), variant.bytes(),
+                            variant.mediaType(), ref.name());
+                } catch (FilesApiUploader.FilesApiException e) {
+                    fileId = null; // 上传失败整体回退 inline（ADR-0022 决策 5）
+                }
+            }
+            if (fileId == null) {
+                base64 = Base64.getEncoder().encodeToString(variant.bytes());
+            }
+            images.add(new MessageImage(base64, variant.mediaType(), fileId));
+        }
+        return images;
+    }
+
+    private static ChatMessage convertTool(Message message, RequestVariants variants, boolean vision,
+                                           dev.duo.harness.attachment.ImageFileDelivery delivery) {
+        List<MessageImage> images = resolveImages(message.attachments(), variants, vision, delivery);
+        return images == null
+                ? ChatMessage.tool(message.toolCallId(), message.content())
+                : ChatMessage.toolWithImages(message.toolCallId(), message.content(), images);
     }
 
     private static ChatMessage.Role wireRole(Message.Role role) {

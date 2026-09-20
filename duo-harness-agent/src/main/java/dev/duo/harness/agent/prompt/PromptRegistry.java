@@ -52,6 +52,19 @@ public final class PromptRegistry {
         return removal;
     }
 
+    /**
+     * 是否已有指定来源的片段（双呈现位装配查重用，M21 工单 07）：Web 与 CLI 各自
+     * apply 都可能注册同一条件片段（如 @file 指南），先到先得防重复注入。
+     */
+    public boolean hasSource(String source) {
+        for (PromptFragment fragment : fragments) {
+            if (fragment.source().equals(source)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 组装最终 system 提示：用户指令最前 + 片段按注册序，全空落内置缺省。 */
     public String compose() {
         StringBuilder composed = new StringBuilder();

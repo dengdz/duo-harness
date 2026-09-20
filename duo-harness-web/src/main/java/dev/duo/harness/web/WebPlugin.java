@@ -66,7 +66,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
      */
     @Override
     public Set<String> optionalInject() {
-        return Set.of(WorkspacePolicy.SERVICE_NAME);
+        return Set.of(WorkspacePolicy.SERVICE_NAME,
+                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
+                dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME);
     }
 
     @Override
@@ -87,6 +89,40 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // LLM 未配置 → 插件 FAILED 点名
         LlmConfig llm = LlmConfig.load();
         var adapter = PresenterAssembly.llmAdapter(llm);
+        // 附件库（M21，可选依赖）：纯对话 Web 装配缺席时端点 503、带图消息 409；
+        // vision=true 时构建请求变体解析器（附件引用 → base64 图片部件）
+        dev.duo.harness.attachment.AttachmentStore attachments =
+                ctx.hasService(dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME)
+                        ? ctx.as(WebAttachmentsView.class).attachments() : null;
+        dev.duo.harness.attachment.RequestVariants variants = attachments == null ? null
+                : new dev.duo.harness.attachment.RequestVariants(attachments,
+                        DuoHome.resolve().root().resolve("cache/attachments"));
+        // files 投递（M21 工单 06）：vision 且 imageDelivery=files 时变体上传 Files API
+        // 换 file_id（本地索引去重 + 配额回收）；上传失败由投递调用方回退 inline
+        dev.duo.harness.attachment.ImageFileDelivery fileDelivery =
+                attachments != null && llm.vision()
+                        && dev.duo.harness.llm.LlmConfig.DELIVERY_FILES.equals(llm.imageDelivery())
+                        ? new dev.duo.harness.attachment.ImageFileDelivery(
+                                new dev.duo.harness.attachment.FilesApiUploader(
+                                        llm.baseUrl(), llm.apiKey(), java.time.Duration.ofSeconds(60)),
+                                DuoHome.resolve().root()
+                                        .resolve("cache/attachments/files-index.json"))
+                        : null;
+        // read_image 视觉闸门回填（M21 收口修正）：fs 插件注册时 vision 真值不可得，
+        // 呈现位加载 llm 配置后回填（llm.vision）
+        PresenterAssembly.wireReadImageVisionGate(tools, llm.vision());
+        // 会话检索（M21 工单 08，可选依赖）：session-query 行缺席时侧栏搜索 503 降级
+        dev.duo.harness.sessionquery.SessionQueryService sessionQuery =
+                ctx.hasService(dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME)
+                        ? ctx.as(WebSessionQueryView.class).sessionQuery() : null;
+        // @file 补全服务（M21 工单 07，ADR-0022 决策 7）：workspace 在场才建——
+        // 索引以 workspace 根为界。本插件自产自用（补全端点直取），**不进
+        // optionalInject 声明**：自产自依赖会让内核 recheck 循环重跑 apply
+        dev.duo.harness.agent.fileref.FileReferenceService fileRefs =
+                ctx.hasService(WorkspacePolicy.SERVICE_NAME)
+                        ? new dev.duo.harness.agent.fileref.FileReferenceService(
+                                ctx.as(WebWorkspaceView.class).workspace().root())
+                        : null;
 
         Session session;
         try {
@@ -111,7 +147,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
                 adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                ChatAgent.PRESENTER_WEB);
+                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -120,7 +156,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         int pageSize = parsePageSize(config);
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
-                    DuoHome.resolve().resolveDir("agent-sessions"), pageSize);
+                    DuoHome.resolve().resolveDir("agent-sessions"), pageSize,
+                    attachments, () -> llm.vision(), sessionQuery);
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -132,6 +169,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // CLI 已注册则跳过），会话经 face 延迟解析取当前值
         PresenterAssembly.registerCompactCommand(ctx, commands, governance);
         PresenterAssembly.registerTitleCommand(ctx, commands);
+        // /export（M21 工单 09，ADR-0022 决策 9）：双面命令（查重先到先得）；Web 发起
+        // 时返回下载端点 URL，前端拦截自动触发下载流
+        PresenterAssembly.registerExportCommand(ctx, commands);
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置（BUG-20260919-03
         // ——双开下另一呈现位可能刚恢复过档位）；换绑恢复在 onSessionChanged 回调里执行
         PresenterAssembly.restorePermissionMode(ctx, session, false);
@@ -155,12 +195,33 @@ public final class WebPlugin implements Plugin<JsonNode> {
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB));
+                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery));
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);
+            // 换绑后的会话同样挂 tool/result 监听（旧会话随 close 清空监听器，不泄漏）
+            if (fileRefs != null) {
+                fresh.addListener((index, event) -> {
+                    if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
+                        fileRefs.markStale();
+                    }
+                });
+            }
         });
         SessionTitles.attach(session, adapter);
+        // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重
+        PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
+        // 补全服务交给 face（自产自用直传，不走服务声明——见上方 fileRefs 注释）
+        face.setFileRefs(fileRefs);
+        // tool/result 后台重建（bash/write 改文件树后索引陈旧）：初始会话监听——
+        // 换绑在 onSessionChanged 回调里重挂；旧会话 close 清空监听器，不泄漏
+        if (fileRefs != null) {
+            session.addListener((index, event) -> {
+                if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
+                    fileRefs.markStale();
+                }
+            });
+        }
         System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
         return face::stop;
     }
@@ -187,6 +248,24 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebCommandsView {
 
         CommandsRegistry commands();
+    }
+
+    /** attachments 服务的视图接口（方法名即服务名）。 */
+    interface WebAttachmentsView {
+
+        dev.duo.harness.attachment.AttachmentStore attachments();
+    }
+
+    /** session-query 服务的视图接口（方法名即服务名）。 */
+    interface WebSessionQueryView {
+
+        dev.duo.harness.sessionquery.SessionQueryService sessionQuery();
+    }
+
+    /** workspace 服务的视图接口（方法名即服务名）。 */
+    interface WebWorkspaceView {
+
+        WorkspacePolicy workspace();
     }
     /**
      * 解析 web 插件 config 的可选页长（{@code config.pageSize}，M19 还账）：首屏与每页

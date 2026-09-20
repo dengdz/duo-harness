@@ -336,8 +336,8 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             String out = fx.output();
-            assertTrue(out.contains("未知命令: /nope（可用命令: exit, new, permission, compact, title, plan"),
-                    "四命令注册序即清单序: " + out);
+            assertTrue(out.contains("未知命令: /nope（可用命令: export, exit, new, permission, compact, title, plan"),
+                    "五命令注册序即清单序: " + out);
         } finally {
             fx.dispose();
         }

@@ -84,3 +84,11 @@
 | 1 | fetch 的 DNS 校验与连接之间存在重解析窗口（无连接 pinning） | JDK HttpClient 无连接层 DNS 定制点（DSH 靠 undici pinning 补的第四道）；真利用需攻击者控制权威 DNS 且毫秒级翻转记录，个人工具威胁模型下偏理论。防线仍含字面预检 / DNS 全地址集公网校验 / 重定向同源逐跳重校验三道；M22 沙箱复审若威胁模型升级再议（ADR-0021 决策 4） |
 | 2 | URL 查询串的间接外泄通道不设防 | GET 的 URL 由模型构造，理论上可夹带本地敏感数据出网——无法根除（任何搜索都要求模型构造查询串，DSH 亦然）；网络读档位（read-only 档联网 ask）提供档位级缓冲（ADR-0021 决策 8） |
 | 3 | 表格 Markdown 降级为逐行文本 | 不产出 GFM 表格（colspan/rowspan 展开是 token 噪音与爆炸源，DSH 同为表格专门写防爆炸规则）；行列对应以「单元格 \| 单元格」文本行保留（ADR-0021 决策 5） |
+
+## M21（0.16.0）
+
+| # | 限制 | 说明与去向 |
+|---|---|---|
+| 1 | 会话检索为内存倒排索引，量级有边界 | 事件全文与词表常驻内存、英文整词 + 中文单字分词（无词典），个人会话规模（千级会话 × 百级事件）够用；汉字查询以连续原词为主排序键缓解单字噪音，但跨字噪音命中仍可能。后期转 SQLite FTS5——`SessionQueryService` 接口语义已对齐 FTS5 形态，切换不动上层（ADR-0022 决策 8）。另：**当前活跃会话不入检索**——索引扫描读取属主锁定的文件会按 POSIX 语义释放本进程独占锁（审查 P1 修复的规避代价），内容关闭会话或下次搜索自然收录 |
+| 2 | 治理 token 估算不含图片 | 上下文治理的估算口径只计文本（图片 token 数 provider 间差异大且无本地 tokenizer）；视觉会话的真实占用由 provider 实测 usage 侧自然覆盖（计量切真实 usage，ADR-0009）——估算线在纯视觉轮次下会显著低估，压缩触发点可能滞后 |
+| 3 | Files API 投递仅 DeepSeek 形态端点，file_id 失效不自动重传 | `imageDelivery: files` 已接线（上传换 file_id、本地索引去重、配额满回收最旧自有文件重试、上传失败回退 inline）；但端点形态仅 DeepSeek（`POST {base}/files`），非 DeepSeek 部署用缺省 inline；provider 侧 file_id 失效时该轮报错——清理 `cache/attachments/files-index.json` 后重发即自然重传（ADR-0022 决策 5） |

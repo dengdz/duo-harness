@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
+import dev.duo.harness.llm.MessageImage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.llm.LlmConfig;
@@ -165,7 +166,18 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
             if (message.role() == ChatMessage.Role.TOOL) {
                 // 工具结果回填：协议要求携带 tool_call_id 关联模型发起的调用
                 node.put("tool_call_id", message.toolCallId());
-                node.put("content", message.content());
+                if (message.images() != null && !message.images().isEmpty()) {
+                    // read_image 结果回填（M21 工单 05）：content 数组（文本 + image_url）
+                    ArrayNode parts = node.putArray("content");
+                    if (!message.content().isEmpty()) {
+                        parts.addObject().put("type", "text").put("text", message.content());
+                    }
+                    for (MessageImage image : message.images()) {
+                        appendImagePart(parts, image);
+                    }
+                } else {
+                    node.put("content", message.content());
+                }
             } else if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
                 // assistant 工具调用消息：content 可空 + tool_calls 数组；
                 // 思考模式的 reasoning_content 必须原样传回，缺失即被 provider 以 400 拒绝
@@ -181,6 +193,15 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                     callNode.putObject("function")
                             .put("name", call.name())
                             .put("arguments", call.argumentsJson());
+                }
+            } else if (message.images() != null && !message.images().isEmpty()) {
+                // 多部件 content（M21 工单 05，OpenAI 兼容形态）：文本 + image_url（data URI）
+                ArrayNode parts = node.putArray("content");
+                if (!message.content().isEmpty()) {
+                    parts.addObject().put("type", "text").put("text", message.content());
+                }
+                for (MessageImage image : message.images()) {
+                    appendImagePart(parts, image);
                 }
             } else {
                 node.put("content", message.content());
@@ -319,5 +340,20 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
             return new RetryableLlmException(exception.getMessage());
         }
         return exception;
+    }
+
+    /**
+     * 图片部件序列化（M21 工单 06）：files 投递形态输出 file 引用部件
+     * （DeepSeek 形态 {@code {"type":"file","file":{"file_id":…}}}），
+     * inline 形态输出 image_url data URI（任何 OpenAI 兼容端点可用）。
+     */
+    private static void appendImagePart(ArrayNode parts, MessageImage image) {
+        if (image.deliveredAsFile()) {
+            parts.addObject().put("type", "file").putObject("file")
+                    .put("file_id", image.fileId());
+            return;
+        }
+        parts.addObject().put("type", "image_url").putObject("image_url")
+                .put("url", image.dataUri());
     }
 }

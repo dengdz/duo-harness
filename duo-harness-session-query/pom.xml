@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.duo</groupId>
+    <artifactId>duo-harness</artifactId>
+    <version>0.16.0</version>
+  </parent>
+
+  <artifactId>duo-harness-session-query</artifactId>
+  <description>会话检索域：后端无关检索服务接口 + 内存倒排索引实现 + session_search 工具</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 只用 SessionEvent 类型常量对齐事件词汇（索引直读 JSONL，不走 Session.load 独占锁） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- session_search 工具经 ToolsService 注册（optionalInject：tools 行缺席只发服务不注册工具） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-tools</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+    </dependency>
+  </dependencies>
+</project>

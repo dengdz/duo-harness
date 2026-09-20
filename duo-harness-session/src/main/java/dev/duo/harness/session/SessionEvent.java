@@ -145,9 +145,21 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         this(type, at, text, toolCallId, toolName, reasoning, null);
     }
 
+    /**
+     * 附件引用块（M21，ADR-0022）：user 消息携带的附件元数据（text = 引用 JSON）。
+     * 字节在附件库、日志零字节；不投影进模型消息（多部件化随工单 05 进入请求），
+     * Web 渲染与授权读取端点以本事件为归属凭证。
+     */
+    public static final String USER_ATTACHMENT = "user/attachment";
+
     /** 便捷工厂：当前时刻的用户消息。 */
     public static SessionEvent userMessage(String text) {
         return new SessionEvent(USER_MESSAGE, System.currentTimeMillis(), text);
+    }
+
+    /** 便捷工厂：附件引用块（text = AttachmentRef JSON）。 */
+    public static SessionEvent userAttachment(String refJson) {
+        return new SessionEvent(USER_ATTACHMENT, System.currentTimeMillis(), refJson);
     }
 
     /** 便捷工厂：当前时刻的助手流式增量。 */

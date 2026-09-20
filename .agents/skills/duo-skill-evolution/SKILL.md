@@ -17,23 +17,16 @@ description: 元技能：其他 Skill 任务结束后调用，对执行过程复
 
 ## 二、接入方式（给其他 Skill 的作者）
 
-### 2.1 在 Skill 结尾添加调用说明
+### 2.1 接入方式（已全局化，勿在 SKILL.md 复制调用模板）
 
-在你的 SKILL.md 末尾添加如下章节：
+2026-09-20 起接入全局化，**不要再往各技能 SKILL.md 末尾复制"任务结束后：自我进化"章节**：
 
-```markdown
-## 任务结束后：自我进化
+- **触发与强制**：由 AGENTS.md 红线 8 承担——"duo- 技能任务收尾必须先调用 duo-skill-evolution 复盘，再输出最终总结"；workspace `.zcode/config.json` 的 Stop hook 在每回合结束注入收尾自查提醒作机制兜底
+- **经验参考前置**：红线 8 同时要求执行任何 duo- 技能前先读其 `references/experience.md`，无需在 SKILL.md 里写"经验参考"段
 
-本次任务完成后，调用 `duo-skill-evolution` 进行复盘：
+**新技能接入清单**（只需一步）：
 
-1. 总结本次执行的关键步骤、遇到的问题、用户反馈
-2. 评估是否存在改进空间
-3. 若有价值的经验教训，触发进化
-
-调用方式：
-- 直接在任务结尾说："现在调用 duo-skill-evolution 复盘本次执行"
-- 或在用户确认任务完成后，主动询问："是否需要复盘本次执行并记录经验？"
-```
+在该技能 `references/experience.md` 头部（首个 `---` 分隔线后）写"复盘维度"段：本技能复盘时按什么口径收集任务摘要、执行过程关键点、用户反馈、自我感知（领域定制维度）。SKILL.md 本身**不需要任何复盘相关章节**——触发靠 AGENTS.md 红线 8，兜底靠 workspace Stop hook。
 
 ### 2.2 调用时机
 
@@ -156,12 +149,7 @@ description: 元技能：其他 Skill 任务结束后调用，对执行过程复
    ---
    ```
 
-4. 在该 Skill 的 SKILL.md 中增加引用（若尚未引用）：
-   ```markdown
-   ## 经验参考
-   
-   执行前建议阅读 `references/experience.md`，了解常见边界情况和最佳实践。
-   ```
+4. SKILL.md 引用说明：AGENTS.md 红线 8 已全局要求"执行任何 duo- 技能前先读其 `references/experience.md`"，无需再在 SKILL.md 中增加"经验参考"引用段
 
 ### 4.2 方式 B：修订 SKILL.md（谨慎使用）
 

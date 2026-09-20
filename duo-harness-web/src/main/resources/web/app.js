@@ -28,16 +28,36 @@ function showToast(text, kind) {
 const api = {
   async status() { return (await fetch('/api/status')).json(); },
   async sessions() { return (await fetch('/api/sessions')).json(); },
+  async search(q) {
+    const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || ('检索失败（HTTP ' + res.status + '）'));
+    return res.json();
+  },
   async page(before) {
     const res = await fetch('/api/session/page?before=' + before);
     if (!res.ok) throw new Error('分页请求失败（HTTP ' + res.status + '）');
     return res.json();
   },
-  async sendMessage(text) {
+  async sendMessage(text, attachments) {
     return fetch('/api/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify(attachments && attachments.length ? { text, attachments } : { text })
     });
+  },
+  // 附件上传（M21 工单 04）：文件 → base64 → 入库，返回引用元数据（发送时随消息提交）
+  async uploadAttachment(file) {
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+    const res = await fetch('/api/attachment/upload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data, name: file.name })
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || ('HTTP ' + res.status));
+    return res.json();
   },
   // 结构化回答协议（M16 工单 07）：审批 {decision}，提问/计划 {answers}——两形态互斥，
   // 服务端不做字符串嗅探（自由文本里的"拒绝"是普通回答，不是判定语义）
@@ -171,6 +191,19 @@ const render = (() => {
     b.className = 'bubble';
     b.textContent = text;
     div.appendChild(b);
+    t.container.appendChild(div);
+    scroll();
+  }
+
+  function userImage(src, alt) {
+    showMessages();
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    const img = document.createElement('img');
+    img.className = 'att-image';
+    img.src = src;
+    img.alt = alt || '附件图片';
+    div.appendChild(img);
     t.container.appendChild(div);
     scroll();
   }
@@ -467,6 +500,16 @@ const render = (() => {
 
   function commandResult(ev) {
     if (!ev.text) return; // 空结果（如 /exit）不渲染
+    if (ev.toolName === 'export' && ev.text.startsWith('/api/session/export')) {
+      // /export（M21 工单 09）：done 结果即下载端点 URL——触发下载流
+      // （Content-Disposition 命名，浏览器直接落盘）；URL 文本照常渲染可查
+      const a = document.createElement('a');
+      a.href = ev.text;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('正在下载导出文件…', 'info');
+    }
     showMessages();
     const div = document.createElement('div');
     div.className = 'msg cmdresult';
@@ -571,7 +614,14 @@ const render = (() => {
    * 收口整段覆盖——进行中轮次刷新不空窗，且不复发 0913-04 碎片化（防碎片化不以丢弃为手段）。
    */
   function dispatch(ev) {
-    if (ev.type === 'user/message') {
+    if (ev.type === 'user/attachment') {
+      // 附件引用块（M21 工单 04）：text 为引用 JSON，图片经授权读取端点回字节
+      try {
+        const ref = JSON.parse(ev.text);
+        userImage('/api/attachment/read?id=' + ref.attachmentId, ref.name || '附件图片');
+      } catch (e) { /* 坏行跳过 */ }
+    }
+    else if (ev.type === 'user/message') {
       user(ev.text);
       todoPanel.clear(); // 新轮开始：上一轮清单使命结束（与 todoProjection 清空语义一致）
     }
@@ -838,16 +888,62 @@ const app = (() => {
 
   let sendInFlight = false; // 请求在途闸：只拦重入，不拦"思考中"——执行中发消息是合法注入
 
+  // ---- 附件（M21 工单 04）：拖拽/粘贴上传入列，发送时随消息提交 ----
+  const pendingAttachments = [];
+  const attChips = document.createElement('div');
+  attChips.className = 'att-chips';
+  document.querySelector('.composer').appendChild(attChips);
+
+  function addPendingAttachment(meta) {
+    if (pendingAttachments.some(a => a.attachmentId === meta.attachmentId)) return; // 同图不重列入列
+    pendingAttachments.push(meta);
+    renderAttChips();
+  }
+
+  function renderAttChips() {
+    attChips.innerHTML = '';
+    for (const meta of pendingAttachments) {
+      const chip = document.createElement('span');
+      chip.className = 'att-chip';
+      chip.textContent = (meta.name || meta.attachmentId.slice(0, 8)) + ' · ' + Math.max(1, Math.round(meta.bytes / 1024)) + 'KB';
+      const remove = document.createElement('button');
+      remove.className = 'att-remove';
+      remove.textContent = '×';
+      remove.onclick = () => {
+        const i = pendingAttachments.indexOf(meta);
+        if (i >= 0) pendingAttachments.splice(i, 1);
+        renderAttChips();
+      };
+      chip.appendChild(remove);
+      attChips.appendChild(chip);
+    }
+  }
+
+  function handleAttachmentFiles(files) {
+    for (const file of files) {
+      if (!file.type || !file.type.startsWith('image/')) {
+        showToast('仅支持图片附件（png/jpeg/gif/webp）', 'err');
+        continue;
+      }
+      api.uploadAttachment(file)
+        .then(addPendingAttachment)
+        .catch(err => showToast('上传失败：' + errText(err), 'err'));
+    }
+  }
+
   async function send() {
     const input = $('#input');
     const text = input.value.trim();
-    if (!text || sendInFlight) return; // 受理中重入忽略（注入受理后按钮即恢复，可连发）
+    const attachments = pendingAttachments.splice(0); // 取走待发清单
+    if ((!text && !attachments.length) || sendInFlight) return; // 受理中重入忽略
+    atClose(); // 发送即收起 @ 补全（下拉态不应跨消息残留）
+    if (!attachments.length) attChips.innerHTML = ''; // 无附件发送时清可能残留的空壳
     input.value = '';
     sendInFlight = true;
     setSendBusy(true, '…');
     render.showMessages();
     try {
-      const res = await api.sendMessage(text);
+      const res = await api.sendMessage(text, attachments);
       if (res.status === 202) {
         // 202 空体 = 正常受理（异步执行）；带体 = 结构化受理（M19）：
         // injected = 运行中注入；command = 斜杠命令（命中执行的结果走事件流渲染，
@@ -870,7 +966,11 @@ const app = (() => {
       setSendBusy(false);
       if (res.status === 409) showToast('已有对话在执行中，请稍候', 'info');
       else showToast('消息发送失败（HTTP ' + res.status + '）');
+      pendingAttachments.unshift(...attachments); // 失败返还：附件不丢
+      renderAttChips();
     } catch (err) {
+      pendingAttachments.unshift(...attachments);
+      renderAttChips();
       setSendBusy(false);
       showToast('消息发送失败：' + errText(err));
     } finally {
@@ -879,6 +979,141 @@ const app = (() => {
   }
   $('#send').addEventListener('click', send);
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  // 附件入口（M21 工单 04）：粘贴与拖拽图片 → 上传入列（vision 关闭时端点 409 提示）
+  $('#input').addEventListener('paste', (e) => handleAttachmentFiles(e.clipboardData.files));
+
+  // ---- @file 补全下拉（M21 工单 07，ADR-0022 决策 7）----
+  // 触发规则与 agent.fileref.FileMentionGrammar 同口径：@ 前须行首/空白；@"..." 引号
+  // 路径可含空格；选中即插入 mention 文本（零内容注入——内容永远由模型 read）
+  function activeAtToken(text, caret) {
+    for (let p = Math.min(caret, text.length) - 1; p >= 0; p--) {
+      if (text[p] !== '@') continue;
+      if (p !== 0 && !/\s/.test(text[p - 1])) continue; // @ 前须行首/空白
+      if (text[p + 1] === '"') {
+        const close = text.indexOf('"', p + 2);
+        if (close >= 0 && close < caret) {
+          return { token: text.slice(p + 2, close), start: p, end: close + 1 };
+        }
+        return { token: text.slice(p + 2, caret), start: p, end: caret, quoted: true };
+      }
+      const body = text.slice(p + 1, caret);
+      if (/\s/.test(body)) return null; // 非引号路径含空白 = token 已闭合
+      return { token: body, start: p, end: caret };
+    }
+    return null;
+  }
+
+  function formatMention(path, isDirectory) {
+    let p = isDirectory && !path.endsWith('/') ? path + '/' : path;
+    return /\s/.test(p) ? '@"' + p + '"' : '@' + p;
+  }
+
+  let atState = { items: [], selected: 0, open: false, requestId: 0 };
+
+  function atClose() {
+    atState.open = false;
+    atState.items = [];
+    $('#atDropdown').hidden = true;
+    $('#atDropdown').innerHTML = '';
+  }
+
+  function atRenderList() {
+    const box = $('#atDropdown');
+    box.innerHTML = '';
+    if (!atState.items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'at-empty';
+      empty.textContent = '无匹配路径';
+      box.appendChild(empty);
+      return;
+    }
+    atState.items.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.className = 'at-item' + (i === atState.selected ? ' selected' : '');
+      const dir = document.createElement('span');
+      dir.className = 'at-dir';
+      dir.textContent = item.directory ? '[目录]' : '[文件]';
+      const path = document.createElement('span');
+      path.textContent = item.path;
+      row.append(dir, path);
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); atPick(i); });
+      box.appendChild(row);
+    });
+    const sel = box.children[atState.selected];
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+
+  function atPick(i) {
+    const item = atState.items[i];
+    if (!item) return;
+    const input = $('#input');
+    // 换行/多行输入下 activeAtToken 以整值 + 光标计算，选中替换 [start, end) 区间
+    const active = activeAtToken(input.value, input.selectionStart || input.value.length);
+    const mention = formatMention(item.path, item.directory) + ' ';
+    if (active) {
+      const before = input.value.slice(0, active.start);
+      const after = input.value.slice(active.end);
+      input.value = before + mention + after;
+      const caret = before.length + mention.length;
+      input.setSelectionRange(caret, caret);
+    } else {
+      input.value += mention;
+    }
+    atClose();
+    input.focus();
+  }
+
+  async function atRefresh() {
+    const input = $('#input');
+    const active = activeAtToken(input.value, input.selectionStart || input.value.length);
+    if (!active) { atClose(); return; }
+    const rid = ++atState.requestId;
+    try {
+      const res = await fetch('/api/file-complete?q=' + encodeURIComponent(active.token));
+      if (rid !== atState.requestId) return; // 过期响应丢弃
+      if (!res.ok) { atClose(); return; }
+      const data = await res.json();
+      atState.items = data.suggestions || [];
+      atState.selected = 0;
+      atState.open = true;
+      const box = $('#atDropdown');
+      box.hidden = false;
+      atRenderList();
+    } catch (e) { atClose(); }
+  }
+
+  function initAtCompletion() {
+    const input = $('#input');
+    let timer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(atRefresh, 120);
+    });
+    // capture：下拉打开时按键先于发送监听处理（Enter 选词不发消息）
+    input.addEventListener('keydown', (e) => {
+      if (!atState.open || !atState.items.length) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        atState.selected = (atState.selected + delta + atState.items.length) % atState.items.length;
+        atRenderList();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        atPick(atState.selected);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        atClose();
+      }
+    }, true);
+    // 点击面板外收起（mousedown 在 pick 的 preventDefault 之后不误关）
+    document.addEventListener('mousedown', (e) => {
+      if (atState.open && !$('#atDropdown').contains(e.target) && e.target !== input) atClose();
+    });
+  }
+  const composerEl = document.querySelector('.composer');
+  composerEl.addEventListener('dragover', (e) => e.preventDefault());
+  composerEl.addEventListener('drop', (e) => { e.preventDefault(); handleAttachmentFiles(e.dataTransfer.files); });
 
   // ---- 新话题：无刷新换绑（工单 03）——断 SSE → POST new → 空态反馈 → 重连收新会话尾部快照 ----
   $('#newSession').addEventListener('click', async () => {
@@ -910,6 +1145,31 @@ const app = (() => {
     return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
   }
 
+  // 切换会话（侧栏条目与检索命中共用，M21 工单 08 抽取）：返回是否换绑成功
+  async function switchToSession(id) {
+    sse.disconnect(); // 无刷新切换（工单 03）：断流期间旧会话不再推帧
+    try {
+      const res = await fetch('/api/session/switch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      if (!res.ok) {
+        // 服务端错误文案优先（如"会话已被占用：<id>"）——比状态码更有行动指向
+        const detail = (await res.text().catch(() => '')).trim();
+        showToast(detail || ('切换会话失败（HTTP ' + res.status + '）'));
+        sse.connect(); // 换绑未发生：恢复原会话事件流（快照整窗重放，内容一致）
+        return false;
+      }
+      $('#input').value = ''; // 切换清空输入框：未发送的字符属于原会话语境，不跨会话携带
+      sse.connect(); // 重连收新会话尾部快照 → 整窗替换；侧栏高亮随 afterReplay 刷新
+      return true;
+    } catch (err) {
+      sse.connect();
+      showToast('切换会话失败：' + errText(err));
+      return false;
+    }
+  }
+
   async function refreshSessions() {
     let data;
     try {
@@ -934,30 +1194,88 @@ const app = (() => {
       item.append(sid, meta);
       item.addEventListener('click', async () => {
         if (s.current) return;
-        sse.disconnect(); // 无刷新切换（工单 03）：断流期间旧会话不再推帧
-        try {
-          const res = await fetch('/api/session/switch', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: s.id })
-          });
-          if (!res.ok) {
-            // 服务端错误文案优先（如"会话已被占用：<id>"）——比状态码更有行动指向
-            const detail = (await res.text().catch(() => '')).trim();
-            showToast(detail || ('切换会话失败（HTTP ' + res.status + '）'));
-            sse.connect(); // 换绑未发生：恢复原会话事件流（快照整窗重放，内容一致）
-            return;
-          }
-          $('#input').value = ''; // 切换清空输入框：未发送的字符属于原会话语境，不跨会话携带
-          sse.connect(); // 重连收新会话尾部快照 → 整窗替换；侧栏高亮随 afterReplay 刷新
-        } catch (err) {
-          sse.connect();
-          showToast('切换会话失败：' + errText(err));
-        }
+        await switchToSession(s.id);
       });
       list.appendChild(item);
       if (s.current) document.title = s.title || s.id; // 标签页标题跟随当前会话（工单 06）
     }
     $('#chatHint').textContent = '会话 ' + currentSessionId + ' · /new 开新话题';
+    // 切换/重放后把当前高亮项滚入视野（block:nearest——已可见时不动，验收反馈①）
+    const active = list.querySelector('.sidebar-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  // ---- 侧栏搜索（M21 工单 08）：回车检索 → 命中列表替换会话列表，点击命中切会话 ----
+  // 服务未装配时端点 503，toast 给出"未装配"提示——搜索框常驻但故障可见
+  function initSessionSearch() {
+    const box = $('#sessionSearch');
+    const results = $('#searchResults');
+    const list = $('#sessionList');
+    // 检索态语义（验收反馈②精修）：有命中 → 替换会话列表占满侧栏；
+    // 无命中 → 紧凑提示、列表照常可见（换会话不必先清搜索）。× / 空回车 / 切换命中后还原
+    const dismiss = () => {
+      results.hidden = true;
+      results.innerHTML = '';
+      results.classList.remove('has-hits');
+      list.hidden = false;
+    };
+    box.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const q = box.value.trim();
+      if (!q) {
+        dismiss();
+        return;
+      }
+      let data;
+      try {
+        data = await api.search(q);
+      } catch (err) {
+        showToast(errText(err));
+        return;
+      }
+      results.innerHTML = '';
+      results.classList.toggle('has-hits', data.hits.length > 0);
+      list.hidden = data.hits.length > 0;
+      results.hidden = false;
+      const head = document.createElement('div');
+      head.className = 'search-head';
+      const label = document.createElement('span');
+      label.textContent = '“' + q + '” · ' + data.hits.length + ' 个会话命中';
+      const close = document.createElement('button');
+      close.textContent = '×';
+      close.title = '关闭检索结果';
+      close.addEventListener('click', dismiss);
+      head.append(label, close);
+      results.appendChild(head);
+      if (!data.hits.length) {
+        const empty = document.createElement('div');
+        empty.className = 'search-empty';
+        empty.textContent = '无命中——检索只覆盖会话正文（消息/工具/清单），不含标题与元数据';
+        results.appendChild(empty);
+        return;
+      }
+      for (const hit of data.hits) {
+        const item = document.createElement('div');
+        item.className = 'sidebar-item search-hit';
+        const sid = document.createElement('div');
+        sid.className = 'sid';
+        sid.textContent = hit.title || hit.sessionId;
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = hit.eventType + ' · ' + relativeTime(hit.lastModifiedMs);
+        const snippet = document.createElement('div');
+        snippet.className = 'snippet';
+        snippet.textContent = hit.snippet; // 【】命中标记由后端 snippet 给出，纯文本呈现
+        item.append(sid, meta, snippet);
+        item.addEventListener('click', async () => {
+          if (await switchToSession(hit.sessionId)) {
+            dismiss();
+            box.value = '';
+          }
+        });
+        results.appendChild(item);
+      }
+    });
   }
 
   // ---- 状态面：上下文占用 + 插件快照 + 工具清单 ----
@@ -1056,6 +1374,8 @@ const app = (() => {
 
   refreshStatus();
   refreshSessions();
+  initSessionSearch();
+  initAtCompletion();
   setInterval(refreshStatus, 5000);
 
   // 滚动到顶加载更早历史（工单 02）：loading 标志防重入，加载后由 finally 补发直至占位耗尽

@@ -240,6 +240,11 @@ public final class SubagentManager {
         if (seed) {
             List<SessionEvent> prefix = SeedSlicer.balancedCompletedRounds(parentSession.events());
             for (SessionEvent event : prefix) {
+                // 附件引用块不进子代理（M21，ADR-0022 决策 10）——种子处物理拦截，
+                // 不依赖子代理投影端的 vision 开关兜底
+                if (SessionEvent.USER_ATTACHMENT.equals(event.type())) {
+                    continue;
+                }
                 child.append(event); // 播种原样落子日志（复用事件类型的投影形态，ADR-0015 决策 4）
             }
             child.append(SessionEvent.subagentSeedBoundary(parentSession.id(), prefix.size()));

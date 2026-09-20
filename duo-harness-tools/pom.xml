@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.duo</groupId>
     <artifactId>duo-harness</artifactId>
-    <version>0.15.0</version>
+    <version>0.16.0</version>
   </parent>
 
   <artifactId>duo-harness-tools</artifactId>
@@ -17,6 +17,18 @@
     <dependency>
       <groupId>dev.duo</groupId>
       <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- read_image 的附件库依赖（M21 工单 03，ADR-0022；attachments 服务可选在场） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-attachment</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- read_image 入库标记常量的属主在 session（M21，ADR-0022：日志引用格式单一事实来源） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session</artifactId>
       <version>${project.version}</version>
     </dependency>
     <!-- 工具输出契约校验；版本跟随 SDK（mcp-json-jackson2 要求 2.0.0），见根 pom -->
