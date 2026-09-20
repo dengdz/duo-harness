@@ -33,6 +33,8 @@
     <mcp-sdk.version>0.18.1</mcp-sdk.version>
     <!-- 跟随 mcp-json-jackson2:0.18.1 的 compile 依赖要求（2.0.0）；1.5.0 缺 SDK 所需类 -->
     <networknt.version>2.0.0</networknt.version>
+    <!-- web 工具族 HTML 解析清洗（M20，ADR-0021；单 jar 零传递依赖，新依赖已获 grill 同意） -->
+    <jsoup.version>1.18.3</jsoup.version>
     <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>
     <!-- reactor 模式：exec:java 仅在 example 模块启用（其余模块跳过） -->
     <exec.skip>true</exec.skip>
@@ -71,6 +73,12 @@
         <groupId>com.networknt</groupId>
         <artifactId>json-schema-validator</artifactId>
         <version>${networknt.version}</version>
+      </dependency>
+      <!-- web 工具族 HTML 解析清洗（M20，ADR-0021） -->
+      <dependency>
+        <groupId>org.jsoup</groupId>
+        <artifactId>jsoup</artifactId>
+        <version>${jsoup.version}</version>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>

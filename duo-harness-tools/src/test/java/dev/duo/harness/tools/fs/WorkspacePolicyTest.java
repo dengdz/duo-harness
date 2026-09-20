@@ -127,4 +127,24 @@ class WorkspacePolicyTest {
                 "path 解析失败保守 ask（不抛异常）");
         assertEquals(WorkspacePolicy.Decision.ASK, policy.decide("edit", null));
     }
+
+    @Test
+    void networkReadTierMatrix() throws IOException {
+        // 网络读三档（M20，ADR-0021 决策 8）：read-only 档不出网边界一律 ask；
+        // workspace-write（默认档）与 danger 档放行
+        WorkspacePolicy readOnly = policy(WorkspacePolicy.Mode.READ_ONLY);
+        assertEquals(WorkspacePolicy.Decision.ASK, readOnly.decide("web_fetch", null),
+                "read-only 档联网 ask");
+        assertEquals(WorkspacePolicy.Decision.ASK, readOnly.decide("web_search", null),
+                "read-only 档联网 ask");
+        WorkspacePolicy wsWrite = policy(WorkspacePolicy.Mode.WORKSPACE_WRITE);
+        assertEquals(WorkspacePolicy.Decision.ALLOW, wsWrite.decide("web_fetch", null),
+                "默认档联网放行");
+        assertEquals(WorkspacePolicy.Decision.ALLOW, wsWrite.decide("web_search", null),
+                "默认档联网放行");
+        WorkspacePolicy danger = policy(WorkspacePolicy.Mode.DANGER_FULL_ACCESS);
+        assertEquals(WorkspacePolicy.Decision.ALLOW, danger.decide("web_search", null));
+        // 未知工具保守 ask 不回归
+        assertEquals(WorkspacePolicy.Decision.ASK, wsWrite.decide("some_future_tool", null));
+    }
 }

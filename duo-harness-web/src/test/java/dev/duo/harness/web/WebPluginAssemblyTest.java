@@ -33,6 +33,16 @@ class WebPluginAssemblyTest {
     }
 
     @Test
+    void workspaceDeclaredAsOptionalDependency() {
+        // 网络读档位恢复（PresenterAssembly.restorePermissionMode）与双面 /permission
+        // 依赖本声明经 Web 插件 Context 惰性解析 workspace——缺失即内核"错误前移"拒绝
+        // 读取（M20 验收实测：WARN "权限档恢复跳过"、浏览器切档不可用）
+        assertTrue(new WebPlugin().optionalInject()
+                        .contains(dev.duo.harness.tools.fs.WorkspacePolicy.SERVICE_NAME),
+                "WebPlugin 须声明 workspace 可选依赖");
+    }
+
+    @Test
     void pureWebAssemblyRegistersInteractionTools(@TempDir Path tempDir) throws Exception {
         // duo home 重定向到临时目录并预置最小 config.yml（M14-01）：WebPlugin.apply 经
         // LlmConfig.load() 读 duo home——装配测试自此不依赖本机 ~/.duo 的真实状态

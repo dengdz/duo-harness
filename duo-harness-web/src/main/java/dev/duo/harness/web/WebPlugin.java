@@ -56,6 +56,17 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 InteractionService.SERVICE_NAME, CommandsRegistry.SERVICE_NAME);
     }
 
+    /**
+     * workspace 为可选依赖（M20 验收实测补齐，ADR-0019）：权限档恢复
+     * （PresenterAssembly.restorePermissionMode）与双面 /permission 命令经本插件
+     * Context 惰性解析 workspace——未声明时内核"错误前移"拒绝读取，Web 侧恢复被
+     * 跳过、浏览器切档不可用。缺席（纯对话 Web 装配）视为无档位语义，照常启动。
+     */
+    @Override
+    public Set<String> optionalInject() {
+        return Set.of(dev.duo.harness.tools.fs.WorkspacePolicy.SERVICE_NAME);
+    }
+
     @Override
     public Class<JsonNode> configType() {
         return JsonNode.class;

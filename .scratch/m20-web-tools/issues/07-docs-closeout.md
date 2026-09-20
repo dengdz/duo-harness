@@ -10,8 +10,13 @@ web 工具族的用户可见面收口：参考文档、运行 Demo、CHANGELOG/l
 
 ## Status
 
-ready-for-agent
+done
 
+## Comments
+
+- 2026-09-20（夜间自主实现）：工具目录（对账测试绿，11 工具全覆写）/ 插件配置参考 / 运行 Demo / demo yml / CHANGELOG / limitations 三条 / acceptance.md 验收件全部就位。全仓 `mvn test` BUILD SUCCESS。**待用户手动验收**后随里程碑收口置 done。
+
+- 2026-09-20：用户手动验收通过（含 read-only ask 复验、baeldung 正文修复复验、Tavily 搜索接力），工单收口。
 ## Checklist
 
 - [ ] `工具目录.md` 增 `web_fetch` / `web_search` 条目（工具目录对账测试绿）

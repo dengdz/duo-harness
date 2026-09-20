@@ -4,6 +4,10 @@
 
 ## 0.15.0（未发布）
 
+### Added
+
+- **web 工具族**（M20，ADR-0021）：新插件 `tools.web.WebToolsPlugin`（yml 一行 opt-in）——`web_fetch` 抓取公网网页返回干净 Markdown 正文（头行带最终 URL 与状态码，正文前有不可信数据声明；非 2xx 是结果不是错误；SSRF 三道防线拒绝内网/回环目标与跨源重定向；仅文本/HTML/JSON/XML，深度护栏防病态页面，三层限额超时 30s 均可配）与 `web_search` 全网搜索（Tavily 首发，单 query 返回 Sources 列表，上限 8 条可配；key 解析链 apiKey 字面量 → TAVILY_API_KEY 环境变量）。**配置驱动注册**：search 段未配置的部署呈 fetch-only，web_search 不出现在模型工具清单。权限按网络读档位：read-only 档联网一律 ask（只读语义不出网边界）、workspace-write / danger 档放行；两工具并发安全进并行池，hooks/工具卡/子代理模板零特化生效。新依赖 jsoup（HTML 解析清洗，单 jar 零传递依赖）
+
 ### Changed
 
 - **技能经验文档归位 references/ 并全量预建**：duo-* 技能的 experience.md 从 SKILL.md 平级迁至 `references/experience.md`（对齐技能规范格式，references 承载辅助文档）；经验文档 14 技能全量就位——duo-code-review / duo-skill-evolution 迁移保留既有内容，其余 12 个按元技能规范预建模板；全部 SKILL.md 增补"经验参考"段（执行前读经验、任务后复盘追加同一文件）并统一新路径引用——修正自我进化收尾流程不被触发的问题
@@ -13,6 +17,7 @@
 
 ### Fixed
 
+- **Web 侧权限档恢复与 /permission 不可用**（M19 缺口，M20 验收实测发现）：WebPlugin 未声明 workspace 可选依赖——内核"错误前移"拒绝读取，Web 侧新建/切换会话时权限档恢复被跳过（WARN"权限档恢复跳过"）、浏览器 `/permission` 不可用；补 `optionalInject` 声明修复（CLI 侧自 M19 起即正常；纯对话 Web 装配缺席视为无档位语义照常启动）
 - **双开重启后权限档恢复被覆盖**（BUG-20260919-03，工单 06 验收实测）：恢复语义未分档——CLI 占用被迫改开的新会话把另一呈现位刚恢复的档位重置回缺省；修复分两层：启动续接只恢复不重置、显式换绑（/new/新话题）无记录才重置缺省；占用改开的新会话继承被占会话最后切定档并落事件（治理态不因呈现位轮转而丢）
 - **压缩切分在工具对收尾形态下永远放弃折叠**（BUG-20260919-01，工单 03 验收实测）：投影尾部为 [助手(工具调用), 工具结果] 收尾（带工具调用轮次的常态）时，切分点向后找 USER 边界一路推到末尾，手动与自动压缩都误判"近端不足"放弃——切分点改为向前回退到最近 USER，近端多留一轮换配对完整，含 USER 消息的投影总能折叠
 

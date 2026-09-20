@@ -10,8 +10,14 @@
 
 ## Status
 
-ready-for-agent
+done
 
+## Comments
+
+- 2026-09-20（夜间自主实现）：实现完成、模块测试全绿。**待用户手动验收**。
+
+- 2026-09-20（验收实测反馈修复）：URL 归一化去重：验收实测同一站点 http/https/www 三种变体重复占坑——按 host（去 www）+路径+查询串去重保留首条；新增归一化去重用例。
+- 2026-09-20：用户手动验收通过（含 read-only ask 复验、baeldung 正文修复复验、Tavily 搜索接力），工单收口。
 ## Checklist
 
 - [ ] config `search` 段解析：`type=tavily` / `apiKey` / `apiKeyEnv`（缺省 TAVILY_API_KEY）/ `baseUrl`（缺省官方端点）/ `maxResults`（缺省 8）；非法值启动 FAILED 点名；**段缺席或 key 链皆空 → web_search 不注册**（注册语义测试锁定）

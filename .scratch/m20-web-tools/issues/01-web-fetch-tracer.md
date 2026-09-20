@@ -12,8 +12,13 @@ yml 加一行 `WebToolsPlugin`，agent 即可用 `web_fetch` 抓取正常网页�
 
 ## Status
 
-ready-for-agent
+done
 
+## Comments
+
+- 2026-09-20（夜间自主实现）：实现完成，模块测试 6/6 绿（渲染格式/截断 footer/3xx 结果/超时回填/UA 请求形态/结构化错误）。jsoup 依赖已入根 pom（grill 已获批）。**待用户手动验收**后置 done。
+
+- 2026-09-20：用户手动验收通过（含 read-only ask 复验、baeldung 正文修复复验、Tavily 搜索接力），工单收口。
 ## Checklist
 
 - [ ] `WebToolsPlugin` yml 一行 opt-in（config 可选），inject `tools` 服务，行在场即注册 `web_fetch`

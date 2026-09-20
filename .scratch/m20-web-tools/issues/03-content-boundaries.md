@@ -10,8 +10,18 @@ fetch 对"非理想内容"的行为全部定型（ADR-0021 决策 5）：不该�
 
 ## Status
 
-ready-for-agent
+done
 
+## Comments
+
+- 2026-09-20（夜间自主实现）：判型/charset/CL 预检/深度护栏/恰好填满语义全部落地，新增 BodyReaderTest（含看门狗拟真流）。模块 140 全绿。**待用户手动验收**。
+
+## Comments
+
+- 2026-09-20（夜间自主实现）：实现完成、模块测试全绿。**待用户手动验收**。
+
+- 2026-09-20（验收实测反馈修复）：限额后置修复：验收实测 baeldung（head 内联样式 >100k 字符）转换前预切得到空正文——改为先完整解析转换、再对转换后内容施加上限；新增 head 重量级回归用例。
+- 2026-09-20：用户手动验收通过（含 read-only ask 复验、baeldung 正文修复复验、Tavily 搜索接力），工单收口。
 ## Checklist
 
 - [ ] content-type 分类：`text/*`、`application/json`、`application/xml`、`+json`、`+xml` 透传为文本；PDF/图片/二进制/缺失 Content-Type 拒绝（结构化错误 + 改用其它方式指引）

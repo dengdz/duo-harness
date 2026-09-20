@@ -51,6 +51,8 @@ public final class WorkspacePolicy {
 
     private static final Set<String> READ_TOOLS = Set.of("read", "glob", "grep");
     private static final Set<String> WRITE_TOOLS = Set.of("write", "edit");
+    /** 网络读（M20，ADR-0021 决策 8）：出网拉取类工具——独立于本地读集合分档。 */
+    private static final Set<String> NETWORK_READ_TOOLS = Set.of("web_fetch", "web_search");
 
     private final Path root;
     /** 装配档（fs 插件 config 的 yml 缺省）：会话无切档记录时恢复逻辑的重置目标。 */
@@ -117,9 +119,10 @@ public final class WorkspacePolicy {
     }
 
     /**
-     * 审批判定（ADR-0012 决策 4）：danger 档全放行；读类工具放行；写类按目标
-     * 路径包含性分档；bash 非 danger 档一律 ask；未知工具保守 ask（沿 M6 交互
-     * 全问现状）。解析失败（无 path 参数）保守 ask。
+     * 审批判定（ADR-0012 决策 4 + ADR-0021 决策 8）：danger 档全放行；本地读类
+     * 放行；网络读（web_fetch/web_search）read-only 档 ask（"只读"语义不出网边界）、
+     * workspace-write 档放行；写类按目标路径包含性分档；bash 非 danger 档一律 ask；
+     * 未知工具保守 ask（沿 M6 交互全问现状）。解析失败（无 path 参数）保守 ask。
      */
     public Decision decide(String toolName, Path targetPath) {
         if (mode == Mode.DANGER_FULL_ACCESS) {
@@ -127,6 +130,9 @@ public final class WorkspacePolicy {
         }
         if (READ_TOOLS.contains(toolName)) {
             return Decision.ALLOW;
+        }
+        if (NETWORK_READ_TOOLS.contains(toolName)) {
+            return mode == Mode.READ_ONLY ? Decision.ASK : Decision.ALLOW;
         }
         if (WRITE_TOOLS.contains(toolName)) {
             // read-only 档：写一律 ask（不区分内外——保守安全）
