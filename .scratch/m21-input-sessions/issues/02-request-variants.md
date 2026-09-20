@@ -10,8 +10,9 @@
 
 ## Status
 
-ready-for-agent
+in-progress
 
+- 2026-09-20（实现轮）：RequestVariants 落地（variantId 三要素 SHA-256、只缩不放长边缩放、质量阶梯预算适配、tmp+move 原子缓存、失败摘除式并发单飞），模块 21/21 绿。库级工单：随 04/05 里程碑演示一并手动验收。
 ## Checklist
 
 - [ ] variantId 确定性：同附件 + 同目标 → 同 id；目标参数变 → id 变

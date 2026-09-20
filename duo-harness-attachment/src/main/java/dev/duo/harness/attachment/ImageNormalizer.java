@@ -95,7 +95,8 @@ final class ImageNormalizer {
         throw new AttachmentException("图片规范化失败——请缩小后再试");
     }
 
-    private static byte[] encode(BufferedImage image, String format, double quality) {
+    /** 质量参数编码（包内复用：请求变体管线同款编码语义）。 */
+    static byte[] encode(BufferedImage image, String format, double quality) {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Thumbnails.of(image).scale(1.0).outputQuality(quality).outputFormat(format).toOutputStream(out);
             return out.toByteArray();
@@ -104,8 +105,8 @@ final class ImageNormalizer {
         }
     }
 
-    /** 透明通道合成白底（JPEG 不支持 alpha，直接编码会得到黑底）。 */
-    private static BufferedImage flatten(BufferedImage source) {
+    /** 透明通道合成白底（JPEG 不支持 alpha，直接编码会得到黑底；包内复用）。 */
+    static BufferedImage flatten(BufferedImage source) {
         BufferedImage rgb = new BufferedImage(source.getWidth(), source.getHeight(),
                 BufferedImage.TYPE_INT_RGB);
         Graphics2D g = rgb.createGraphics();
