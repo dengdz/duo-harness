@@ -9,7 +9,7 @@ import dev.duo.harness.tools.ToolsService;
 import java.util.Set;
 
 /**
- * web 工具族插件（M20，ADR-0021）：yml 一行 opt-in 装配联网能力。
+ * web 工具族插件（M20，ADR-0021）：yml 行声明 + config 块（可写空块 {}）即装配联网能力。
  *
  * <p>注册语义为<b>配置驱动注册</b>：行在场即注册 {@code web_fetch}（fetch 是零配置
  * 能力）；config {@code search} 段非空才注册 {@code web_search}——未配置搜索的部署
@@ -57,7 +57,8 @@ public final class WebToolsPlugin implements Plugin<JsonNode> {
             String apiKey = cfg.search().resolveApiKey(envLookup);
             if (apiKey != null) {
                 tools.register(ctx, new WebSearchTool(
-                        new TavilyProvider(apiKey, cfg.search().effectiveBaseUrl(), cfg.timeoutMs()),
+                        new TavilyProvider(apiKey, cfg.search().effectiveBaseUrl(), cfg.timeoutMs(),
+                                cfg.maxResponseBytes()),
                         cfg.search().effectiveMaxResults(), readOnlyGate));
             }
         }

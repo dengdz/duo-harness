@@ -91,9 +91,11 @@ final class HtmlToMarkdown {
             }
             case "p" -> emitParagraph(inline(el), out);
             case "pre" -> {
-                String code = el.text();
+                // wholeText 取未归一化文本：text() 的空白保留只看节点及其一级父，
+                // <pre> 内行内元素嵌套更深（如 <span><code>）时换行缩进会被折叠
+                String code = el.wholeText();
                 if (!code.isBlank()) {
-                    out.append("\n\n```\n").append(code.stripTrailing()).append("\n```");
+                    out.append("\n\n```\n").append(code.strip().stripTrailing()).append("\n```");
                 }
             }
             case "blockquote" -> emitParagraph(quoteLines(inline(el)), out);
@@ -148,7 +150,8 @@ final class HtmlToMarkdown {
     private static void renderTable(Element table, StringBuilder out) {
         for (Element tr : table.select("tr")) {
             List<String> cells = new ArrayList<>();
-            tr.children().forEach(cell -> cells.add(inline(cell).strip()));
+            // 单元格内竖线转义：保住「a | b」逐行文本的行列对应不被数据内容破坏
+            tr.children().forEach(cell -> cells.add(inline(cell).strip().replace("|", "\\|")));
             if (!cells.isEmpty()) {
                 out.append("\n\n").append(String.join(" | ", cells));
             }
@@ -176,11 +179,18 @@ final class HtmlToMarkdown {
         switch (tag) {
             case "strong", "b" -> out.append("**").append(inline(el)).append("**");
             case "em", "i" -> out.append('*').append(inline(el)).append('*');
-            case "code", "kbd", "samp" -> out.append('`').append(el.text()).append('`');
+            case "code", "kbd", "samp" -> {
+                // 内容含反引号时改用双反引号定界（CommonMark 惯例），防 code span 提前闭合
+                String code = el.text();
+                out.append(code.indexOf('`') >= 0 ? "`` " + code + " ``" : "`" + code + "`");
+            }
             case "a" -> {
                 String text = inline(el).strip();
                 String href = el.hasAttr("href") ? el.attr("href") : "";
-                out.append(href.isBlank() || text.isEmpty() ? text : "[" + text + "](" + href + ")");
+                // href 仅放行 http(s)：与 UrlGuard 口径一致，javascript:/data: 不写进模型上下文
+                boolean safeHref = href.toLowerCase(java.util.Locale.ROOT).startsWith("http://")
+                        || href.toLowerCase(java.util.Locale.ROOT).startsWith("https://");
+                out.append(safeHref && !text.isEmpty() ? "[" + text + "](" + href + ")" : text);
             }
             case "img" -> {
                 String alt = el.hasAttr("alt") ? el.attr("alt") : "";

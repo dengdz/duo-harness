@@ -18,7 +18,8 @@ record WebToolsConfig(
         String userAgent,
         SearchConfig search) {
 
-    static final String DEFAULT_USER_AGENT = "duo-harness/0.15.0";
+    /** 缺省 UA：去版本化（避免随发布散点改码）；需要版本标识的部署用 userAgent 字段自配。 */
+    static final String DEFAULT_USER_AGENT = "duo-harness";
     private static final int DEFAULT_TIMEOUT_MS = 30_000;
     private static final long DEFAULT_MAX_RESPONSE_BYTES = 5_000_000L;
     private static final int DEFAULT_MAX_BODY_CHARS = 100_000;
@@ -72,7 +73,7 @@ record WebToolsConfig(
             return defaults();
         }
         int timeoutMs = DEFAULT_TIMEOUT_MS;
-        long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES;
+        long maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES; // long：>2GB 的字节上限不被 int 截断
         int maxBodyChars = DEFAULT_MAX_BODY_CHARS; // 转换后正文字符上限（head 重量级页面靠后置限额保正文，见 WebFetchTool）
         int maxOutputChars = DEFAULT_MAX_OUTPUT_CHARS;
         int maxRedirects = DEFAULT_MAX_REDIRECTS;
@@ -83,7 +84,7 @@ record WebToolsConfig(
             timeoutMs = positiveInt(config, "timeoutMs");
         }
         if (config.hasNonNull("maxResponseBytes")) {
-            maxResponseBytes = positiveInt(config, "maxResponseBytes");
+            maxResponseBytes = positiveLong(config, "maxResponseBytes");
         }
         if (config.hasNonNull("maxBodyChars")) {
             maxBodyChars = positiveInt(config, "maxBodyChars");
@@ -95,17 +96,32 @@ record WebToolsConfig(
             maxRedirects = nonNegativeInt(config, "maxRedirects");
         }
         if (config.hasNonNull("userAgent")) {
-            String text = config.get("userAgent").asText();
-            if (text.isBlank()) {
+            JsonNode ua = config.get("userAgent");
+            if (!ua.isTextual()) {
+                throw new PluginException("web 插件 config 非法：userAgent 须为字符串，实际 " + ua);
+            }
+            if (ua.asText().isBlank()) {
                 throw new PluginException("web 插件 config 非法：userAgent 不能为空白");
             }
-            userAgent = text.strip();
+            userAgent = ua.asText().strip();
         }
         if (config.hasNonNull("search")) {
             search = parseSearch(config.get("search"));
         }
         return new WebToolsConfig(timeoutMs, maxResponseBytes, maxBodyChars, maxOutputChars, maxRedirects,
                 userAgent, search);
+    }
+
+    /** 文本字段读取：非字符串值点名（asText 会把数字静默转字符串，报错远离根因）。 */
+    private static String textFieldOrNull(JsonNode node, String field) {
+        if (!node.hasNonNull(field)) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        if (!value.isTextual()) {
+            throw new PluginException("web 插件 config 非法：" + field + " 须为字符串，实际 " + value);
+        }
+        return value.asText();
     }
 
     /** search 段解析：type 必为 tavily（首发唯一实现），maxResults 正整数，baseUrl 非空白。 */
@@ -122,16 +138,21 @@ record WebToolsConfig(
         if (node.hasNonNull("maxResults")) {
             maxResults = positiveInt(node, "maxResults");
         }
-        String baseUrl = node.hasNonNull("baseUrl") ? node.get("baseUrl").asText() : null;
-        if (baseUrl != null && baseUrl.isBlank()) {
-            throw new PluginException("web 插件 config 非法：search.baseUrl 不能为空白");
-        }
-        String apiKey = node.hasNonNull("apiKey") ? node.get("apiKey").asText() : null;
-        String apiKeyEnv = node.hasNonNull("apiKeyEnv") ? node.get("apiKeyEnv").asText() : null;
+        String baseUrl = textFieldOrNull(node, "baseUrl");
+        String apiKey = textFieldOrNull(node, "apiKey");
+        String apiKeyEnv = textFieldOrNull(node, "apiKeyEnv");
         if (apiKeyEnv != null && apiKeyEnv.isBlank()) {
             throw new PluginException("web 插件 config 非法：search.apiKeyEnv 不能为空白");
         }
         return new SearchConfig(type.toLowerCase(java.util.Locale.ROOT), apiKey, apiKeyEnv, baseUrl, maxResults);
+    }
+
+    private static long positiveLong(JsonNode config, String field) {
+        JsonNode node = config.get(field);
+        if (!node.canConvertToLong() || node.asLong() <= 0) {
+            throw new PluginException("web 插件 config 非法：" + field + " 须为正整数，实际 " + node);
+        }
+        return node.asLong();
     }
 
     private static int positiveInt(JsonNode config, String field) {

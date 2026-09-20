@@ -43,7 +43,8 @@ class WebSearchToolTest {
     }
 
     private static WebSearchTool tool(int maxResults) {
-        return new WebSearchTool(new TavilyProvider("test-key", server.baseUrl(), 5_000), maxResults, null);
+        return new WebSearchTool(new TavilyProvider("test-key", server.baseUrl(), 5_000, 5_000_000),
+                maxResults, null);
     }
 
     private static ToolExecution search(String query) throws Exception {
@@ -88,6 +89,21 @@ class WebSearchToolTest {
     void 缺query结构化报错() throws Exception {
         String out = (String) tool(8).execute(new ToolExecution("web_search", MAPPER.readTree("{}")));
         assertTrue(out.startsWith("[web_search 错误]"));
+    }
+
+    @Test
+    void 工具层兜底截断不依赖provider自律() throws Exception {
+        com.fasterxml.jackson.databind.node.ArrayNode items = MAPPER.createArrayNode();
+        for (int i = 0; i < 10; i++) {
+            items.addObject().put("title", "t" + i)
+                    .put("url", "https://s" + i + ".example.com/")
+                    .put("content", "c");
+        }
+        server.respond(MockWebServer.Script.ok("application/json",
+                MAPPER.createObjectNode().set("results", items).toString()));
+        String out = (String) tool(3).execute(search("q"));
+
+        assertEquals(3, out.split("https://s", -1).length - 1, "provider 超量返回时工具层截到 maxResults: " + out);
     }
 
     @Test

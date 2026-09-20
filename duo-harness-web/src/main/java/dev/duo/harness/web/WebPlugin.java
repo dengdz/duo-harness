@@ -17,6 +17,7 @@ import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 
 import java.util.Set;
 
@@ -57,14 +58,15 @@ public final class WebPlugin implements Plugin<JsonNode> {
     }
 
     /**
-     * workspace 为可选依赖（M20 验收实测补齐，ADR-0019）：权限档恢复
-     * （PresenterAssembly.restorePermissionMode）与双面 /permission 命令经本插件
-     * Context 惰性解析 workspace——未声明时内核"错误前移"拒绝读取，Web 侧恢复被
-     * 跳过、浏览器切档不可用。缺席（纯对话 Web 装配）视为无档位语义，照常启动。
+     * workspace 为可选依赖（ADR-0019）：权限档恢复
+     * （PresenterAssembly.restorePermissionMode）经本插件 Context 惰性解析
+     * workspace——未声明时内核"错误前移"拒绝读取，Web 侧权限档恢复被跳过。
+     * 缺席（纯对话 Web 装配）视为无档位语义，照常启动（/permission 命令由 CLI 面
+     * 注册，浏览器切档的可用性随 cli 行在场与否）。
      */
     @Override
     public Set<String> optionalInject() {
-        return Set.of(dev.duo.harness.tools.fs.WorkspacePolicy.SERVICE_NAME);
+        return Set.of(WorkspacePolicy.SERVICE_NAME);
     }
 
     @Override

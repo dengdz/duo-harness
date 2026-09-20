@@ -5,6 +5,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolsService;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,9 +37,8 @@ class WebPluginAssemblyTest {
     void workspaceDeclaredAsOptionalDependency() {
         // 网络读档位恢复（PresenterAssembly.restorePermissionMode）与双面 /permission
         // 依赖本声明经 Web 插件 Context 惰性解析 workspace——缺失即内核"错误前移"拒绝
-        // 读取（M20 验收实测：WARN "权限档恢复跳过"、浏览器切档不可用）
-        assertTrue(new WebPlugin().optionalInject()
-                        .contains(dev.duo.harness.tools.fs.WorkspacePolicy.SERVICE_NAME),
+        // 读取（恢复被跳过、浏览器切档不可用）
+        assertTrue(new WebPlugin().optionalInject().contains(WorkspacePolicy.SERVICE_NAME),
                 "WebPlugin 须声明 workspace 可选依赖");
     }
 

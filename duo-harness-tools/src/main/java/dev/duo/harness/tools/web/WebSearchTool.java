@@ -17,6 +17,9 @@ public final class WebSearchTool implements ToolDefinition {
 
     public static final String NAME = "web_search";
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final TavilyProvider provider;
     private final int maxResults;
     /** read-only 档探测（插件按 workspace 档位供给；null = 无档位装配，不声明审批）。 */
@@ -37,7 +40,7 @@ public final class WebSearchTool implements ToolDefinition {
 
     @Override public JsonNode parameters() {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+            return MAPPER.readTree(
                     "{\"type\":\"object\",\"properties\":{"
                             + "\"query\":{\"type\":\"string\",\"description\":\"搜索关键词\"}"
                             + "},\"required\":[\"query\"]}");
@@ -61,6 +64,9 @@ public final class WebSearchTool implements ToolDefinition {
             return "[web_search 错误] 参数 query 不能为空";
         }
         List<SearchSource> sources = dedupeByUrl(provider.search(query, maxResults));
+        if (sources.size() > maxResults) {
+            sources = sources.subList(0, maxResults); // 工具层兜底截断（截断权不依赖 provider 自律）
+        }
         if (sources.isEmpty()) {
             return "No results found.";
         }
@@ -78,8 +84,8 @@ public final class WebSearchTool implements ToolDefinition {
     }
 
     /**
-     * URL 归一化去重（验收实测）：同一站点以 http/https、带不带 www 的变体重复
-     * 出现时只保留首条——host（去 www 前缀，小写）+ 路径 + 查询串相同即视为重复。
+     * URL 归一化去重：同一站点以 http/https、带不带 www 的变体重复出现时只保留
+     * 首条——host（去 www 前缀，小写）+ 路径 + 查询串相同即视为重复。
      */
     private static List<SearchSource> dedupeByUrl(List<SearchSource> sources) {
         java.util.LinkedHashMap<String, SearchSource> unique = new java.util.LinkedHashMap<>();

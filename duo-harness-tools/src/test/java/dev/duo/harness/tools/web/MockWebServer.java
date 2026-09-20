@@ -20,8 +20,12 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 final class MockWebServer {
 
-    /** 一次响应脚本：状态码 + 响应头 + 响应体 + 发送前延迟毫秒。 */
-    record Script(int status, Map<String, String> headers, byte[] body, long delayMs) {
+    /** 一次响应脚本：状态码 + 响应头 + 响应体 + 发送前延迟毫秒 + 头后 body 前挂起毫秒。 */
+    record Script(int status, Map<String, String> headers, byte[] body, long delayMs, long bodyStallMs) {
+
+        Script(int status, Map<String, String> headers, byte[] body, long delayMs) {
+            this(status, headers, body, delayMs, 0);
+        }
 
         static Script ok(String contentType, String body) {
             return new Script(200, Map.of("Content-Type", contentType),
@@ -67,6 +71,14 @@ final class MockWebServer {
             byte[] body = current.body() == null ? new byte[0] : current.body();
             current.headers().forEach((k, v) -> exchange.getResponseHeaders().add(k, v));
             exchange.sendResponseHeaders(current.status(), body.length == 0 ? -1 : body.length);
+            if (current.bodyStallMs() > 0) {
+                // 头已发出、body 挂起：模拟 body 阶段的半开连接（看门狗用例）
+                try {
+                    Thread.sleep(current.bodyStallMs());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             try (OutputStream out = exchange.getResponseBody()) {
                 if (body.length > 0) {
                     out.write(body);

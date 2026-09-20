@@ -132,15 +132,18 @@ class WorkspacePolicyTest {
     void networkReadTierMatrix() throws IOException {
         // 网络读三档（M20，ADR-0021 决策 8）：read-only 档不出网边界一律 ask；
         // workspace-write（默认档）与 danger 档放行
+        // 用 NAME 常量钉住契约：工具改名而档位集合漏改时在此炸出（生产侧字面量避免 fs→web 包依赖成环）
+        String fetch = dev.duo.harness.tools.web.WebFetchTool.NAME;
+        String search = dev.duo.harness.tools.web.WebSearchTool.NAME;
         WorkspacePolicy readOnly = policy(WorkspacePolicy.Mode.READ_ONLY);
-        assertEquals(WorkspacePolicy.Decision.ASK, readOnly.decide("web_fetch", null),
+        assertEquals(WorkspacePolicy.Decision.ASK, readOnly.decide(fetch, null),
                 "read-only 档联网 ask");
-        assertEquals(WorkspacePolicy.Decision.ASK, readOnly.decide("web_search", null),
+        assertEquals(WorkspacePolicy.Decision.ASK, readOnly.decide(search, null),
                 "read-only 档联网 ask");
         WorkspacePolicy wsWrite = policy(WorkspacePolicy.Mode.WORKSPACE_WRITE);
-        assertEquals(WorkspacePolicy.Decision.ALLOW, wsWrite.decide("web_fetch", null),
+        assertEquals(WorkspacePolicy.Decision.ALLOW, wsWrite.decide(fetch, null),
                 "默认档联网放行");
-        assertEquals(WorkspacePolicy.Decision.ALLOW, wsWrite.decide("web_search", null),
+        assertEquals(WorkspacePolicy.Decision.ALLOW, wsWrite.decide(search, null),
                 "默认档联网放行");
         WorkspacePolicy danger = policy(WorkspacePolicy.Mode.DANGER_FULL_ACCESS);
         assertEquals(WorkspacePolicy.Decision.ALLOW, danger.decide("web_search", null));

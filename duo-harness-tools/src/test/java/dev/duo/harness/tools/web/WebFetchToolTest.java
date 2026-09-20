@@ -235,6 +235,24 @@ class WebFetchToolTest {
     }
 
     @Test
+    void 响应体阶段超时点名时长() {
+        // 头立即可用、body 挂起：走 BodyReader 看门狗路径（区别于 headers 阶段的请求超时）
+        server.respond(new MockWebServer.Script(200, Map.of("Content-Type", "text/html"),
+                "<p>late</p>".getBytes(java.nio.charset.StandardCharsets.UTF_8), 0, 2_000));
+        RuntimeException e = assertThrows(RuntimeException.class,
+                () -> toolWith(300, 200_000).execute(fetch(server.baseUrl() + "/bodystall")));
+        assertTrue(e.getMessage().contains("响应体读取过慢"), "body 阶段超时应点名: " + e.getMessage());
+    }
+
+    @Test
+    void 大字节上限不被int截断() {
+        WebToolsConfig cfg = WebToolsConfig.parse(WebToolsConfigTestSupport.args(
+                "{\"maxResponseBytes\": 3000000000}"));
+        org.junit.jupiter.api.Assertions.assertEquals(3_000_000_000L, cfg.maxResponseBytes(),
+                ">2GB 的 maxResponseBytes 应可配（long 校验）");
+    }
+
+    @Test
     void head重量级页面仍取到正文() throws Exception {
         // 回归（验收实测 baeldung）：head 内联样式超过正文字符上限时，转换前预切会把
         // <body> 整段切掉得到空正文——限额后置后正文必须还在

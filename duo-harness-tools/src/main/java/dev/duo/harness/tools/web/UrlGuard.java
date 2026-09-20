@@ -165,8 +165,11 @@ final class UrlGuard {
         }
         byte[] b = address.getAddress();
         if (address instanceof Inet4Address) {
-            if (b[0] == 0 || b[0] == 127 || b[0] == (byte) 255 || (b[0] & 0xff) >= 240) {
-                return false; // 0/8、127/8（双保险）、255.255.255.255、240/4 保留
+            if (b[0] == 0 || b[0] == 127 || (b[0] & 0xff) >= 240) {
+                return false; // 0/8、127/8（与回环判定双保险）、240/4 保留（含 255.255.255.255）
+            }
+            if (b[0] == (byte) 198 && (b[1] & 0xff) >= 18 && (b[1] & 0xff) <= 19) {
+                return false; // 198.18.0.0/15（RFC 2544 基准测试保留段）
             }
             if (b[0] == 100 && (b[1] & 0xff) >= 64 && (b[1] & 0xff) <= 127) {
                 return false; // CGNAT 100.64/10

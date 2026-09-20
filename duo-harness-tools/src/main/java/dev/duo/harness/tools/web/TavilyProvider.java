@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,14 +29,17 @@ final class TavilyProvider {
     private final String apiKey;
     private final String baseUrl;
     private final int timeoutMs;
+    private final long maxResponseBytes;
     private final HttpClient client;
 
-    TavilyProvider(String apiKey, String baseUrl, int timeoutMs) {
+    TavilyProvider(String apiKey, String baseUrl, int timeoutMs, long maxResponseBytes) {
         this.apiKey = apiKey;
-        this.baseUrl = baseUrl;
+        // 归一化尾斜杠：配置错误在构造期消除 "…//search" 变体，而非每次 search 运行期报晦涩 404
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.timeoutMs = timeoutMs;
+        this.maxResponseBytes = maxResponseBytes;
         this.client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofMillis(Math.min(timeoutMs, 10_000L)))
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
@@ -51,22 +56,49 @@ final class TavilyProvider {
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
                 .build();
-        HttpResponse<String> response;
+        HttpResponse<InputStream> response;
         try {
-            response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (java.net.http.HttpTimeoutException e) {
+            response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (HttpTimeoutException e) {
             throw new RuntimeException("[web_search 错误] 超时（" + timeoutMs + "ms）——搜索服务无响应", e);
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            throw new RuntimeException("[web_search 错误] 搜索服务请求失败: " + e.getMessage(), e);
+            // 不链 cause：rootMessage 取最深 cause，链上会顶掉带前缀的指引文本
+            throw new RuntimeException("[web_search 错误] 搜索服务请求失败: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+        if (contentLength > maxResponseBytes) {
+            try {
+                response.body().close();
+            } catch (IOException ignored) {
+                // 放弃响应后的关流失败无可补救：超限错误照常抛出
+            }
+            throw new RuntimeException("[web_search 错误] 搜索服务响应过大（Content-Length " + contentLength
+                    + " 超上限 " + maxResponseBytes + "）");
+        }
+        BodyReader.ReadResult read;
+        try {
+            read = BodyReader.read(response.body(), maxResponseBytes, Duration.ofMillis(timeoutMs));
+        } catch (BodyReader.FetchTimeoutException e) {
+            // 不链 cause：保住点名时长的指引文本（管线 rootMessage 取最深 cause）
+            throw new RuntimeException("[web_search 错误] 超时（" + timeoutMs + "ms）——搜索服务响应过慢");
+        } catch (IOException e) {
+            throw new RuntimeException("[web_search 错误] 读取搜索服务响应失败: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        if (read.truncated()) {
+            throw new RuntimeException("[web_search 错误] 搜索服务响应超过 " + maxResponseBytes
+                    + " 字节上限且未声明 Content-Length——已放弃解析");
+        }
+        String bodyJson = new String(read.data(), java.nio.charset.StandardCharsets.UTF_8);
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new RuntimeException("[web_search 错误] 搜索服务返回 HTTP " + response.statusCode()
-                    + ": " + excerpt(response.body()));
+                    + ": " + excerpt(bodyJson));
         }
-        return normalize(response.body());
+        return normalize(bodyJson);
     }
 
     /** 归一化：results[] → sources（title/url/content）；缺字段按空串处理。 */

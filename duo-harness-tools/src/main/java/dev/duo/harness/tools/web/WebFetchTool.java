@@ -33,6 +33,8 @@ public final class WebFetchTool implements ToolDefinition {
     /** 输出截断 footer（DSH 同文案：指引模型抓更具体的地址而非以为读全了）。 */
     static final String TRUNCATED_FOOTER = "\n\n(Content truncated. Fetch a more specific URL or section for the full text.)";
     private static final String ACCEPT = "text/html,application/xhtml+xml,text/*;q=0.9,application/json;q=0.8";
+    /** 连接失败时长上限（整体受 timeoutMs 约束：min(timeoutMs, 本值)）。 */
+    private static final long CONNECT_TIMEOUT_CAP_MS = 10_000;
 
     private final WebToolsConfig config;
     private final UrlGuard guard;
@@ -45,7 +47,7 @@ public final class WebFetchTool implements ToolDefinition {
         this.guard = guard;
         this.readOnlyGate = readOnlyGate;
         this.client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofMillis(Math.min(config.timeoutMs(), CONNECT_TIMEOUT_CAP_MS)))
                 // 手动逐跳跟随：每跳经 guard 重校验（自动跟随会绕过防线）
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
@@ -153,18 +155,19 @@ public final class WebFetchTool implements ToolDefinition {
                     + "）——请抓取更具体的地址或章节");
         }
 
-        boolean[] bodyTruncated = {false};
-        byte[] bytes;
+        BodyReader.ReadResult read;
         try {
-            bytes = BodyReader.read(response.body(), config.maxResponseBytes(),
-                    Duration.ofMillis(config.timeoutMs()), bodyTruncated);
+            read = BodyReader.read(response.body(), config.maxResponseBytes(),
+                    Duration.ofMillis(config.timeoutMs()));
         } catch (BodyReader.FetchTimeoutException e) {
-            throw new RuntimeException("[web_fetch 错误] 超时（" + config.timeoutMs() + "ms）——响应体读取过慢", e);
+            // 不链 cause：保住点名时长的指引文本（管线 rootMessage 取最深 cause）
+            throw new RuntimeException("[web_fetch 错误] 超时（" + config.timeoutMs() + "ms）——响应体读取过慢");
         }
+        boolean bodyTruncated = read.truncated();
 
-        String body = new String(bytes, charset);
-        // 限额后置（验收实测 baeldung 教训）：head 重量级页面若按字符预切，切点会
-        // 整段落在 <head> 里、转换得到空正文——先完整解析转换，再对转换后内容施加上限
+        String body = new String(read.data(), charset);
+        // 限额后置于转换：head 重量级页面若按字符预切，切点会整段落在 <head> 里、
+        // 转换得到空正文——先完整解析转换，再对转换后内容施加上限
         String content = html ? HtmlToMarkdown.convert(body) : body;
         boolean charCapped = content.length() > config.maxBodyChars();
         if (charCapped) {
@@ -173,7 +176,7 @@ public final class WebFetchTool implements ToolDefinition {
 
         StringBuilder out = new StringBuilder(headerLine(current, status))
                 .append("\n\n").append(UNTRUSTED_NOTICE).append("\n\n").append(content);
-        boolean cut = bodyTruncated[0] || charCapped;
+        boolean cut = bodyTruncated || charCapped;
         if (out.length() > config.maxOutputChars()) {
             out.setLength(config.maxOutputChars());
             cut = true;
@@ -194,7 +197,8 @@ public final class WebFetchTool implements ToolDefinition {
         try {
             return client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (HttpTimeoutException e) {
-            throw new RuntimeException("[web_fetch 错误] 超时（" + config.timeoutMs() + "ms）——目标无响应", e);
+            // 管线 rootMessage 呈现最深 cause——不链 cause，精修指引才作为最深层存活
+            throw new RuntimeException("[web_fetch 错误] 超时（" + config.timeoutMs() + "ms）——目标无响应");
         }
     }
 

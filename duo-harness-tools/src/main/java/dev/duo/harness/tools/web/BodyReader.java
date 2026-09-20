@@ -28,25 +28,32 @@ final class BodyReader {
         t.setDaemon(true);
         return t;
     });
+    // 单点前提：ofInputStream 的 close 为非阻塞设计。看门狗线程只负责到点"发起"关流，
+    // 实际 close 在独立虚拟线程执行——即便 close 阻塞也不会让后续 deadline 任务排队失效。
 
     private BodyReader() { }
+
+    /** 限读结果：字节内容 + 是否因超上限而截断（恰好填满不算截断）。 */
+    record ReadResult(byte[] data, boolean truncated) {
+    }
 
     /**
      * 上限内读取全部字节。
      *
-     * @param maxBytes    字节上限（读满即停并置位截断标志，多出的字节不读）
-     * @param deadline    整体读时限；到点看门狗强制关流，阻塞中的 read 抛 {@link FetchTimeoutException}
-     * @param truncatedOut 单元素出口：是否因超上限而截断
+     * @param maxBytes 字节上限（读满即停并置位截断标志，多出的字节不读）
+     * @param deadline 整体读时限；到点看门狗强制关流，阻塞中的 read 抛 {@link FetchTimeoutException}
      */
-    static byte[] read(InputStream in, long maxBytes, Duration deadline, boolean[] truncatedOut) throws IOException {
+    static ReadResult read(InputStream in, long maxBytes, Duration deadline) throws IOException {
         AtomicBoolean killed = new AtomicBoolean(false);
         ScheduledFuture<?> kill = WATCHDOG.schedule(() -> {
             killed.set(true);
-            try {
-                in.close();
-            } catch (IOException ignored) {
-                // 看门狗关流失败无可补救：读侧稍后自会感知
-            }
+            Thread.ofVirtual().start(() -> {
+                try {
+                    in.close();
+                } catch (IOException ignored) {
+                    // 看门狗关流失败无可补救：读侧稍后自会感知
+                }
+            });
         }, deadline.toMillis(), TimeUnit.MILLISECONDS);
         try (in) {
             ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -63,11 +70,10 @@ final class BodyReader {
                 buf.write(chunk, 0, n);
                 total += n;
             }
-            truncatedOut[0] = truncated;
-            return buf.toByteArray();
+            return new ReadResult(buf.toByteArray(), truncated);
         } catch (IOException e) {
             if (killed.get()) {
-                throw new FetchTimeoutException();
+                throw new FetchTimeoutException(deadline.toMillis());
             }
             throw e;
         } finally {
@@ -75,11 +81,11 @@ final class BodyReader {
         }
     }
 
-    /** 读 body 超过整体 deadline（看门狗关流所致）——消息按工具错误口径点名时长。 */
+    /** 读 body 超过整体 deadline（看门狗关流所致）——点名时长与工具层超时口径一致。 */
     static final class FetchTimeoutException extends RuntimeException {
 
-        FetchTimeoutException() {
-            super("超时——目标响应过慢或挂起");
+        FetchTimeoutException(long deadlineMs) {
+            super("超时（" + deadlineMs + "ms）——目标响应过慢或挂起");
         }
     }
 }

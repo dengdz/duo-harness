@@ -11,8 +11,9 @@ plugins:
       mode: workspace-write   # read-only / workspace-write / danger-full-access
 
   # web 工具族（M20，ADR-0021）：web_fetch 抓公网网页转 Markdown（SSRF 三道防线，
-  # 拒绝内网/回环目标与跨源重定向）——行在场即注册。config 可省（缺省超时 30s /
-  # 响应体 5MB / 输出 200k 字符）。search 段非空且 key 有解（apiKey 字面量或
+  # 拒绝内网/回环目标与跨源重定向）——行在场即注册。config 块须在场（可写空块
+  # config: {}），块内字段可省（缺省超时 30s / 响应体 5MB / 输出 200k 字符）。
+  # search 段非空且 key 有解（apiKey 字面量或
   # TAVILY_API_KEY 环境变量）才注册 web_search；不配即 fetch-only，
   # 模型工具清单不出现 web_search
   - id: web-tools
@@ -20,9 +21,9 @@ plugins:
     config:
       #  启用搜索（Tavily，免费档约 1000 次/月）：去掉下面三行行首的 "#" 并
       #  export TAVILY_API_KEY=…；不配即 fetch-only（web_search 不注册）
-      search:
-        type: tavily
-        apiKeyEnv: TAVILY_API_KEY
+      # search:
+      #   type: tavily
+      #   apiKeyEnv: TAVILY_API_KEY
 
   # prompt 注册表：systemPrompt 为最前用户指令片段（M7 起经插件发布为 "prompts" 服务）
   - id: prompts

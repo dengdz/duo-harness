@@ -109,6 +109,35 @@ class HtmlToMarkdownTest {
     }
 
     @Test
+    void pre内嵌行内元素保留换行() {
+        String md = HtmlToMarkdown.convert(
+                "<pre><span><code>x = 1\ny = 2</code></span></pre>");
+        assertTrue(md.contains("x = 1\ny = 2"), "深层嵌套的 pre 换行不应被折叠: " + md);
+    }
+
+    @Test
+    void 行内码含反引号改用双反引号定界() {
+        String md = HtmlToMarkdown.convert("<p><code>a`b</code></p>");
+        assertTrue(md.contains("`` a`b ``"), "含反引号的码内容应双反引号定界: " + md);
+    }
+
+    @Test
+    void 链接href仅放行http协议() {
+        String md = HtmlToMarkdown.convert(
+                "<p><a href=\"javascript:alert(1)\">坏链</a><a href=\"https://ok.com\">好链</a></p>");
+        assertTrue(md.contains("好链](https://ok.com)"));
+        assertFalse(md.contains("javascript:"), "非 http(s) href 不写进输出: " + md);
+        assertTrue(md.contains("坏链"), "坏链保留文本: " + md);
+    }
+
+    @Test
+    void 表格单元格竖线转义保行列对应() {
+        String md = HtmlToMarkdown.convert(
+                "<table><tr><td>a|b</td><td>c</td></tr></table>");
+        assertTrue(md.contains("a\\|b | c"), "单元格内竖线应转义: " + md);
+    }
+
+    @Test
     void 空白折叠与块间空行规整() {
         String md = HtmlToMarkdown.convert("<p>第一段</p>\n<p>第二段</p>");
         assertEquals("第一段\n\n第二段", md);

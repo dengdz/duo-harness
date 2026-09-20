@@ -28,28 +28,25 @@ class BodyReaderTest {
     @Test
     void 上限内完整读取() throws Exception {
         byte[] data = "hello".getBytes(StandardCharsets.UTF_8);
-        boolean[] truncated = {true};
-        byte[] out = BodyReader.read(new ByteArrayInputStream(data), 100, Duration.ofSeconds(5), truncated);
-        assertArrayEquals(data, out);
-        assertFalse(truncated[0]);
+        BodyReader.ReadResult out = BodyReader.read(new ByteArrayInputStream(data), 100, Duration.ofSeconds(5));
+        assertArrayEquals(data, out.data());
+        assertFalse(out.truncated());
     }
 
     @Test
     void 超上限截断只留前缀() throws Exception {
         byte[] data = "0123456789".getBytes(StandardCharsets.UTF_8);
-        boolean[] truncated = {false};
-        byte[] out = BodyReader.read(new ByteArrayInputStream(data), 4, Duration.ofSeconds(5), truncated);
-        assertEqualsBytes("0123", out);
-        assertTrue(truncated[0], "流里还有更多字节应置截断");
+        BodyReader.ReadResult out = BodyReader.read(new ByteArrayInputStream(data), 4, Duration.ofSeconds(5));
+        assertEqualsBytes("0123", out.data());
+        assertTrue(out.truncated(), "流里还有更多字节应置截断");
     }
 
     @Test
     void 恰好填满不算截断() throws Exception {
         byte[] data = "0123".getBytes(StandardCharsets.UTF_8);
-        boolean[] truncated = {true};
-        byte[] out = BodyReader.read(new ByteArrayInputStream(data), 4, Duration.ofSeconds(5), truncated);
-        assertArrayEquals(data, out);
-        assertFalse(truncated[0], "恰好填满不算截断（ADR-0021 决策 6）");
+        BodyReader.ReadResult out = BodyReader.read(new ByteArrayInputStream(data), 4, Duration.ofSeconds(5));
+        assertArrayEquals(data, out.data());
+        assertFalse(out.truncated(), "恰好填满不算截断（ADR-0021 决策 6）");
     }
 
     @Test
@@ -78,9 +75,10 @@ class BodyReaderTest {
             }
         };
         long t0 = System.currentTimeMillis();
-        assertThrows(BodyReader.FetchTimeoutException.class,
-                () -> BodyReader.read(neverEnding, 100, Duration.ofMillis(200), new boolean[1]));
+        BodyReader.FetchTimeoutException e = assertThrows(BodyReader.FetchTimeoutException.class,
+                () -> BodyReader.read(neverEnding, 100, Duration.ofMillis(200)));
         assertTrue(System.currentTimeMillis() - t0 < 5_000, "看门狗应在 deadline 附近解除阻塞");
+        assertTrue(e.getMessage().contains("200ms"), "异常应点名时长（与工具层超时口径一致）: " + e.getMessage());
     }
 
     private static void assertEqualsBytes(String expected, byte[] actual) {
