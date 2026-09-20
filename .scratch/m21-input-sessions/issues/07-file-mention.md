@@ -10,8 +10,9 @@
 
 ## Status
 
-ready-for-agent
+in-progress
 
+- 2026-09-20（实现轮）：实现完成、全模块测试绿。
 ## Checklist
 
 - [ ] grammar：`activeAtToken`（@ 前行首/空白；引号路径 `@"..."`；控制字符拒绝生成）、mention 格式化（目录尾 `/`、含空格才加引号）

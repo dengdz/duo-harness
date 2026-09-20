@@ -10,7 +10,7 @@
 
 ## Status
 
-ready-for-agent
+in-progress
 
 ## Checklist
 
