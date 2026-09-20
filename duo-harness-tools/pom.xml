@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.duo</groupId>
     <artifactId>duo-harness</artifactId>
-    <version>0.14.0</version>
+    <version>0.15.0</version>
   </parent>
 
   <artifactId>duo-harness-tools</artifactId>
@@ -23,6 +23,11 @@
     <dependency>
       <groupId>com.networknt</groupId>
       <artifactId>json-schema-validator</artifactId>
+    </dependency>
+    <!-- web 工具族 HTML 解析清洗（M20，ADR-0021）；单 jar 零传递依赖 -->
+    <dependency>
+      <groupId>org.jsoup</groupId>
+      <artifactId>jsoup</artifactId>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>

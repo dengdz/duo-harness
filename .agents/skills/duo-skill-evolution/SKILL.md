@@ -128,7 +128,7 @@ description: 元技能：其他 Skill 任务结束后调用，对执行过程复
 
 **操作步骤**：
 
-1. 检查该 Skill 是否已有经验文档 `.agents/skills/<skill-name>/experience.md`
+1. 检查该 Skill 是否已有经验文档 `.agents/skills/<skill-name>/references/experience.md`
 2. 若无，创建文件，写入标题：
    ```markdown
    # <Skill 名称> 经验文档
@@ -160,7 +160,7 @@ description: 元技能：其他 Skill 任务结束后调用，对执行过程复
    ```markdown
    ## 经验参考
    
-   执行前建议阅读 `experience.md`，了解常见边界情况和最佳实践。
+   执行前建议阅读 `references/experience.md`，了解常见边界情况和最佳实践。
    ```
 
 ### 4.2 方式 B：修订 SKILL.md（谨慎使用）
@@ -202,7 +202,7 @@ description: 元技能：其他 Skill 任务结束后调用，对执行过程复
    - 流程结构性调整（增删步骤）
 
 **组合使用**：
-- 可以同时使用两种方式（如：修订 SKILL.md 补充红线，同时在 experience.md 记录具体案例）
+- 可以同时使用两种方式（如：修订 SKILL.md 补充红线，同时在 references/experience.md 记录具体案例）
 
 ---
 
@@ -228,7 +228,7 @@ description: 元技能：其他 Skill 任务结束后调用，对执行过程复
 ...
 
 【进化方式】
-- 方式 A：已追加到 `.agents/skills/<skill-name>/experience.md`，记录了 XX
+- 方式 A：已追加到 `.agents/skills/<skill-name>/references/experience.md`，记录了 XX
 - 方式 B：已修订 SKILL.md 的 XX 章节，补充了 YY
 
 【预期效果】
@@ -326,7 +326,7 @@ Skill 名称：duo-project-structure
 
 可以：
 1. 直接修订本 SKILL.md
-2. 或在 `.agents/skills/duo-skill-evolution/experience.md` 记录元技能自身的改进点
+2. 或在 `.agents/skills/duo-skill-evolution/references/experience.md` 记录元技能自身的改进点
 
 ---
 

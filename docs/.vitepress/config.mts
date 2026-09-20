@@ -56,7 +56,11 @@ export default defineConfig({
           { text: '0014 事件快照读侧零拷贝与单趟窗口', link: '/adr/0014-事件快照读侧零拷贝与单趟窗口' },
           { text: '0015 subagent任务分解', link: '/adr/0015-subagent任务分解' },
           { text: '0016 M16至1.0里程碑规划', link: '/adr/0016-M16至1.0里程碑规划' },
-          { text: '0017 子代理知识可见性模板opt-in', link: '/adr/0017-子代理知识可见性模板opt-in' }
+          { text: '0017 子代理知识可见性模板opt-in', link: '/adr/0017-子代理知识可见性模板opt-in' },
+          { text: '0018 并发工具调度', link: '/adr/0018-并发工具调度' },
+          { text: '0019 扩展机制', link: '/adr/0019-扩展机制' },
+          { text: '0020 斜杠命令与运行中治理', link: '/adr/0020-斜杠命令与运行中治理' },
+          { text: '0021 web工具族', link: '/adr/0021-web工具族' }
         ]
       },
       {

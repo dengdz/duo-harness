@@ -55,7 +55,7 @@ mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
 ```
 
-LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含本机 fs 工具族六件（read / write / edit / glob / grep / bash，workspace 绑定 = 启动进程的当前目录）与三档权限预设（默认 workspace-write，终端 `/permission [档位]` 查看与切换）。标志性场景：
+LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含本机 fs 工具族六件（read / write / edit / glob / grep / bash，workspace 绑定 = 启动进程的当前目录）、三档权限预设（默认 workspace-write，终端 `/permission [档位]` 查看与切换），以及 web 工具族（M20：`web_fetch` 恒在；解开 `agent-demo.yml` 的 `search` 注释并 `export TAVILY_API_KEY=…` 即含 `web_search`）。标志性场景：
 
 | 输入 | 预期 |
 |---|---|
@@ -63,7 +63,10 @@ LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含�
 | `新建 hello.txt，内容是测试` | `[调工具] write` → workspace 内写**免审批**直接 `Created file`（区内写档位放行） |
 | `往 /tmp/duo-escape.txt 写点东西` | 越界写 → `[待审批]`（双面装配落 Web 卡片；纯 CLI 装配为终端 y/n）——批准落盘 / 拒绝模型解释，决定落会话审计 |
 | `用 bash 跑 ls` | `[调工具] bash` → 非 danger 档**一律 ask**（bash 写范围不受 workspace 约束）→ 放行后输出 + `[exit code: 0]`（非零退出也是结果不是错误） |
-| `/permission read-only` 后再让它写 | 写与 bash 全部 ask——切档即时生效（重启回 yml 缺省） |
+| `抓一下 https://example.com` | `[调工具] web_fetch` → 头行（最终 URL + 状态码）+ Markdown 正文总结；抓 404 页也是结果（头行带状态码），不是错误 |
+| `抓一下 http://localhost:18080` | SSRF 拒绝——回环/内网目标与解析到内网的域名直接报错（重定向跳内网同样被拦，ADR-0021） |
+| `搜一下 <关键词>`（需 TAVILY_API_KEY） | `[调工具] web_search` → Sources 列表（标题 + 链接 + 摘要）→ 模型挑条目 `web_fetch` 深入 |
+| `/permission read-only` 后再让它写或联网 | 写、bash 与联网（web_fetch/web_search）全部 ask——只读档不出网边界，切档即时生效 |
 | 需要补充信息的任务 | `[提问]` 模型经 ask_user 向你提问（选项序号或自由文本）→ 回答后模型继续 |
 | 连续重复同一调用 | 第 3 次起 `[提醒]` 附加于工具结果，逐级加码 |
 

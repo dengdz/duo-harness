@@ -17,6 +17,7 @@ import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
+import dev.duo.harness.tools.fs.WorkspacePolicy;
 
 import java.util.Set;
 
@@ -54,6 +55,18 @@ public final class WebPlugin implements Plugin<JsonNode> {
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
                 InteractionService.SERVICE_NAME, CommandsRegistry.SERVICE_NAME);
+    }
+
+    /**
+     * workspace 为可选依赖（ADR-0019）：权限档恢复
+     * （PresenterAssembly.restorePermissionMode）经本插件 Context 惰性解析
+     * workspace——未声明时内核"错误前移"拒绝读取，Web 侧权限档恢复被跳过。
+     * 缺席（纯对话 Web 装配）视为无档位语义，照常启动（/permission 命令由 CLI 面
+     * 注册，浏览器切档的可用性随 cli 行在场与否）。
+     */
+    @Override
+    public Set<String> optionalInject() {
+        return Set.of(WorkspacePolicy.SERVICE_NAME);
     }
 
     @Override
