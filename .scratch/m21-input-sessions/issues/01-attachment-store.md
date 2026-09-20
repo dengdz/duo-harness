@@ -10,8 +10,9 @@
 
 ## Status
 
-ready-for-agent
+in-progress
 
+- 2026-09-20（实现轮）：模块/实现/测试完成——15/15 绿（去重、0400、规范化缩放、webp 夹具、拒绝矩阵、long 校验）。库级工单：随 04/05 里程碑演示一并手动验收。
 ## Checklist
 
 - [ ] 新 Maven 模块 `duo-harness-attachment`（package-info + 模块 pom + 根 pom modules 注册），发布 "attachments" 服务
