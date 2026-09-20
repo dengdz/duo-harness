@@ -18,6 +18,9 @@ import dev.duo.harness.session.SessionEvent;
  */
 public final class EventTextExtractor {
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private EventTextExtractor() { }
 
     /**
@@ -43,7 +46,7 @@ public final class EventTextExtractor {
      */
     private static String todoContent(String todosJson) {
         try {
-            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(todosJson);
+            var node = MAPPER.readTree(todosJson);
             if (!node.isArray()) {
                 return todosJson;
             }

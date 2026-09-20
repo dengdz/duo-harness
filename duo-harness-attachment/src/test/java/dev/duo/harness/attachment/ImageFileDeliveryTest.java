@@ -166,14 +166,14 @@ class ImageFileDeliveryTest {
     }
 
     @Test
-    void invalidateCausesRetransmission() throws Exception {
+    void differentVariantIdsBothUpload() throws Exception {
         Path index = tmp.resolve("files-index.json");
         ImageFileDelivery delivery = delivery(index);
-        assertEquals("file-1", delivery.deliver("variant-1",
-                "bytes".getBytes(StandardCharsets.UTF_8), "image/png", null));
-        delivery.invalidate("file-1");
-        assertEquals("file-2", delivery.deliver("variant-1",
-                "bytes".getBytes(StandardCharsets.UTF_8), "image/png", null)); // 失效后重传
+        delivery.deliver("variant-1", "bytes".getBytes(StandardCharsets.UTF_8),
+                "image/png", null);
+        delivery.deliver("variant-2", "other".getBytes(StandardCharsets.UTF_8),
+                "image/png", null);
         assertEquals(2L, requests.stream().filter(r -> r.startsWith("POST")).count());
+        assertEquals(2, delivery.size()); // 不同 variantId 各记台账
     }
 }

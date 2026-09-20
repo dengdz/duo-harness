@@ -13,7 +13,8 @@ import java.time.Duration;
  * 省大图 base64 传输。仅 DeepSeek 形态端点（POST {base}/files multipart，
  * purpose=user_data）。上传失败由调用方回退 inline base64。
  *
- * <p>无本地索引去重与配额回收——一期精简，后续按需增补（limitations 记账）。</p>
+ * <p>本类只做单次上传/删除的 HTTP 语义；去重、配额回收与失效清理由
+ * {@link ImageFileDelivery} 编排。</p>
  */
 public class FilesApiUploader {
 

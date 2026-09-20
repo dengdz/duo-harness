@@ -85,6 +85,23 @@ class MessagesFileDeliveryTest {
     }
 
     @Test
+    void forgedAttachmentRefDegradesGracefully() throws Exception {
+        Fixture fixture = fixture();
+        dev.duo.harness.session.AttachmentRef forged = new dev.duo.harness.session.AttachmentRef(
+                "f".repeat(64), "image/png", 0, "伪造.png");
+        List<Message> projected = List.of(
+                Message.userWithAttachments("看图", List.of(forged)));
+
+        List<ChatMessage> out = Messages.toChatMessages(projected,
+                fixture.variants(tmp.resolve("cache")), true, new StubDelivery("file-x", null));
+        assertEquals(1, out.size());
+        // 坏引用的图片部件被丢弃（文本保留），绝不因单图伪造引用炸整轮请求
+        assertTrue(out.get(0).images() == null || out.get(0).images().isEmpty(),
+                "坏引用应丢弃: " + out.get(0).images());
+        assertEquals("看图", out.get(0).content());
+    }
+
+    @Test
     void uploadFailureFallsBackToInline() throws Exception {
         Fixture fixture = fixture();
         ImageFileDelivery delivery = new StubDelivery(null,

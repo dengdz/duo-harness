@@ -2,6 +2,8 @@ package dev.duo.harness.sessionquery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.duo.harness.session.Session;
+import dev.duo.harness.session.SessionEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -222,6 +224,30 @@ class InvertedSessionIndexTest {
         assertTrue(hit.snippet().startsWith("…")); // 命中在深处：窗口前截断
         assertTrue(hit.snippet().contains("【苹果】"));
         assertTrue(hit.snippet().length() <= InvertedSessionIndex.SNIPPET_TOTAL + 4);
+    }
+
+    @Test
+    void activeSessionHeldByThisProcessSkippedAndLockUntouched() throws Exception {
+        // P1 回归：索引扫描绝不触碰本进程持独占锁的活跃会话文件——开读再关 fd
+        // 会按 POSIX 语义释放属主锁（review-log M19 模式①，双轴审查 P1）
+        Session live = Session.create(dir);
+        live.append(SessionEvent.userMessage("活跃会话独有词柚子"));
+        Path held = dir.resolve(live.id() + ".jsonl");
+        assertTrue(dev.duo.harness.session.Session.heldByThisProcess(held));
+
+        new InvertedSessionIndex(dir).search("柚子", 8); // 扫描发生
+        assertTrue(new InvertedSessionIndex(dir).search("柚子", 8).isEmpty(),
+                "活跃会话不入索引（跳过）");
+
+        // OS 级断言：扫描后属主锁仍在——另一 channel tryLock 必须撞 JDK 重叠锁异常
+        try (var probe = java.nio.channels.FileChannel.open(held,
+                java.nio.file.StandardOpenOption.READ, java.nio.file.StandardOpenOption.WRITE)) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    java.nio.channels.OverlappingFileLockException.class, probe::tryLock,
+                    "扫描关闭读取 fd 不得释放属主锁（POSIX 释放陷阱）");
+        }
+        live.close(); // 释放后同一文件可入索引
+        assertEquals(1, new InvertedSessionIndex(dir).search("柚子", 8).size());
     }
 
     @Test

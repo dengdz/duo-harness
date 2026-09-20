@@ -216,6 +216,29 @@ class SubagentManagerTest {
     }
 
     @Test
+    void forkSeedFiltersUserAttachmentBlocks() throws Exception {
+        // M21（ADR-0022 决策 10）：附件引用块不进子代理上下文——种子处物理拦截
+        parent.append(SessionEvent.userMessage("背景一问"));
+        parent.append(SessionEvent.userAttachment(
+                new dev.duo.harness.session.AttachmentRef("a".repeat(64), "image/png", 1024, "图.png").toJson()));
+        parent.append(SessionEvent.assistantMessage("背景一答"));
+
+        manager.bindBackend(instantBackend("done"));
+        String agentId = manager.fork(parent, "worker", "深挖任务");
+        Path childJsonl = sessionsDir().resolve(SubagentManager.SUBDIRECTORY).resolve(agentId + ".jsonl");
+        awaitCompleted(parent, new HashSet<>());
+        awaitReleased(childJsonl);
+
+        Session child = Session.load(childJsonl);
+        List<SessionEvent> events = child.events();
+        assertTrue(events.stream().noneMatch(e -> SessionEvent.USER_ATTACHMENT.equals(e.type())),
+                "子日志不得含附件引用块: " + events);
+        assertTrue(events.stream().anyMatch(e -> "背景一问".equals(e.text())), "其余播种内容保留");
+        assertTrue(events.stream().anyMatch(e -> "背景一答".equals(e.text())), "其余播种内容保留");
+        child.close();
+    }
+
+    @Test
     void backendFailureReflowsAsIncomplete() throws Exception {
         manager.bindBackend(task -> {
             throw new IllegalStateException("LLM 炸了");

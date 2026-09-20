@@ -579,7 +579,7 @@ public final class WebFace {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            log.debug("消息附件引用解析失败（按无附件处理）: {}", e.toString());
             respondEmpty(exchange, 400);
             return;
         }
@@ -592,11 +592,22 @@ public final class WebFace {
                 respondText(exchange, 409, "当前模型不支持图片（llm.vision 未启用）");
                 return;
             }
+            if (attachmentRefs.size() > attachments.maxImagesPerMessage()) {
+                respondText(exchange, 413, "单消息图片数超上限（"
+                        + attachmentRefs.size() + " > " + attachments.maxImagesPerMessage() + "）");
+                return;
+            }
             for (AttachmentRef ref : attachmentRefs) {
                 if (ref.attachmentId().isBlank() || !attachments.exists(ref.attachmentId())) {
                     respondText(exchange, 400, "附件未上传或不存在: " + ref.attachmentId());
                     return;
                 }
+            }
+            long totalBytes = attachmentRefs.stream().mapToLong(AttachmentRef::bytes).sum();
+            if (totalBytes > attachments.maxMessageImageBytes()) {
+                respondText(exchange, 413, "单消息图片总字节超上限（"
+                        + totalBytes + " > " + attachments.maxMessageImageBytes() + "）");
+                return;
             }
         }
         if (text.isBlank() && attachmentRefs.isEmpty()) {
@@ -1105,7 +1116,7 @@ public final class WebFace {
 
     /** 无体响应（错误码形态：400/404/405/413/503 等）。 */
     private static void respondEmpty(HttpExchange exchange, int status) throws IOException {
-        new Exception("[诊断] 空体响应 status=" + status + " path=" + exchange.getRequestURI().getPath()).printStackTrace();
+        log.debug("空体响应 status={} path={}", status, exchange.getRequestURI().getPath());
         respond(exchange, status, null, null);
     }
 

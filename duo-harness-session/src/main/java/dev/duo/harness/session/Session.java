@@ -222,6 +222,16 @@ public final class Session {
     }
 
     /**
+     * 该会话文件是否被**本进程**持有独占锁（M21 收口修正，POSIX 释放陷阱的规避
+     * 探针）：只查持锁登记表，不开 fd——任何新开 fd 的关闭都会释放本进程在该
+     * 文件上的全部锁（见 load / permissionModeOf 的记档）。会话检索的索引扫描
+     * 据此跳过活跃会话文件：内容在内存里是活的，绝不因索引触碰属主锁。
+     */
+    public static boolean heldByThisProcess(Path jsonl) {
+        return HELD_LOCKS.containsKey(jsonl.toAbsolutePath().normalize());
+    }
+
+    /**
      * 关闭会话：释放独占锁与文件通道、摘除全部事件监听器（幂等）。本进程不再独占该会话，
      * 其他进程与实例可重新打开；调用方应在会话生命周期结束时调用（Web 停止、CLI 退出、
      * 换绑到其他会话时）。关闭后写入与订阅均失效——应停止使用本实例。
@@ -426,7 +436,15 @@ public final class Session {
      * 为附件引用（mediaType/字节随请求变体解析还原）；无标记返回 null。
      */
     private static AttachmentRef readImageRef(SessionEvent event) {
-        for (String line : event.text().split("\n")) {
+        return readImageRefOf(event.text());
+    }
+
+    /**
+     * 文本中的 read_image 入库引用提取（M21 收口共享：会话投影与导出渲染
+     * 单一事实来源）；无标记返回 null。
+     */
+    public static AttachmentRef readImageRefOf(String text) {
+        for (String line : text.split("\n")) {
             String stripped = line.strip();
             if (stripped.startsWith(READ_IMAGE_REF_MARKER)) {
                 String id = stripped.substring(READ_IMAGE_REF_MARKER.length())

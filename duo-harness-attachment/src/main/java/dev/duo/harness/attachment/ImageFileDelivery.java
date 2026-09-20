@@ -28,6 +28,8 @@ public class ImageFileDelivery {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    private static final String SCOPE = "chat"; // 一期单一投递域
+
     private final FilesApiUploader uploader;
     private final Path indexFile;
     /** 本地索引：variantId → 台账条目（LinkedHashMap 保插入序 = 上传序，回收取最旧）。 */
@@ -59,7 +61,7 @@ public class ImageFileDelivery {
      */
     public synchronized String deliver(String variantId, byte[] bytes,
                                        String mediaType, String fileName) {
-        Entry entry = index.get(variantId);
+        Entry entry = index.get(indexKey(variantId));
         if (entry != null) {
             return entry.fileId(); // 去重命中：不重传
         }
@@ -74,15 +76,14 @@ public class ImageFileDelivery {
         }
     }
 
-    /** 失效一个 file_id（provider 侧已不可用时清台账——下次投递自然重传）。 */
-    public synchronized void invalidate(String fileId) {
-        index.values().removeIf(entry -> entry.fileId().equals(fileId));
-        persistIndex();
-    }
-
     /** 台账规模（测试与诊断）。 */
     public synchronized int size() {
         return index.size();
+    }
+
+    /** 索引键（spec 决策 5：scope + variantId；一期单一 chat 域）。 */
+    private static String indexKey(String variantId) {
+        return SCOPE + ":" + variantId;
     }
 
     private String uploadAndRecord(String variantId, byte[] bytes,
@@ -91,7 +92,7 @@ public class ImageFileDelivery {
                 ? "image-" + variantId.substring(0, Math.min(12, variantId.length()))
                 : fileName;
         String fileId = uploader.upload(bytes, mediaType, name);
-        index.put(variantId, new Entry(fileId, System.currentTimeMillis(), mediaType));
+        index.put(indexKey(variantId), new Entry(fileId, System.currentTimeMillis(), mediaType));
         persistIndex();
         return fileId;
     }
@@ -145,7 +146,9 @@ public class ImageFileDelivery {
             Files.move(tmp, indexFile, StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            // 索引持久化失败不阻断投递（内存台账仍有效；重启后可能重传一次）
+            // 索引持久化失败不阻断投递（内存台账仍有效；重启后可能重传一次）——但要可观测
+            org.slf4j.LoggerFactory.getLogger(ImageFileDelivery.class)
+                    .warn("Files 投递索引持久化失败: {}", e.toString());
         }
     }
 }

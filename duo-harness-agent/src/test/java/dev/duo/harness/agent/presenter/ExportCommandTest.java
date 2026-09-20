@@ -57,7 +57,7 @@ class ExportCommandTest {
 
     @Test
     void cliWritesFileToExportDir() {
-        PresenterAssembly.registerExportCommand(root, commands, () -> session, tempDir);
+        PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export", env(CommandScope.CLI), null);
         assertTrue(outcome.isCommand());
         String text = outcome.text();
@@ -70,7 +70,7 @@ class ExportCommandTest {
 
     @Test
     void cliJsonArgumentWritesJsonl() throws Exception {
-        PresenterAssembly.registerExportCommand(root, commands, () -> session, tempDir);
+        PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export json", env(CommandScope.CLI), null);
         assertTrue(outcome.isCommand());
         Path written = Path.of(outcome.text().substring("已导出: ".length()));
@@ -84,7 +84,7 @@ class ExportCommandTest {
 
     @Test
     void webReturnsDownloadEndpointUrl() {
-        PresenterAssembly.registerExportCommand(root, commands, () -> session, tempDir);
+        PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export markdown", env(CommandScope.WEB), null);
         assertTrue(outcome.isCommand());
         assertEquals("/api/session/export?format=markdown", outcome.text());
@@ -99,7 +99,7 @@ class ExportCommandTest {
 
     @Test
     void invalidFormatIsNamedLoudly() {
-        PresenterAssembly.registerExportCommand(root, commands, () -> session, tempDir);
+        PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export xml", env(CommandScope.CLI), null);
         assertTrue(outcome.isCommand());
         assertTrue(outcome.text().contains("[/export 错误]"));
@@ -108,14 +108,14 @@ class ExportCommandTest {
 
     @Test
     void defaultArgumentIsMarkdown() {
-        PresenterAssembly.registerExportCommand(root, commands, () -> session, tempDir);
+        PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export", env(CommandScope.WEB), null);
         assertEquals("/api/session/export?format=markdown", outcome.text()); // 缺省 markdown
     }
 
     @Test
     void busySafeAndAuditEvents() throws Exception {
-        PresenterAssembly.registerExportCommand(root, commands, () -> session, tempDir);
+        PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandDefinition definition = commands.find("export");
         org.junit.jupiter.api.Assertions.assertNotNull(definition);
         assertTrue(definition.busySafe());

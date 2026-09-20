@@ -72,19 +72,28 @@ final class Messages {
         }
         List<MessageImage> images = new ArrayList<>();
         for (AttachmentRef ref : refs) {
-            RequestVariant variant = variants.variantFor(ref.attachmentId());
-            String base64 = Base64.getEncoder().encodeToString(variant.bytes());
-            if (delivery == null) {
-                images.add(new MessageImage(base64, variant.mediaType()));
+            RequestVariant variant;
+            try {
+                variant = variants.variantFor(ref.attachmentId());
+            } catch (dev.duo.harness.attachment.AttachmentException missing) {
+                // 伪造/已被清理的引用（如 tool/result 文本恰好含入库标记行）：
+                // 丢弃该部件保住整轮请求，绝不因单图坏引用炸投影
                 continue;
             }
-            try {
-                String fileId = delivery.deliver(variant.variantId(), variant.bytes(),
-                        variant.mediaType(), ref.name());
-                images.add(new MessageImage(base64, variant.mediaType(), fileId));
-            } catch (FilesApiUploader.FilesApiException e) {
-                images.add(new MessageImage(base64, variant.mediaType())); // 回退 inline
+            String base64 = null;
+            String fileId = null;
+            if (delivery != null) {
+                try {
+                    fileId = delivery.deliver(variant.variantId(), variant.bytes(),
+                            variant.mediaType(), ref.name());
+                } catch (FilesApiUploader.FilesApiException e) {
+                    fileId = null; // 上传失败整体回退 inline（ADR-0022 决策 5）
+                }
             }
+            if (fileId == null) {
+                base64 = Base64.getEncoder().encodeToString(variant.bytes());
+            }
+            images.add(new MessageImage(base64, variant.mediaType(), fileId));
         }
         return images;
     }

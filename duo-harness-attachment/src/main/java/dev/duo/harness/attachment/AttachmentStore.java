@@ -38,6 +38,14 @@ public final class AttachmentStore {
     }
 
     /** 单图源字节上限（上传端点请求体限额的推导基准）。 */
+    public int maxImagesPerMessage() {
+        return config.maxImagesPerMessage();
+    }
+
+    public long maxMessageImageBytes() {
+        return config.maxMessageImageBytes();
+    }
+
     public long maxImageBytes() {
         return config.maxImageBytes();
     }

@@ -413,15 +413,12 @@ public final class PresenterAssembly {
      * 目录并回显落盘路径；Web 返回下载端点相对 URL（前端拦截自动触发下载流）。
      * 命令未注册时注册，已注册（另一呈现位先到）跳过。
      */
-    public static void registerExportCommand(Context ctx, CommandsRegistry commands,
-                                             Supplier<Session> currentSession) {
-        registerExportCommand(ctx, commands, currentSession,
-                java.nio.file.Paths.get("").toAbsolutePath());
+    public static void registerExportCommand(Context ctx, CommandsRegistry commands) {
+        registerExportCommand(ctx, commands, java.nio.file.Paths.get("").toAbsolutePath());
     }
 
     /** 重载（测试注入导出目录；生产 cwd 语义见上）。 */
     static void registerExportCommand(Context ctx, CommandsRegistry commands,
-                                      Supplier<Session> currentSession,
                                       java.nio.file.Path exportDir) {
         if (commands.find("export") != null) {
             return;

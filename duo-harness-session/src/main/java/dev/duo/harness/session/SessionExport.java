@@ -85,7 +85,8 @@ public final class SessionExport {
 
     /** JSONL 原样副本（逐行等价于会话日志文件）。 */
     public static String jsonl(Session session) {
-        return String.join("\n", session.jsonlLines()) + (session.jsonlLines().isEmpty() ? "" : "\n");
+        List<String> lines = session.jsonlLines();
+        return lines.isEmpty() ? "" : String.join("\n", lines) + "\n";
     }
 
     private static void appendEvent(StringBuilder out, SessionEvent event,
@@ -145,14 +146,11 @@ public final class SessionExport {
         }
     }
 
-    /** read_image 结果的入库标记行解析进尾部清单（标记常量与 Session 单一事实来源）。 */
+    /** read_image 结果的入库标记行解析进尾部清单（提取器与 Session 单一事实来源）。 */
     private static void collectReadImageRef(String text, List<String> attachments) {
-        for (String line : text.split("\n")) {
-            String stripped = line.strip();
-            if (stripped.startsWith(Session.READ_IMAGE_REF_MARKER)) {
-                attachments.add("`" + stripped.substring(Session.READ_IMAGE_REF_MARKER.length())
-                        .split("——")[0].split(" ")[0].strip() + "`（read_image 入库）");
-            }
+        AttachmentRef ref = Session.readImageRefOf(text);
+        if (ref != null) {
+            attachments.add("`" + ref.attachmentId() + "`（read_image 入库）");
         }
     }
 }

@@ -19,7 +19,9 @@ import java.util.regex.Pattern;
  * 才扫会话目录；此后每次搜索按文件 mtime+size 戳增量刷新（新文件建索引、
  * 变化文件重建、消失文件摘除）。只扫目录顶层 {@code *.jsonl}——子代理会话
  * （{@code subagents/} 子目录）天然不索引；坏行跳过不炸穿（对齐 titleOf 的
- * 容错纪律）。所有方法在内部锁内执行（工具侧并发安全声明依赖）。
+ * 容错纪律）；本进程持独占锁的活跃会话跳过（POSIX 释放陷阱规避——索引开读
+ * 该文件再关闭 fd 会释放属主锁，代价是当前会话不参与检索）。
+ * 所有方法在内部锁内执行（工具侧并发安全声明依赖）。
  *
  * <p>量级边界：事件全文与词表常驻内存，个人会话规模（千级会话 × 百级事件）
  * 够用；大会话库转 SQLite FTS5——{@link SessionQueryService} 接口语义已
@@ -190,6 +192,13 @@ public final class InvertedSessionIndex implements SessionQueryService {
                     .filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
                 String id = path.getFileName().toString().replace(".jsonl", "");
                 seen.add(id);
+                if (dev.duo.harness.session.Session.heldByThisProcess(path)) {
+                    // 活跃会话（本进程持独占锁）：跳过并摘除陈旧条目——索引若开读该文件，
+                    // 关闭读取 fd 会按 POSIX 语义释放本进程属主锁（review-log M19 模式①，
+                    // 收口审查 P1）。活跃会话内容在内存里是活的，不入检索无碍
+                    files.remove(id);
+                    continue;
+                }
                 try {
                     long mtime = Files.getLastModifiedTime(path).toMillis();
                     long size = Files.size(path);

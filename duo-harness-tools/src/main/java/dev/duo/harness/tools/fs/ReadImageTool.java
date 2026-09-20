@@ -95,7 +95,8 @@ public final class ReadImageTool implements ToolDefinition {
             return error(e.getMessage());
         }
         return "Read " + raw + " (" + admitted.mediaType() + ", " + admitted.width() + "x"
-                + admitted.height() + ", " + admitted.bytes() + " bytes)\n附件已入库: "
+                + admitted.height() + ", " + admitted.bytes() + " bytes)\n"
+                + dev.duo.harness.session.Session.READ_IMAGE_REF_MARKER
                 + admitted.attachmentId() + "——视觉内容已随本条结果提供给模型。";
     }
 

@@ -6,13 +6,22 @@ import java.util.Objects;
 public record MessageImage(String base64Data, String mediaType, String fileId) {
 
     public MessageImage {
-        Objects.requireNonNull(base64Data, "base64Data");
         Objects.requireNonNull(mediaType, "mediaType");
+        // base64 与 file_id 二选一（可都给）：files 形态允许不驻留 base64 大数组。
+        // 紧凑构造器里字段尚未赋值——不能调 deliveredAsFile()，就地内联判定
+        if (base64Data == null && (fileId == null || fileId.isBlank())) {
+            throw new IllegalArgumentException("base64Data 与 fileId 至少其一（inline 或 files）");
+        }
     }
 
     /** 兼容构造：inline base64 形态（无 file_id）。 */
     public MessageImage(String base64Data, String mediaType) {
         this(base64Data, mediaType, null);
+    }
+
+    /** files 形态构造：只携 file_id（不驻留 base64 大数组）。 */
+    public static MessageImage byFileId(String fileId, String mediaType) {
+        return new MessageImage(null, mediaType, fileId);
     }
 
     /** data URI 形态（data:<mediaType>;base64,<data>）——OpenAI 兼容 image_url 直接可用。 */
