@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.16.0（未发布）
+
+### Changed
+
+- **技能自我进化机制改版——全局强制化**：复盘触发从 13 个 duo- 技能各自 SKILL.md 末尾的"任务结束后"章节（约 260 行模板复制，实测极少触发）收敛为 AGENTS.md 红线 8——"duo- 技能任务收尾必须先调用 duo-skill-evolution 复盘再输出最终总结，无进化点也须明确说'无需进化'"，并全局要求执行任何 duo- 技能前先读其 `references/experience.md`；各技能 SKILL.md 不再保留任何复盘章节（触发全靠红线 8 与 Stop hook），领域复盘维度（任务摘要/关键点/反馈/自我感知口径）迁入各自 `experience.md` 头部"复盘维度"段；duo-skill-evolution 2.1 接入规范同步改为新机制（新技能一步接入——仅在 experience.md 写复盘维度，勿再改 SKILL.md）；workspace 另配 `.zcode/config.json` Stop hook 每回合注入收尾自查提醒作机制兜底（本地生效，该目录不入库）
+
 ## 0.15.0（2026-09-20）
 
 ### Added
