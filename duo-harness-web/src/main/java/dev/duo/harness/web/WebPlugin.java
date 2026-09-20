@@ -67,7 +67,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> optionalInject() {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
-                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME);
+                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
+                dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME);
     }
 
     @Override
@@ -96,6 +97,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
         dev.duo.harness.attachment.RequestVariants variants = attachments == null ? null
                 : new dev.duo.harness.attachment.RequestVariants(attachments,
                         DuoHome.resolve().root().resolve("cache/attachments"));
+        // 会话检索（M21 工单 08，可选依赖）：session-query 行缺席时侧栏搜索 503 降级
+        dev.duo.harness.sessionquery.SessionQueryService sessionQuery =
+                ctx.hasService(dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME)
+                        ? ctx.as(WebSessionQueryView.class).sessionQuery() : null;
 
         Session session;
         try {
@@ -130,7 +135,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
                     DuoHome.resolve().resolveDir("agent-sessions"), pageSize,
-                    attachments, () -> llm.vision());
+                    attachments, () -> llm.vision(), sessionQuery);
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -203,6 +208,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebAttachmentsView {
 
         dev.duo.harness.attachment.AttachmentStore attachments();
+    }
+
+    /** session-query 服务的视图接口（方法名即服务名）。 */
+    interface WebSessionQueryView {
+
+        dev.duo.harness.sessionquery.SessionQueryService sessionQuery();
     }
     /**
      * 解析 web 插件 config 的可选页长（{@code config.pageSize}，M19 还账）：首屏与每页

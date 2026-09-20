@@ -15,6 +15,8 @@ import dev.duo.harness.attachment.AdmittedImage;
 import dev.duo.harness.attachment.AttachmentStore;
 import dev.duo.harness.attachment.AttachmentException;
 import dev.duo.harness.session.AttachmentRef;
+import dev.duo.harness.sessionquery.SessionHit;
+import dev.duo.harness.sessionquery.SessionQueryService;
 import dev.duo.harness.tools.ToolsService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -83,6 +85,8 @@ public final class WebFace {
     private final AttachmentStore attachments;
     /** 视觉能力闸门（llm.vision；null = 未启用）。工单 05 接线真实配置。 */
     private final java.util.function.BooleanSupplier visionGate;
+    /** 会话检索服务（M21 工单 08，可选依赖：null = session-query 行未装——端点 503）。 */
+    private final SessionQueryService sessionQuery;
     /** SSE 客户端连接（多客户端广播，心跳写失败即摘除）。 */
     private final CopyOnWriteArrayList<SseClient> sseOutputs = new CopyOnWriteArrayList<>();
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
@@ -122,13 +126,15 @@ public final class WebFace {
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
                     WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
-                    AttachmentStore attachments, java.util.function.BooleanSupplier visionGate) {
+                    AttachmentStore attachments, java.util.function.BooleanSupplier visionGate,
+                    SessionQueryService sessionQuery) {
         this.pageSize = pageSize;
         this.server = server;
         this.ctx = ctx;
         this.tools = tools;
         this.attachments = attachments;
         this.visionGate = visionGate;
+        this.sessionQuery = sessionQuery;
         this.session = session;
         this.webAnswerer = webAnswerer;
         this.sessionsDir = sessionsDir;
@@ -179,6 +185,20 @@ public final class WebFace {
                                 WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
                                 AttachmentStore attachments, java.util.function.BooleanSupplier visionGate)
             throws IOException {
+        return start(port, ctx, tools, session, agent, governance, webAnswerer, sessionsDir,
+                pageSize, attachments, visionGate, null);
+    }
+
+    /**
+     * 启动（M21 工单 08 会话检索版）：{@code sessionQuery} 为检索服务（可空 =
+     * session-query 行未装——{@code /api/search} 端点 503，前端搜索框给出提示）。
+     */
+    public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
+                                ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
+                                WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
+                                AttachmentStore attachments, java.util.function.BooleanSupplier visionGate,
+                                SessionQueryService sessionQuery)
+            throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
@@ -190,7 +210,7 @@ public final class WebFace {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize,
-                attachments, visionGate);
+                attachments, visionGate, sessionQuery);
         face.governance = governance;
         face.bindSession(session);
         face.agent = agent;
@@ -364,6 +384,7 @@ public final class WebFace {
         route("/api/session/new", this::handleSessionNew);
         route("/api/sessions", this::handleSessions);
         route("/api/session/switch", this::handleSessionSwitch);
+        route("/api/search", this::handleSearch);
         route("/api/answer", this::handleAnswer);
         route("/api/session/page", this::handleSessionPage);
         route("/api/subagent/events", this::handleSubagentEvents);
@@ -739,6 +760,48 @@ public final class WebFace {
     /** 会话列表（侧栏）：修改时间倒序。 */
     private void handleSessions(HttpExchange exchange) throws IOException {
         respondJson(exchange, 200, sessionsJson());
+    }
+
+    /** 侧栏搜索单次返回的命中上限（呈现位侧常量；工具侧上限由插件配置管）。 */
+    static final int SEARCH_LIMIT = 20;
+
+    /**
+     * 会话检索（M21 工单 08）：{@code GET /api/search?q=关键词} → 命中列表
+     * （会话 + 最强匹配事件 + snippet，【】为命中标记）。session-query 行未装
+     * 时 503（前端提示"未装配"而不是静默空结果）。
+     */
+    private void handleSearch(HttpExchange exchange) throws IOException {
+        if (sessionQuery == null) {
+            respondText(exchange, 503, "会话检索未装配（yml 未装 session-query 插件行）");
+            return;
+        }
+        // queryParam 不做 URL 解码——中文检索词必须显式 decode（浏览器 fetch 百分号编码）
+        String q;
+        try {
+            q = java.net.URLDecoder.decode(queryParam(exchange, "q"),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            respondText(exchange, 400, "检索词编码非法");
+            return;
+        }
+        if (q == null || q.strip().isEmpty()) {
+            respondText(exchange, 400, "缺少检索词 q");
+            return;
+        }
+        List<SessionHit> hits = sessionQuery.search(q.strip(), SEARCH_LIMIT);
+        var root = JSON.createObjectNode();
+        root.put("query", q.strip());
+        var arr = root.putArray("hits");
+        for (SessionHit hit : hits) {
+            arr.addObject()
+                    .put("sessionId", hit.sessionId())
+                    .put("title", hit.title())
+                    .put("lastModifiedMs", hit.lastModifiedMs())
+                    .put("eventIndex", hit.eventIndex())
+                    .put("eventType", hit.eventType())
+                    .put("snippet", hit.snippet());
+        }
+        respondJson(exchange, 200, root.toString());
     }
 
     /**

@@ -19,6 +19,7 @@
     <module>duo-harness-mcp</module>
     <module>duo-harness-llm</module>
     <module>duo-harness-session</module>
+    <module>duo-harness-session-query</module>
     <module>duo-harness-agent</module>
     <module>duo-harness-web</module>
     <module>duo-harness-cli</module>
@@ -119,6 +120,10 @@
           <configuration>
             <!-- 用例内含子进程（MCP 夹具）：卡死要以失败+线程转储呈现，而不是无限挂起 -->
             <forkedProcessTimeoutInSeconds>240</forkedProcessTimeoutInSeconds>
+            <!-- 强制 headless：测试 JVM 不向 macOS AppKit 注册为 GUI 应用，
+                 Dock 不再随构建闪现 Java 图标；BufferedImage/ImageIO 照常可用。
+                 注意：后续引入 jacoco 等需要 argLine 的插件时须用 @{argLine} 合并 -->
+            <argLine>-Djava.awt.headless=true</argLine>
             <environmentVariables>
               <!-- 测试隔离：fork JVM 的 DuoHome 指向本模块构建目录——不触碰真实
                    ~/.duo（用户数据与在跑实例的会话独占锁）；LLM 三项以假值兜底，

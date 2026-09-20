@@ -28,6 +28,11 @@ function showToast(text, kind) {
 const api = {
   async status() { return (await fetch('/api/status')).json(); },
   async sessions() { return (await fetch('/api/sessions')).json(); },
+  async search(q) {
+    const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+    if (!res.ok) throw new Error((await res.text().catch(() => '')) || ('检索失败（HTTP ' + res.status + '）'));
+    return res.json();
+  },
   async page(before) {
     const res = await fetch('/api/session/page?before=' + before);
     if (!res.ok) throw new Error('分页请求失败（HTTP ' + res.status + '）');
@@ -999,6 +1004,31 @@ const app = (() => {
     return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
   }
 
+  // 切换会话（侧栏条目与检索命中共用，M21 工单 08 抽取）：返回是否换绑成功
+  async function switchToSession(id) {
+    sse.disconnect(); // 无刷新切换（工单 03）：断流期间旧会话不再推帧
+    try {
+      const res = await fetch('/api/session/switch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      if (!res.ok) {
+        // 服务端错误文案优先（如"会话已被占用：<id>"）——比状态码更有行动指向
+        const detail = (await res.text().catch(() => '')).trim();
+        showToast(detail || ('切换会话失败（HTTP ' + res.status + '）'));
+        sse.connect(); // 换绑未发生：恢复原会话事件流（快照整窗重放，内容一致）
+        return false;
+      }
+      $('#input').value = ''; // 切换清空输入框：未发送的字符属于原会话语境，不跨会话携带
+      sse.connect(); // 重连收新会话尾部快照 → 整窗替换；侧栏高亮随 afterReplay 刷新
+      return true;
+    } catch (err) {
+      sse.connect();
+      showToast('切换会话失败：' + errText(err));
+      return false;
+    }
+  }
+
   async function refreshSessions() {
     let data;
     try {
@@ -1023,30 +1053,88 @@ const app = (() => {
       item.append(sid, meta);
       item.addEventListener('click', async () => {
         if (s.current) return;
-        sse.disconnect(); // 无刷新切换（工单 03）：断流期间旧会话不再推帧
-        try {
-          const res = await fetch('/api/session/switch', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: s.id })
-          });
-          if (!res.ok) {
-            // 服务端错误文案优先（如"会话已被占用：<id>"）——比状态码更有行动指向
-            const detail = (await res.text().catch(() => '')).trim();
-            showToast(detail || ('切换会话失败（HTTP ' + res.status + '）'));
-            sse.connect(); // 换绑未发生：恢复原会话事件流（快照整窗重放，内容一致）
-            return;
-          }
-          $('#input').value = ''; // 切换清空输入框：未发送的字符属于原会话语境，不跨会话携带
-          sse.connect(); // 重连收新会话尾部快照 → 整窗替换；侧栏高亮随 afterReplay 刷新
-        } catch (err) {
-          sse.connect();
-          showToast('切换会话失败：' + errText(err));
-        }
+        await switchToSession(s.id);
       });
       list.appendChild(item);
       if (s.current) document.title = s.title || s.id; // 标签页标题跟随当前会话（工单 06）
     }
     $('#chatHint').textContent = '会话 ' + currentSessionId + ' · /new 开新话题';
+    // 切换/重放后把当前高亮项滚入视野（block:nearest——已可见时不动，验收反馈①）
+    const active = list.querySelector('.sidebar-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  // ---- 侧栏搜索（M21 工单 08）：回车检索 → 命中列表替换会话列表，点击命中切会话 ----
+  // 服务未装配时端点 503，toast 给出"未装配"提示——搜索框常驻但故障可见
+  function initSessionSearch() {
+    const box = $('#sessionSearch');
+    const results = $('#searchResults');
+    const list = $('#sessionList');
+    // 检索态语义（验收反馈②精修）：有命中 → 替换会话列表占满侧栏；
+    // 无命中 → 紧凑提示、列表照常可见（换会话不必先清搜索）。× / 空回车 / 切换命中后还原
+    const dismiss = () => {
+      results.hidden = true;
+      results.innerHTML = '';
+      results.classList.remove('has-hits');
+      list.hidden = false;
+    };
+    box.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const q = box.value.trim();
+      if (!q) {
+        dismiss();
+        return;
+      }
+      let data;
+      try {
+        data = await api.search(q);
+      } catch (err) {
+        showToast(errText(err));
+        return;
+      }
+      results.innerHTML = '';
+      results.classList.toggle('has-hits', data.hits.length > 0);
+      list.hidden = data.hits.length > 0;
+      results.hidden = false;
+      const head = document.createElement('div');
+      head.className = 'search-head';
+      const label = document.createElement('span');
+      label.textContent = '“' + q + '” · ' + data.hits.length + ' 个会话命中';
+      const close = document.createElement('button');
+      close.textContent = '×';
+      close.title = '关闭检索结果';
+      close.addEventListener('click', dismiss);
+      head.append(label, close);
+      results.appendChild(head);
+      if (!data.hits.length) {
+        const empty = document.createElement('div');
+        empty.className = 'search-empty';
+        empty.textContent = '无命中——检索只覆盖会话正文（消息/工具/清单），不含标题与元数据';
+        results.appendChild(empty);
+        return;
+      }
+      for (const hit of data.hits) {
+        const item = document.createElement('div');
+        item.className = 'sidebar-item search-hit';
+        const sid = document.createElement('div');
+        sid.className = 'sid';
+        sid.textContent = hit.title || hit.sessionId;
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = hit.eventType + ' · ' + relativeTime(hit.lastModifiedMs);
+        const snippet = document.createElement('div');
+        snippet.className = 'snippet';
+        snippet.textContent = hit.snippet; // 【】命中标记由后端 snippet 给出，纯文本呈现
+        item.append(sid, meta, snippet);
+        item.addEventListener('click', async () => {
+          if (await switchToSession(hit.sessionId)) {
+            dismiss();
+            box.value = '';
+          }
+        });
+        results.appendChild(item);
+      }
+    });
   }
 
   // ---- 状态面：上下文占用 + 插件快照 + 工具清单 ----
@@ -1145,6 +1233,7 @@ const app = (() => {
 
   refreshStatus();
   refreshSessions();
+  initSessionSearch();
   setInterval(refreshStatus, 5000);
 
   // 滚动到顶加载更早历史（工单 02）：loading 标志防重入，加载后由 finally 补发直至占位耗尽

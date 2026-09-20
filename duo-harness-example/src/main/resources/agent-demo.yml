@@ -25,6 +25,16 @@ plugins:
       #   type: tavily
       #   apiKeyEnv: TAVILY_API_KEY
 
+  # 会话检索（M21，ADR-0022）：行在场即发布 sessionQuery 服务（Web 侧栏搜索框
+  # 数据源），tools 服务在册时同时注册 session_search 工具（模型侧）。
+  # 索引懒构建——首次搜索才扫会话目录，启动零成本；子代理会话不索引，
+  # reasoning 不入索引。config 块须在场（空块 {} 即可），可选字段：
+  #   sessionsDir: /path/to/sessions  # 会话目录（省略用 duo home 的 agent-sessions）
+  #   maxResults: 8                   # 单次搜索命中上限（省略默认 8，须为正）
+  - id: session-query
+    name: dev.duo.harness.sessionquery.SessionQueryPlugin
+    config: {}
+
   # prompt 注册表：systemPrompt 为最前用户指令片段（M7 起经插件发布为 "prompts" 服务）
   - id: prompts
     name: dev.duo.harness.agent.prompt.PromptPlugin

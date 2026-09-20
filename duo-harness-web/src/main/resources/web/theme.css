@@ -253,6 +253,31 @@
   }
   #newSession:hover { background: var(--brand-tint); }
 
+  /* ===== §样式层 · 侧栏搜索（M21 工单 08） ===== */
+  #sessionSearch {
+    margin: 4px 8px 2px; padding: 6px 8px; width: calc(100% - 16px);
+    border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+    font: inherit; font-size: 12px; color: var(--text);
+  }
+  #sessionSearch:focus { outline: none; border-color: var(--brand); }
+  #searchResults { overflow-y: auto; padding: 2px 8px 4px; }
+  /* 有命中才占满侧栏（替换列表）；无命中保持内容高、列表照常可见 */
+  #searchResults.has-hits { flex: 1; }
+  .search-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: var(--text-dim); padding: 4px 0;
+  }
+  .search-head button {
+    border: none; background: none; color: var(--text-dim); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 2px;
+  }
+  .search-empty { font-size: 11px; color: var(--text-dim); padding: 6px 0; }
+  .search-hit .snippet {
+    font-size: 11px; color: var(--text); margin-top: 3px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; word-break: break-all;
+  }
+
   /* ===== §样式层 · 状态区 ===== */
   #statusBody { padding: 12px; overflow-y: auto; flex: 1; }
   .status-group { font-size: 12px; color: var(--text-dim); margin: 10px 0 8px; font-weight: 600; }

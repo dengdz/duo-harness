@@ -52,6 +52,12 @@
       <artifactId>duo-harness-session</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- 会话检索插件（M21 工单 08，ADR-0022）：agent-demo.yml 的 session-query 行 -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-session-query</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- M5 段落演示 agent 工具循环（ChatAgent Function Calling） -->
     <dependency>
       <groupId>dev.duo</groupId>
