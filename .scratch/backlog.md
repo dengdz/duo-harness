@@ -53,7 +53,7 @@
 
 - [ ] **Web 斜杠命令执行异步化**：/compact 等命令同步执行于 HTTP 线程，LLM 摘要无超时兜底可长挂（CLI 同步可接受）；方向 = 202 受理 + 结果经既有 command/done 事件流呈现。来源：M19 双轴审查 P2（2026-09-19）。
 - [ ] **CLI 运行中 steer 入口**：注入收件箱做在 agent 域，Web 已接（工单 04）；CLI 未接——终端行缓冲天然排队（执行中输入下一轮 readLine 即得，体验已够），接入需主循环线程拆分、改动面大。来源：ADR-0020 决策 9 裁定记档（2026-09-19）。
-- [ ] **/model 运行时切换**：LLM 配置启动期装配，运行时换 model 牵连适配器生命周期与治理计量连续性；命令注册表（M19-01）落地后加回是增量。来源：ADR-0020 拒绝项（/model 运行时切换本期做）裁定记档（2026-09-19）。
+- [x] （已排期）**/model 运行时切换** → M24 搭车（ADR-0024 修订，随 /effort 同批）：同 provider 换模型名 + 会话事件 + resume 保存意图/执行绑定分离；跨 provider 需 yml 预声明。销账于 M24 收口
 
 ## 1.0 后菜单（DSH 全景复审补充，2026-09-17，ADR-0016 拒绝项对应池）
 
@@ -64,7 +64,13 @@
 - workflow / ralph（脚本化多子 agent 编排）、agent-team（roster/任务 DAG，DSH experimental）
 - LSP（seam + stdio + 诊断工具）、PTY 持久终端六件套、持久 shell
 - 跨 harness 委派后端（把真实 Claude Code/Codex 当子 agent 运行；duo 后端接口位已留）
-- Anthropic-messages 协议适配（现仅 OpenAI 兼容）、reasoningEffort 分级、prompt 更新 in-history 前缀缓存策略
+- Anthropic-messages 协议适配（现仅 OpenAI 兼容）、prompt 更新 in-history 前缀缓存策略（reasoningEffort 分级已排期 M24——ADR-0024 修订）
 - settings 热重载 + schema 驱动设置页（即 M1 遗留限制 1 的完整形态）、credentials OAuth 授权流
 - @session 跨会话引用、schedule 会话内定时提醒、JSONL 压缩帧/代际迁移链、agents[] 声明式自启
 - MCP resources/prompts 桥接（DSH 也仅桥接 tools——做了即超越对照系）
+
+## M22 探测里程碑对账（2026-09-21，ADR-0023）
+
+（已排期）**glob/grep .gitignore 语义**（M12#2）→ M23 正式范围（ADR-0024），本条销账于 M23 收口
+（已排期）**Web 鉴权令牌 + bind** → M24 正式范围（ADR-0024，含标签级会话绑定最小版），本条销账于 M24 收口
+- [ ] **参考项目工程化探测**（原探测批 B11）：DSH/ZCode 测试哲学/CI 门禁/打包分发（SEA/electron-builder）/更新通道的机制级探查。来源：ADR-0023 裁定砍出探测范围。→ 1.0 后菜单；DSH 测试哲学已见 docs/research/DSH/总览.md §3
