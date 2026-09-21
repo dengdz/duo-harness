@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 未发布
+
+### Changed
+
+- **M23（0.18.0）启动规划落盘：grill 十二问收敛 + ADR-0025 三裁定 + spec 与 11 张工单**：`docs/adr/0025-M23执行与CLI体验三裁定.md`——①CLI 事件驱动主循环与两级收件箱（虚拟线程常驻读 stdin、next-step step 边界注入/next-turn 收口消费、暂停协作式中断+恢复：Ctrl+C 在跑先停再按退出/空闲即退、`/stop` 兜底、Web 停止按钮、不做原地冻结）②后台任务注册表与输出三层（inline 30k/spill 64MiB/task-output 尾窗 32k、超帽告警不静默、yml 可配）+ task-output/task-stop 两工具 + 完成通知 first-wins 必达（busy 挂 next-turn 收口合并、暂停不杀后台）③.gitignore 自研判定器（红线 4 拒捆绑 rg、全常用子集、.gitignore∪产物目录∪VCS 目录三源并集、glob/grep/@file 同口径）；spec `.scratch/m23-cli-experience/spec.md`（34 条用户故事、七组既有测试 seam）+ 11 张工单（01-06 主线依赖链：主循环→暂停→审批队列→后台→spill→可见化；07-10 零依赖并行：headless --json/.gitignore/技能热加载/上限感知；11 收尾）；术语表 11 词条增改（新增收件箱/暂停/审批小队列/后台任务/spill/忽略判定/NDJSON 事件流/技能热加载，steer 升两级语义、迭代上限增感知提醒、发现根去「不做热加载」）；backlog「CLI 运行中 steer 入口」转 M23 正式范围（ADR-0025 决策一）
+
 ## 0.17.0（2026-09-21）
 
 ### Changed
