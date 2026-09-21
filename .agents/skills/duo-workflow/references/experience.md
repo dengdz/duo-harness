@@ -39,3 +39,17 @@
 
 **影响范围**：
 所有"让用户亲眼验证库行为"的场景（工单级手动验收）；jshell 仅适合纯公开 API 的随手验证。
+
+## [2026-09-20] 给 stdio server 注入 EOF 监视：EOF 是随时到来的死亡信号，启动序列须按"已死"分支处理
+
+**问题描述**：
+给 MCP stdio server（SDK `StdioServerTransportProvider` 双参构造注入包装流）挂 stdin EOF 自退时，回归测试立即失败——测试在 `start()` 后马上关 stdin，SDK 读循环 EOF 终结传输层，随后 `addTool` 内部发 notification enqueue 失败抛 RuntimeException，进程以退出码 1 崩溃而非按预期自退。
+
+**原因分析**：
+EOF 不只在"服务期"到来——父进程强杀时它可能在子进程启动序列任意点插入。启动序列里任何触发通知/IO 的步骤（`addTool` 即发 tools 变更通知）在传输已死后都会抛，异常路径若不区分"EOF 已至"就会把自退变成崩溃。
+
+**解决方案**：
+启动序列中会触发 IO 的步骤包 try-catch，以 EOF 闸门计数为判据：`stdinClosed.getCount() == 0` 时吞掉异常按自退处理（退出竞态的预期噪声），否则原样抛出（真异常）。回归测试专门用"start 后立即关 stdin"压这个竞态窗口。
+
+**影响范围**：
+所有"监视底层资源死亡并自退"的子进程/server 夹具——死亡信号必须能在启动期到达且被优雅消化，而不仅在服务期。
