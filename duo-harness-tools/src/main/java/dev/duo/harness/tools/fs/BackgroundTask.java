@@ -17,16 +17,23 @@ public final class BackgroundTask {
     private final String taskId;
     private final String command;
     private final Process process;
-    private final FsBashTool.StreamCapture stdout = new FsBashTool.StreamCapture();
-    private final FsBashTool.StreamCapture stderr = new FsBashTool.StreamCapture();
+    private final BashOutputConfig config;
+    private final FsBashTool.StreamCapture stdout;
+    private final FsBashTool.StreamCapture stderr;
 
     private volatile State state = State.RUNNING;
     private volatile int exitCode = -1;
 
-    BackgroundTask(String taskId, String command, Process process) {
+    BackgroundTask(String taskId, String command, Process process, BashOutputConfig config,
+                   java.nio.file.Path spillDir) {
         this.taskId = taskId;
         this.command = command;
         this.process = process;
+        this.config = config == null ? BashOutputConfig.DEFAULTS : config;
+        this.stdout = new FsBashTool.StreamCapture(this.config.inlineTailChars(),
+                this.config.spillMaxChars(), spillDir.resolve(taskId + "-stdout.txt"));
+        this.stderr = new FsBashTool.StreamCapture(this.config.inlineTailChars(),
+                this.config.spillMaxChars(), spillDir.resolve(taskId + "-stderr.txt"));
         Thread.ofVirtual().name("bg-out-" + taskId)
                 .start(() -> FsBashTool.capture(process.getInputStream(), stdout));
         Thread.ofVirtual().name("bg-err-" + taskId)
@@ -45,6 +52,14 @@ public final class BackgroundTask {
         if (state == State.RUNNING) {
             state = State.EXITED;
         }
+        stdout.finish(); // 收口刷 spill 缓冲（M23 工单 05：不刷则回读缺尾）
+        stderr.finish();
+    }
+
+    /** spill 收尾（注册表关闭路径：杀树后刷新缓冲，防回读缺尾）。 */
+    void finishSpill() {
+        stdout.finish();
+        stderr.finish();
     }
 
     /** 终止任务（task-stop / 注册表关闭）：杀进程树并置 KILLED（幂等——已结束原样返回）。 */
@@ -67,7 +82,8 @@ public final class BackgroundTask {
         return process;
     }
 
-    /** 输出全文（stdout 在前、stderr 带 [stderr] 标题缀后；空流不留痕）。 */
+    /** 输出（stdout 尾窗在前、stderr 尾窗缀后）+ spill 回读指引**置尾**（task-output
+     * 尾窗裁剪不会裁掉路径——M23 工单 05 审查修复）。 */
     public String output() {
         StringBuilder sb = new StringBuilder(stdout.text());
         if (!stderr.text().isEmpty()) {
@@ -75,6 +91,20 @@ public final class BackgroundTask {
                 sb.append('\n');
             }
             sb.append("[stderr]\n").append(stderr.text());
+        }
+        if (stdout.hasSpill()) {
+            sb.append("\n[stdout spilled] 前 ").append(stdout.spilledChars())
+              .append(" 字符已落盘，read 回读全文: ").append(stdout.spillPath());
+        }
+        if (stderr.hasSpill()) {
+            sb.append("\n[stderr spilled] 前 ").append(stderr.spilledChars())
+              .append(" 字符已落盘，read 回读全文: ").append(stderr.spillPath());
+        }
+        if (stdout.spillFull() || stderr.spillFull()) {
+            sb.append("\n[spill 超帽] 输出超出 spill 上限停止写入，其后内容未保留——请拆分命令");
+        }
+        if (stdout.spillFailed() || stderr.spillFailed()) {
+            sb.append("\n[spill 落盘失败] 部分输出未能保留——请缩小输出");
         }
         return sb.toString();
     }

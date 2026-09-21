@@ -25,13 +25,28 @@ public final class BackgroundTaskRegistry {
             new CopyOnWriteArrayList<>();
     private final java.util.concurrent.atomic.AtomicInteger seq =
             new java.util.concurrent.atomic.AtomicInteger();
+    private final BashOutputConfig outputConfig;
+    private final java.nio.file.Path spillDir;
+
+    /** 缺省预算构造（spill 落 Duo home 临时区）。 */
+    public BackgroundTaskRegistry() {
+        this(BashOutputConfig.DEFAULTS);
+    }
+
+    /** 指定预算构造（fs-tools 行 config 的 output 段，M23 工单 05）。 */
+    public BackgroundTaskRegistry(BashOutputConfig outputConfig) {
+        this.outputConfig = outputConfig == null ? BashOutputConfig.DEFAULTS : outputConfig;
+        this.spillDir = dev.duo.harness.core.api.boot.DuoHome.resolve()
+                .resolveDir("tmp/bash-spill");
+    }
 
     /**
      * 启动后台任务：接管进程（双流读 + 完成监视线程）并注册——调用方只管把
      * {@code ProcessBuilder.start()} 的产物交进来。完成时逐个通知监听器（first-wins）。
      */
     public BackgroundTask start(Process process, String command) {
-        BackgroundTask task = new BackgroundTask("bg-" + seq.incrementAndGet(), command, process);
+        BackgroundTask task = new BackgroundTask("bg-" + seq.incrementAndGet(), command, process,
+                outputConfig, spillDir);
         tasks.add(task);
         Thread.ofVirtual().name("bg-watch-" + task.taskId()).start(() -> {
             task.awaitExit();
@@ -73,6 +88,13 @@ public final class BackgroundTaskRegistry {
     public void shutdownAll() {
         for (BackgroundTask task : tasks) {
             task.terminate();
+        }
+    }
+
+    /** 全部任务刷 spill 缓冲（关闭清理前调用，防回读缺尾）。 */
+    public void finishAllSpills() {
+        for (BackgroundTask task : tasks) {
+            task.finishSpill();
         }
     }
 }

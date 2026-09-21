@@ -16,12 +16,17 @@ public final class TaskOutputTool implements ToolDefinition {
     public static final String NAME = "task-output";
     private static final long DEFAULT_WAIT_MS = 30_000;
     private static final long MAX_WAIT_MS = 600_000;
-    private static final int TAIL_CHARS = 32_000;
 
     private final BackgroundTaskRegistry registry;
+    private final int tailChars;
 
     public TaskOutputTool(BackgroundTaskRegistry registry) {
+        this(registry, BashOutputConfig.DEFAULTS.taskOutputTailChars());
+    }
+
+    public TaskOutputTool(BackgroundTaskRegistry registry, int taskOutputTailChars) {
         this.registry = registry;
+        this.tailChars = taskOutputTailChars;
     }
 
     @Override public String name() { return NAME; }
@@ -67,9 +72,9 @@ public final class TaskOutputTool implements ToolDefinition {
                 ? "[运行中]（等待 " + waitMs + "ms 后仍运行；可用 task-stop 终止或再次 task-output 等待）"
                 : task.terminalLine();
         String output = task.output();
-        String tail = output.length() > TAIL_CHARS
-                ? "…（前 " + (output.length() - TAIL_CHARS) + " 字符已省略）\n"
-                  + output.substring(output.length() - TAIL_CHARS)
+        String tail = output.length() > tailChars
+                ? "…（前 " + (output.length() - tailChars) + " 字符已省略）\n"
+                  + output.substring(output.length() - tailChars)
                 : output;
         return "[后台任务 " + task.taskId() + "] " + task.command() + "\n" + state
                 + (tail.isEmpty() ? "\n（暂无输出）" : "\n" + tail);

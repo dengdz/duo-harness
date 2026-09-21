@@ -95,3 +95,17 @@ javadoc/块注释内描述双星模式时用措辞替代（「双星前缀」「
 
 **影响范围**：
 所有新服务发布（tools/fs/agent/web 各域）。
+
+## [2026-09-22] 脚本化批量修改代码：replace 后必须断言生效
+
+**问题描述**：
+工单 05 实现中用 python 脚本批量修改测试文件，三次 replace 因转义层级不匹配**静默失败**（old 串没匹配上、无报错），导致后续调试在「spill 未触发」的错误方向上绕了数轮；同段还三犯 `-pl` 忘 `-am`（依赖解析失败）。
+
+**原因分析**：
+python 的 `str.replace` old 不存在时不报错；转义层级（bash heredoc → python → Java 源）叠加极易算错；mvn 单模块命令从记忆拼装已两次违反（见 duo-acceptance 2026-09-22 条）。
+
+**解决方案**：
+批量代码修改的硬纪律：① 优先用 Edit 工具（所见即所得、失败即报）；必须用脚本时，replace 后紧跟 `assert old in s`（或计数校验）再写盘；② mvn 单模块命令只从 `docs/01-入门/运行Demo.md` 或既有 README 原样复制（带 `-am package`），改动仅限 mainClass。
+
+**影响范围**：
+所有 agent 执行的批量代码修改与 mvn 构建命令。

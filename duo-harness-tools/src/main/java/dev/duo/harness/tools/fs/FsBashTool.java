@@ -19,10 +19,10 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>超时 clamp：模型可传低值（缺省 120s、上限 600s），到点终止**进程树**并以
  * {@code [timed out]} marker 呈现——bash 的子命令链不因父进程死亡自动消失，靶向
- * 清理防孤儿。每流输出有界（{@link #MAX_STREAM_CHARS} 是内存护栏，取值高于治理层
- * spill 阈值）：正常的大输出由治理层落盘给定位符、可回读全文，超护栏的部分只计数
- * 不保留、marker 报省略量与补救方向。命令退出而流仍被后台进程持有（后台任务未收尾）
- * 时输出可能不完整，以 marker 明示而非静默截半。非零退出**不是错误**：
+ * 清理防孤儿。输出三层（M23 工单 05）：内存尾窗保最近输出、超窗历史懒落盘 spill
+ * 文件（回传路径可 read 回读全文）、spill 达帽停写并显式告警（不静默）。命令退出而
+ * 流仍被后台进程持有（后台任务未收尾）时输出可能不完整，以 marker 明示而非静默截半。
+ * 非零退出**不是错误**：
  * {@code [exit code: N]} marker 进正常结果，退出码交模型自决（ADR-0012）。
  * 基础设施故障（bash 启不来、执行被中断）上抛运行时异常，转错误结果。</p>
  *
@@ -35,24 +35,28 @@ public final class FsBashTool implements ToolDefinition {
 
     private static final long DEFAULT_TIMEOUT_MS = 120_000;
     private static final long MAX_TIMEOUT_MS = 600_000;
-    /**
-     * 单流保留上限（字符）：内存护栏，高于治理层 spill 阈值（50000）——超阈值的大输出
-     * 由治理层卸载落盘（全文可回读），此处只挡病态体量。超限部分只计数不保留，管道仍
-     * 持续排空（子进程不因写满阻塞）。
-     */
-    private static final int MAX_STREAM_CHARS = 100_000;
-
     private final WorkspacePolicy workspace;
     /** 后台任务注册表（M23 工单 04；null = 未装配——run_in_background 请求时报错）。 */
     private final BackgroundTaskRegistry registry;
+    /** 输出三层预算（M23 工单 05）：inline 尾窗 / spill 帽 / task-output 尾窗。 */
+    private final BashOutputConfig outputConfig;
+    /** spill 文件序列（bash-out-<n>-stdout/stderr.txt）。 */
+    private static final java.util.concurrent.atomic.AtomicInteger SPILL_SEQ =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     public FsBashTool(WorkspacePolicy workspace) {
-        this(workspace, null);
+        this(workspace, null, BashOutputConfig.DEFAULTS);
     }
 
     public FsBashTool(WorkspacePolicy workspace, BackgroundTaskRegistry registry) {
+        this(workspace, registry, BashOutputConfig.DEFAULTS);
+    }
+
+    public FsBashTool(WorkspacePolicy workspace, BackgroundTaskRegistry registry,
+                      BashOutputConfig outputConfig) {
         this.workspace = workspace;
         this.registry = registry;
+        this.outputConfig = outputConfig == null ? BashOutputConfig.DEFAULTS : outputConfig;
     }
 
     @Override public String name() { return NAME; }
@@ -126,9 +130,13 @@ public final class FsBashTool implements ToolDefinition {
             throw new RuntimeException("bash 无法启动进程: " + e.getMessage(), e);
         }
 
-        // 双流并发读：管道写满即阻塞子进程，单线程顺序读会与 waitFor 互锁
-        StreamCapture stdout = new StreamCapture();
-        StreamCapture stderr = new StreamCapture();
+        // 双流并发读：管道写满即阻塞子进程，单线程顺序读会与 waitFor 互锁。
+        // 输出分层（M23 工单 05）：内存尾窗 + 懒 spill 落盘（超 inline 预算才创建文件）
+        int inlineTail = outputConfig.inlineTailChars();
+        StreamCapture stdout = new StreamCapture(inlineTail, outputConfig.spillMaxChars(),
+                spillPath("stdout"));
+        StreamCapture stderr = new StreamCapture(inlineTail, outputConfig.spillMaxChars(),
+                spillPath("stderr"));
         Thread stdoutReader = Thread.ofVirtual().start(() -> capture(process.getInputStream(), stdout));
         Thread stderrReader = Thread.ofVirtual().start(() -> capture(process.getErrorStream(), stderr));
 
@@ -145,10 +153,14 @@ public final class FsBashTool implements ToolDefinition {
         }
         boolean stdoutClosed = joinQuietly(stdoutReader);
         boolean stderrClosed = joinQuietly(stderrReader);
+        stdout.finish();
+        stderr.finish();
 
         StringBuilder sb = new StringBuilder();
         appendStdout(sb, stdout);
         appendStderr(sb, stderr);
+        appendSpillInfo(sb, "stdout", stdout);
+        appendSpillInfo(sb, "stderr", stderr);
         sb.append(exited
                 ? "[exit code: " + process.exitValue() + "]"
                 : "[timed out] " + timeoutMs + "ms limit reached; process tree terminated");
@@ -233,33 +245,128 @@ public final class FsBashTool implements ToolDefinition {
         appendBody(sb, text, capture.omitted(), "stderr");
     }
 
-    /** 段体：文本 + 缺行尾补换行 + 截断 marker（文本与省略量取自同一次快照）。 */
+    /** 段体：文本 + 缺行尾补换行 + 超帽丢弃 marker（M23 工单 05：被裁历史归 spill，仅超帽丢弃才报省略）。 */
     private static void appendBody(StringBuilder sb, String text, long omitted, String label) {
         sb.append(text);
         if (!text.isEmpty() && !text.endsWith("\n")) {
             sb.append('\n');
         }
         if (omitted > 0) {
-            sb.append('[').append(label).append(" truncated: ").append(omitted)
-              .append(" chars omitted — narrow the command or redirect the rest to a file]\n");
+            sb.append('[').append(label).append(" spill 超帽: ").append(omitted)
+              .append(" chars dropped — 输出过大，请拆分命令或重定向到文件]\n");
         }
     }
 
+    /** spill 回读信息（M23 工单 05）：成功落盘给路径与回读指引；失败/超帽各自显式告警。 */
+    private static void appendSpillInfo(StringBuilder sb, String label, StreamCapture capture) {
+        if (capture.spillFailed()) {
+            sb.append('[').append(label).append(" spill 落盘失败] 共 ").append(capture.trimmedTotal())
+              .append(" 字符未保留，回读不可用——请缩小输出或重定向到文件]\n");
+            return;
+        }
+        if (!capture.hasSpill()) {
+            return;
+        }
+        sb.append('[').append(label).append(" spilled] 前 ").append(capture.spilledChars())
+          .append(" 字符已落盘，read 此文件回读全文: ").append(capture.spillPath()).append('\n');
+        if (capture.spillFull()) {
+            sb.append('[').append(label).append(" spill 超帽] 达上限停止写入，其后 ")
+              .append(capture.droppedAfterFullCount()).append(" 字符未保留——请拆分命令或重定向到文件\n");
+        }
+    }
+
+    /** spill 文件路径：Duo home 临时区 bash-spill 子目录（进程退出由插件清理路径删除）。 */
+    private static java.nio.file.Path spillPath(String stream) {
+        return dev.duo.harness.core.api.boot.DuoHome.resolve().resolveDir("tmp/bash-spill")
+                .resolve("bash-" + SPILL_SEQ.incrementAndGet() + "-" + stream + ".txt");
+    }
+
     /**
-     * 单流读取槽：读线程边读边落，主线程有界等待后取用——读未收尾（子进程留下了
-     * 持有管道的后台孙进程）也返回已读部分，不空手。
+     * 单流读取槽（M23 工单 05 升级为分层）：读线程边读边落——内存保最近
+     * {@code keepChars} 尾窗，被裁的历史懒写入 spill 文件（超 {@code spillMaxChars}
+     * 停写并计数丢弃——告警不静默）；主线程有界等待后取用，读未收尾（子进程留下
+     * 持有管道的后台孙进程）也返回已读部分。spill 文件由插件停止时的清理路径删除。
      */
     static final class StreamCapture {
 
+        private final int keepChars;
+        private final long spillMaxChars;
+        private final java.nio.file.Path spillPath;
         private final StringBuilder kept = new StringBuilder();
-        private long omitted;
+        private long trimmedTotal;          // 已裁入 spill 的历史字符数
+        private long spilledChars;          // 实际写入 spill 的字符数
+        private long droppedAfterFull;      // 超帽/落盘失败后丢弃的字符数
+        private boolean spillFull;          // 超帽或落盘失败：停写并告警（不静默）
+        private boolean spillFailed;        // true = 落盘 IO 失败（区别于正常超帽）
+        private boolean closed;             // finish 后停写（迟到 accept 不再碰 writer）
+        private java.io.Writer spillWriter;
+
+        StreamCapture(int keepChars, long spillMaxChars, java.nio.file.Path spillPath) {
+            this.keepChars = Math.max(keepChars, 1);
+            this.spillMaxChars = Math.max(spillMaxChars, 1);
+            this.spillPath = spillPath;
+        }
+
+        /** 无 spill 的兼容形态（纯内存尾窗，如治理层旁路的小输出场景）。 */
+        StreamCapture(int keepChars) {
+            this(keepChars, Long.MAX_VALUE, null);
+        }
 
         synchronized void accept(char[] buffer, int length) {
-            int room = MAX_STREAM_CHARS - kept.length();
-            if (room > 0) {
-                kept.append(buffer, 0, Math.min(length, room));
+            kept.append(buffer, 0, length);
+            // 尾窗裁头：被裁历史写 spill（懒开）；超帽/落盘失败后停写只计丢弃
+            if (kept.length() > keepChars) {
+                int overflow = kept.length() - keepChars;
+                String head = kept.substring(0, overflow);
+                kept.delete(0, overflow);
+                trimmedTotal += overflow;
+                if (closed || spillFull) {
+                    droppedAfterFull += overflow;
+                    return;
+                }
+                try {
+                    writeSpill(head);
+                } catch (java.io.IOException e) {
+                    spillFailed = true; // 落盘失败独立标记（文案区分于超帽）
+                    spillFull = true;   // 停写同语义收敛，告警不静默
+                    droppedAfterFull += overflow;
+                }
             }
-            omitted += Math.max(0, length - Math.max(room, 0));
+        }
+
+        private void writeSpill(String text) throws java.io.IOException {
+            if (spilledChars + text.length() > spillMaxChars) {
+                spillFull = true;
+                closeSpill();
+                droppedAfterFull += text.length();
+                return;
+            }
+            java.nio.file.Files.createDirectories(spillPath.getParent());
+            spillWriter = java.nio.file.Files.newBufferedWriter(spillPath,
+                    StandardCharsets.UTF_8);
+            spillWriter.write(text);
+            spilledChars += text.length();
+            if (spilledChars >= spillMaxChars) {
+                spillFull = true;
+                closeSpill();
+            }
+        }
+
+        private synchronized void closeSpill() {
+            if (spillWriter != null) {
+                try {
+                    spillWriter.close();
+                } catch (java.io.IOException ignored) {
+                    // 关闭失败不影响状态标记
+                }
+                spillWriter = null;
+            }
+        }
+
+        /** 收尾：流结束后调用——关闭 writer 并停写（迟到 accept 只计丢弃，不再碰 writer）。 */
+        synchronized void finish() {
+            closed = true;
+            closeSpill();
         }
 
         synchronized String text() {
@@ -267,7 +374,37 @@ public final class FsBashTool implements ToolDefinition {
         }
 
         synchronized long omitted() {
-            return omitted;
+            return droppedAfterFull; // 超帽丢弃量（原 100k 截断计数语义由 spill 语义取代）
+        }
+
+        /** spill 是否有内容可回读（成功落盘且被裁历史 > 0；失败态走失败文案）。 */
+        synchronized boolean hasSpill() {
+            return trimmedTotal > 0 && !spillFailed && spillPath != null;
+        }
+
+        /** 落盘是否失败（区别于超帽——文案点名「回读不可用」）。 */
+        synchronized boolean spillFailed() {
+            return spillFailed;
+        }
+
+        synchronized boolean spillFull() {
+            return spillFull;
+        }
+
+        synchronized java.nio.file.Path spillPath() {
+            return spillPath;
+        }
+
+        synchronized long trimmedTotal() {
+            return trimmedTotal;
+        }
+
+        synchronized long spilledChars() {
+            return spilledChars;
+        }
+
+        synchronized long droppedAfterFullCount() {
+            return droppedAfterFull;
         }
     }
 

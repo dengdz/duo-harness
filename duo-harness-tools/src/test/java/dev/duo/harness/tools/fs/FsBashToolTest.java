@@ -31,17 +31,33 @@ class FsBashToolTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：FsBashToolTest —— bash：全新进程/env 硬化/stdin 空设备/超时 clamp/"
-                + "输出截断/退出码 marker、run_in_background/task-output/task-stop（13 用例） ===");
+                + "输出截断/退出码 marker、run_in_background/task-output/task-stop、输出三层与 spill（18 用例） ===");
     }
 
     private BackgroundTaskRegistry registry;
+    private BashOutputConfig outputConfig = BashOutputConfig.DEFAULTS;
+    private String realDuoHome;
 
     @BeforeEach
     void setUp() throws IOException {
         ws = tempDir.resolve("ws");
         Files.createDirectories(ws);
         registry = new BackgroundTaskRegistry();
-        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE), registry);
+        // spill 落 Duo home 临时区——测试用 duo.home 系统属性重定向（解析优先级第一），
+        // 不污染真实 ~/.duo
+        realDuoHome = System.getProperty("duo.home");
+        System.setProperty("duo.home", tempDir.resolve("duo-home").toString());
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE),
+                registry, outputConfig);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void restoreDuoHome() {
+        if (realDuoHome != null) {
+            System.setProperty("duo.home", realDuoHome);
+        } else {
+            System.clearProperty("duo.home");
+        }
     }
 
     private static JsonNode json(String text) {
@@ -93,16 +109,15 @@ class FsBashToolTest {
     }
 
     @Test
-    void eachStreamIsTruncatedWithOmittedCount() {
-        String result = run("{\"command\":\"printf '%120000s' '' | tr ' ' 'a'; "
-                + "printf '%120000s' '' | tr ' ' 'b' >&2\"}");
-        assertTrue(result.contains("[stdout truncated: 20000 chars omitted"), "stdout 截断计数: " + result);
-        assertTrue(result.contains("[stderr truncated: 20000 chars omitted"), "stderr 截断计数: " + result);
-        assertTrue(result.contains("narrow the command"), "截断 marker 带补救方向: " + result);
-        assertTrue(result.length() < 210_000, "结果有界（单流 100000 护栏）: " + result.length());
-        assertTrue(result.contains("[exit code: 0]"), result);
+    void defaultBudgetKeepsLargeOutputBoundedViaSpill() throws IOException {
+        // 输出分层（M23 工单 05）取代旧 100k 截断：默认预算下大输出 = 尾窗 + spill
+        // 提示，结果体积有界（尾窗 30k 内）且无丢弃（未超帽）
+        String result = run("{\"command\":\"seq 1 20000\",\"timeoutMs\":30000}");
+        assertTrue(result.contains("[stdout spilled]"), "大输出触发 spill 提示: "
+                + result.substring(0, Math.min(400, result.length())));
+        assertFalse(result.contains("chars dropped"), "未超帽无丢弃告警");
+        assertTrue(result.length() < 40_000, "返回体积有界（尾窗）: " + result.length());
     }
-
     @Test
     void backgroundProcessHoldingTheStreamIsMarkedIncomplete() {
         // 命令已退出但后台任务仍持有管道：读线程 2s 收不了尾——已读部分明示"可能不完整"，
@@ -188,11 +203,104 @@ class FsBashToolTest {
     }
 
     @Test
+    void oversizedOutputSpillsToDiskWithReadbackPath() throws Exception {
+        // 输出分层（M23 工单 05）：小 inline 预算注入——大输出超窗部分落 spill 并回传
+        // 路径；read 回读 spill 与模型所见历史一致；尾窗保最近输出
+        outputConfig = new BashOutputConfig(200, 1_000_000, 32_000);
+        registry = new BackgroundTaskRegistry(outputConfig);
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE),
+                registry, outputConfig); // 覆盖 setUp 的缺省构造（本用例预算注入）
+
+        String result = run("{\"command\":\"seq 1 300\",\"timeoutMs\":30000}");
+        assertTrue(result.contains("[stdout spilled]"), "超窗触发 spill 提示: " + result);
+        var matcher = java.util.regex.Pattern
+                .compile("read 此文件回读全文: (\\S+\\.txt)").matcher(result);
+        assertTrue(matcher.find(), "spillPath 回传——resultLen=" + result.length()
+                + " spilled行=" + result.contains("[stdout spilled]"));
+        String path = matcher.group(1);
+        assertTrue(result.contains("300"), "尾窗含最近输出（末尾行号 300 附近）: " + result);
+        assertFalse(result.contains("[stdout spill 超帽]"), "未超帽无丢弃告警: " + result);
+
+        // 回读一致性：spill 文件含被裁历史（文件开头即 seq 的第 1 行，无前导换行）
+        String spilled = java.nio.file.Files.readString(java.nio.file.Path.of(path));
+        assertTrue(spilled.startsWith("1\n2\n3\n"), "spill 含早期被裁历史（1 起头）: "
+                + spilled.substring(0, Math.min(30, spilled.length())));
+        assertTrue(spilled.contains("\n200\n"), "spill 覆盖到接近尾窗边界");
+    }
+
+    @Test
+    void spillOverflowWarnsLoudly() throws Exception {
+        // 超帽告警不静默（M23 工单 05）：spillMaxChars 小注入——超帽部分丢弃并显式告警
+        outputConfig = new BashOutputConfig(100, 500, 32_000);
+        registry = new BackgroundTaskRegistry(outputConfig);
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE),
+                registry, outputConfig); // 覆盖 setUp 的缺省构造
+
+        String result = run("{\"command\":\"seq 1 200\",\"timeoutMs\":30000}");
+        assertTrue(result.contains("[stdout spill 超帽]"), "超帽显式告警: " + result);
+        assertTrue(result.contains("chars dropped"), "丢弃量可见: " + result);
+    }
+
+    @Test
+    void smallOutputLeavesNoSpillResidue() throws Exception {
+        // 小输出（未超 inline 预算）不创建 spill 文件——无残渣
+        outputConfig = new BashOutputConfig(200, 1_000, 32_000);
+        registry = new BackgroundTaskRegistry(outputConfig);
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE),
+                registry, outputConfig); // 覆盖 setUp 的缺省构造
+        String result = run("{\"command\":\"echo tiny\",\"timeoutMs\":30000}");
+        assertTrue(result.contains("tiny"), result);
+        assertFalse(result.contains("[stdout spilled]"), "小输出不触发 spill: " + result);
+        var spillDir = java.nio.file.Path.of(System.getProperty("duo.home"),
+                "tmp", "bash-spill");
+        assertFalse(java.nio.file.Files.exists(spillDir)
+                && java.nio.file.Files.list(spillDir).count() > 0, "spill 目录无残渣");
+    }
+
+    @Test
     void runInBackgroundWithoutRegistryFailsCleanly() {
         FsBashTool bare = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE));
         String result = bare.execute(new ToolExecution("bash", json(
                 "{\"command\":\"echo x\",\"run_in_background\":true}")));
         assertTrue(result.contains("后台任务注册表未装配"), result);
+    }
+
+
+    @Test
+    void taskOutputTailCharsConfigurable() throws Exception {
+        // task-output 尾窗可配（M23 工单 05）：小尾窗注入——长输出裁到窗内
+        outputConfig = new BashOutputConfig(200, 1_000_000, 50);
+        registry = new BackgroundTaskRegistry(outputConfig);
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE),
+                registry, outputConfig); // 用例内重建：run() 与 outputTool 必须同源注册表
+        var outputTool = new TaskOutputTool(registry, outputConfig.taskOutputTailChars());
+        String started = run("{\"command\":\"seq 1 50\",\"run_in_background\":true}");
+        assertTrue(started.contains("bg-1"), started);
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (!registry.get("bg-1").orElseThrow().isCompleted()
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(30);
+        }
+        String waited = outputTool.execute(new ToolExecution("task-output",
+                json("{\"taskId\":\"bg-1\",\"block\":false}")));
+        assertTrue(waited.contains("字符已省略"), "尾窗裁剪生效: " + waited);
+    }
+
+    @Test
+    void outputConfigParsesAndRejects() throws Exception {
+        // config.output 段解析（M23 工单 05）：缺席缺省、字段生效、非法点名
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var empty = mapper.createObjectNode();
+        assertEquals(BashOutputConfig.DEFAULTS, dev.duo.harness.tools.fs.FsToolsPlugin.parseOutput(empty));
+        var full = mapper.readTree("{\"output\":{\"inlineTailChars\":500,"
+                + "\"spillMaxChars\":4096,\"taskOutputTailChars\":128}}");
+        var parsed = dev.duo.harness.tools.fs.FsToolsPlugin.parseOutput(full);
+        assertEquals(500, parsed.inlineTailChars());
+        assertEquals(4096, parsed.spillMaxChars());
+        assertEquals(128, parsed.taskOutputTailChars());
+        var bad = mapper.readTree("{\"output\":{\"inlineTailChars\":-1}}");
+        org.junit.jupiter.api.Assertions.assertThrows(dev.duo.harness.core.api.PluginException.class,
+                () -> dev.duo.harness.tools.fs.FsToolsPlugin.parseOutput(bad));
     }
 
 }
