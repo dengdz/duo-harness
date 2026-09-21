@@ -6,6 +6,8 @@
 
 ### Added
 
+- **bash run_in_background 与 task 面（M23 工单 04，ADR-0025 决策二）**：bash 工具新增 `run_in_background` 参数——立即返回任务 id（bg-N）转后台运行（后台不受 timeoutMs 约束，暂停/中断不杀后台，进程退出全杀防孤儿）；新增 `task-output`（block/timeout 等待或快照读输出尾部窗口）与 `task-stop`（杀进程树，幂等）两工具；完成通知必达——agent 空闲自动开新轮消费、执行中挂收件箱 next-turn 收口合并消费（first-wins 每任务至多一条）；CLI 与 Web 双呈现位同款路由
+
 - **暂停：协作式中断与恢复（M23 工单 02，ADR-0025 决策一）**：运行期可随时暂停 agent 任务——CLI 运行期 Ctrl+C 单击触发协作式中断（当前工具终止、已流出文本保留、再按一次强制退出 130，空闲单击退出进程；`System.console()` 门控，测试/headless/管道环境保留默认终止语义），`/stop` 行命令为兜底入口；Web 输入框旁停止按钮（执行中出现）+ `POST /api/stop`；中断时已流出文本落 `assistant/interrupted` 会话事件（投影带 `[已中断]` 前缀，重放/续接可见中断点）、本轮未派发的工具调用补合成结果（日志可重放无悬空）；会话停在可恢复态，下一条消息即续接。不做原地冻结
 
 ### Fixed

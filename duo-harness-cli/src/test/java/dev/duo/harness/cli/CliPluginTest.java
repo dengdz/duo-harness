@@ -46,7 +46,7 @@ class CliPluginTest {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：事件驱动 REPL（busy 插队/应答闸门/EOF 不腰斩）、"
                 + "命令注册表入口（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
                 + "/stop 协作式中断与续接、/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、"
-                + "/compact 压缩、/permission 持久化、/title 改名、审批等待中 /stop 余项 deny（20 用例） ===");
+                + "/compact 压缩、/permission 持久化、/title 改名、审批等待中 /stop 余项 deny、后台完成通知双路径、中断不杀后台（23 用例） ===");
     }
 
     interface ToolsView {
@@ -814,6 +814,172 @@ class CliPluginTest {
             assertTrue(latest.events().stream().anyMatch(e ->
                             SessionEvent.ASSISTANT_INTERRUPTED.equals(e.type())),
                     "中断标记落日志");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void backgroundTaskCompletionRoutesAsIdleNewTurn() throws Exception {
+        // 后台完成通知（M23 工单 04）：空闲期后台任务完成 → 自动开新 turn 消费通知
+        // （无需用户再输入）；通知含 taskId 与终态。mock turn1 发 bash 后台调用，
+        // 审批 y 放行后 turn2 直答收口——后台完成时 agent 已空闲，通知自动开轮
+        Path dir = tempDir.resolve("bg-idle");
+        java.util.concurrent.atomic.AtomicInteger turn = new java.util.concurrent.atomic.AtomicInteger();
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (turn.incrementAndGet() == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-notice-done\",\"run_in_background\":true}")));
+                }
+                textSink.accept("已转后台");
+                return new dev.duo.harness.llm.LlmTurn("已转后台", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("用后台方式跑 echo bg-notice-done"),
+                InputLine.paced("y", "[待审批]"),
+                InputLine.of("/exit")), llm);
+        try {
+            fx.awaitIdle(); // 「已转后台」轮结束，agent 空闲
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (!fx.output().contains("[后台任务完成] bg-1") && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            // 通知以 user/message 落日志（CLI 不回显用户消息）——stdout 判据是「排队消息生效」
+            assertTrue(fx.output().contains("[排队消息生效]"), "通知轮自动开跑: " + fx.output());
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1")),
+                    "完成通知落会话日志: " + latest.events().stream().map(SessionEvent::type).toList());
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("bg-notice-done")),
+                    "后台产物在通知文本中");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void backgroundTaskCompletionDuringBusyMergesAtTurnClose() throws Exception {
+        // busy 期完成通知（M23 工单 04）：同一 turn 内先转后台（echo 秒完成）再进入
+        // 慢步骤——完成时 agent busy → 通知挂 next-turn → turn 收口「排队消息生效」
+        // 合并消费。mock：turn1 发后台 bash 调用，turn2 慢直答（拉长 busy 窗口）
+        Path dir = tempDir.resolve("bg-busy");
+        java.util.concurrent.atomic.AtomicInteger turn = new java.util.concurrent.atomic.AtomicInteger();
+        dev.duo.harness.llm.LlmAdapter slow = new dev.duo.harness.llm.LlmAdapter() {
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (turn.incrementAndGet() == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-during-busy\",\"run_in_background\":true}")));
+                }
+                try { Thread.sleep(2_500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                textSink.accept("长任务结束");
+                return new dev.duo.harness.llm.LlmTurn("长任务结束", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("先转后台跑一条命令，然后慢慢收尾"),
+                InputLine.paced("y", "[待审批]"),
+                InputLine.of("/exit")), slow);
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("[后台任务] bg-1 已启动"), "后台任务受理: " + out);
+            assertTrue(out.contains("[排队消息生效]"), "next-turn 收口合并消费: " + out);
+            assertTrue(out.contains("[后台任务] bg-1 已启动：echo bg-during-busy"),
+                    "后台产物在启动回执: " + out);
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1")),
+                    "完成通知落会话日志");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void interruptionSparesBackgroundTaskAndNoticeStillArrives() throws Exception {
+        // 暂停不杀后台（M23 工单 04 与 02 集成）：后台任务启动即完成（echo 即返），
+        // 完成通知在慢直答轮在飞期到达 → busy 挂 next-turn；turn 被协作式中断收口后
+        // [排队消息生效] 合并消费——中断不碰注册表、通知不丢（会话日志可见）
+        Path dir = tempDir.resolve("bg-interrupt");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int phase = 0;
+
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (phase == 0) {
+                    phase = 1;
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-survives\",\"run_in_background\":true}")));
+                }
+                if (phase == 1) {
+                    // 慢直答制造可打断窗口：/stop 的中断在此打断（收口后续接轮走 phase 2）
+                    phase = 2;
+                    try {
+                        Thread.sleep(8_000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("流被中断打断", e);
+                    }
+                    textSink.accept("不应到达");
+                    return new dev.duo.harness.llm.LlmTurn("不应到达", List.of());
+                }
+                textSink.accept("续接回答");
+                return new dev.duo.harness.llm.LlmTurn("续接回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("转后台跑一条长命令"),
+                InputLine.paced("y", "[待审批]"),
+                InputLine.paced("/stop", "[后台任务] bg-1 已启动"),
+                InputLine.paced("好了没", "已请求中断当前任务"),
+                InputLine.of("/exit")), llm);
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("已请求中断当前任务"), "/stop 生效: " + out);
+            assertTrue(out.contains("[已中断]"), "turn 中断收口: " + out);
+            assertTrue(out.contains("续接回答"), "中断后续接: " + out);
+            long deadline = System.currentTimeMillis() + 10_000;
+            Session latest = null;
+            while (System.currentTimeMillis() < deadline) {
+                latest = Session.latest(dir);
+                boolean noticed = latest.events().stream().anyMatch(e ->
+                        "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1"));
+                if (noticed) break;
+                latest.close();
+                Thread.sleep(100);
+            }
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1")),
+                    "中断后完成通知照达（不杀后台、通知不丢）");
             latest.close();
         } finally {
             fx.dispose();

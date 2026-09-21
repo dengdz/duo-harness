@@ -50,7 +50,7 @@ class WebFaceTest {
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
                 + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
                 + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏/入口栅栏 Host 与 Origin）、会话锁冲突与幂等切换、fail-closed 宽限、"
-                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）（38 用例） ===");
+                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）、后台完成通知双路径（40 用例） ===");
     }
 
     interface ToolsView {
@@ -367,6 +367,64 @@ class WebFaceTest {
         HttpResponse<String> idleStop = post("/api/stop", "{}");
         assertEquals(409, idleStop.statusCode());
         assertTrue(idleStop.body().contains("无执行中任务"), idleStop.body());
+    }
+
+
+    @Test
+    void backgroundTaskCompletionRoutesIdleNewTurnAndBusyNextTurn() throws Exception {
+        // 后台完成通知路由（M23 工单 04）：空闲期任务完成 → 通知作为新 turn 送 agent
+        // （桩记录 send 文本）；busy 期任务完成 → injectNextTurn 挂收件箱
+        dev.duo.harness.tools.fs.BackgroundTaskRegistry registry =
+                new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        java.util.List<String> sent = new CopyOnWriteArrayList<>();
+        java.util.List<String> queued = new CopyOnWriteArrayList<>();
+        java.util.concurrent.CountDownLatch busyInFlight = new java.util.concurrent.CountDownLatch(1);
+        ChatAgent stub = new ChatAgent() {
+            @Override
+            public AgentReply send(String userText, dev.duo.harness.agent.AgentListener listener) {
+                sent.add(userText);
+                if (userText.startsWith("[后台任务完成]")) {
+                    return new AgentReply("已收到通知", List.of(), true);
+                }
+                try {
+                    busyInFlight.countDown();
+                    Thread.sleep(2_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new AgentReply("忙完了", List.of(), true);
+            }
+
+            @Override
+            public boolean injectNextTurn(String text) {
+                queued.add(text);
+                return true;
+            }
+        };
+        start(Session.create(tempDir.resolve("bg-sessions")), stub);
+        face.setBackgroundTaskRegistry(registry);
+
+        // 空闲路径：任务完成 → 通知自动开轮（桩 send 收到通知文本）
+        registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo idle-notice");
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (sent.stream().noneMatch(t -> t.startsWith("[后台任务完成]"))
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertTrue(sent.stream().anyMatch(t -> t.startsWith("[后台任务完成]")),
+                "空闲通知自动开轮: " + sent);
+
+        // busy 路径：send 在飞（latch 拉住）→ 任务完成 → injectNextTurn 挂队
+        HttpResponse<String> msg = post("/api/message", "{\"text\": \"忙任务\"}");
+        assertEquals(202, msg.statusCode());
+        assertTrue(busyInFlight.await(3, java.util.concurrent.TimeUnit.SECONDS));
+        registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo busy-notice");
+        deadline = System.currentTimeMillis() + 5_000;
+        while (queued.isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertEquals(1, queued.size(), "busy 通知挂 next-turn");
+        assertTrue(queued.get(0).contains("busy-notice"), "通知文本完整: " + queued);
     }
 
     @Test

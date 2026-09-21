@@ -106,6 +106,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private volatile boolean answererDetached;
     /** 终端回答者实例（M23 工单 03：turn 边界审批计数归零的直连句柄）。 */
     private volatile ConsoleAnswerer consoleAnswerer;
+    /** turn 收口/停止标志（M23 工单 04：通知路由的 idle 开轮需要跨方法可达）。 */
+    private final AtomicBoolean endRequested = new AtomicBoolean(false);
 
     /** 生产构造：System.in/out + 配置装配。 */
     public CliPlugin() {
@@ -138,7 +140,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> optionalInject() {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
-                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME);
+                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
+                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME);
     }
 
     @Override
@@ -250,6 +253,22 @@ public final class CliPlugin implements Plugin<JsonNode> {
         AtomicBoolean agentBusy = new AtomicBoolean(false);
         // 协作式中断的再按闸（M23 工单 02）：运行期第一次 Ctrl+C 请求中断，第二次强制退出
         AtomicBoolean interruptArmed = new AtomicBoolean(false);
+        // 后台任务完成通知路由（M23 工单 04，ADR-0025 决策二）：agent 空闲 → 直接开新
+        // turn 消费通知（first-wins 必达）；busy → 挂收件箱 next-turn（turn 收口合并消费）。
+        // 注册表缺席（fs 工具未装）即无通知，零感
+        if (ctx.hasService(dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME)) {
+            var registry = ctx.as(BackgroundTasksView.class).backgroundTasks();
+            registry.addListener(task -> {
+                String notice = task.notice();
+                if (agentBusy.compareAndSet(false, true)) {
+                    startTurn(notice, agentHolder, agentBusy, interruptArmed); // 空闲：开新轮消费
+                } else {
+                    // busy：挂 next-turn 收口合并消费。已知边界（审查记档）：与 turn 收口
+                    // 竞态窗口内注入的通知延至下次交互消费——不丢（必达=延迟语义）
+                    agentHolder.agent.injectNextTurn(notice);
+                }
+            });
+        }
         registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
                 maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
                 workspacePolicy, agentBusy, interruptArmed);
@@ -459,7 +478,6 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private void replLoop(CommandsRegistry commands, SkillRegistry skills, SessionHolder holder,
                           PlanHolder plan, AgentHolder agentHolder, AtomicBoolean agentBusy,
                           AtomicBoolean interruptArmed) {
-        AtomicBoolean endRequested = new AtomicBoolean(false);
         try {
             while (!stopped.get() && !endRequested.get()) {
                 out.print("你> ");
@@ -471,7 +489,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     break;
                 }
                 handleLine(line.strip(), commands, skills, holder, agentHolder,
-                        agentBusy, endRequested, interruptArmed);
+                        agentBusy, interruptArmed);
             }
         } catch (IOException e) {
             // stop() 关闭输入流打断阻塞读——按 /exit 同语义收尾（idle）
@@ -482,8 +500,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** 单行路由（M23 事件驱动）：应答闸门 → busy 插队/命令 → idle 分发与 turn 启动。 */
     private void handleLine(String input, CommandsRegistry commands, SkillRegistry skills,
                             SessionHolder holder, AgentHolder agentHolder,
-                            AtomicBoolean agentBusy, AtomicBoolean endRequested,
-                            AtomicBoolean interruptArmed) {
+                            AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
         if (input.isEmpty()) {
             return;
         }
@@ -498,15 +515,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
             handleBusyLine(input, commands, skills, holder, agentHolder, agentBusy);
             return;
         }
-        handleIdleLine(input, commands, skills, holder, agentHolder, agentBusy,
-                endRequested, interruptArmed);
+        handleIdleLine(input, commands, skills, holder, agentHolder, agentBusy, interruptArmed);
     }
 
     /** 空闲行（与阻塞时代同语义）：dispatch（命令 → 技能直调 → 未知报错）→ 透传文本开 turn。 */
     private void handleIdleLine(String input, CommandsRegistry commands, SkillRegistry skills,
                                 SessionHolder holder, AgentHolder agentHolder,
-                                AtomicBoolean agentBusy, AtomicBoolean endRequested,
-                                AtomicBoolean interruptArmed) {
+                                AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
         CommandOutcome outcome = commands.dispatch(input,
                 new CommandEnv(CommandScope.CLI, holder::current, out::println,
                         () -> endRequested.set(true), agentBusy::get),
@@ -527,7 +542,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
         } else {
             userText = outcome.text();
         }
-        startTurn(userText, agentHolder, agentBusy, endRequested, interruptArmed);
+        // CAS 封口：与后台通知线程的开轮竞争败北时改插队（消息不丢）
+        if (!agentBusy.compareAndSet(false, true)) {
+            agentHolder.agent.injectUserMessage(userText);
+            return;
+        }
+        startTurn(userText, agentHolder, agentBusy, interruptArmed);
     }
 
     /**
@@ -577,10 +597,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
      * 收口后消费 next-turn 队列——多条合并为一条立即开新轮（ADR-0025 决策一/二），
      * 直到队列空或收到退出/停止。
      */
-    private void startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
-                           AtomicBoolean endRequested, AtomicBoolean interruptArmed) {
-        consoleAnswerer.beginTurn(); // 审批计数归零（本轮第 i 项从 1 起，M23 工单 03）
-        agentBusy.set(true);
+    private boolean startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
+                              AtomicBoolean interruptArmed) {
+        // busy 占位由调用方 CAS 完成（M23 工单 04 审查修复：通知线程与读者线程的
+        // 开轮竞争在调用方用 compareAndSet 封口，本方法信任占位无条件执行）
         Runnable turn = () -> {
             try {
                 String current = userText;
@@ -604,9 +624,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         turnThread = thread;
         if (stopped.get()) {
             agentBusy.set(false);
-            return;
+            return true;
         }
         thread.start();
+        return true;
     }
 
     /** 单轮执行：send + 流式渲染 + 终态行（中断/异常收敛为提示行，不终结事件循环）。 */
@@ -933,5 +954,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliWorkspaceView {
 
         WorkspacePolicy workspace();
+    }
+
+    /** 后台任务注册表的视图接口（服务名 backgroundTasks，M23 工单 04）。 */
+    interface BackgroundTasksView {
+
+        dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks();
     }
 }

@@ -31,14 +31,17 @@ class FsBashToolTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：FsBashToolTest —— bash：全新进程/env 硬化/stdin 空设备/超时 clamp/"
-                + "输出截断/退出码 marker（10 用例） ===");
+                + "输出截断/退出码 marker、run_in_background/task-output/task-stop（13 用例） ===");
     }
+
+    private BackgroundTaskRegistry registry;
 
     @BeforeEach
     void setUp() throws IOException {
         ws = tempDir.resolve("ws");
         Files.createDirectories(ws);
-        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE));
+        registry = new BackgroundTaskRegistry();
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE), registry);
     }
 
     private static JsonNode json(String text) {
@@ -139,4 +142,57 @@ class FsBashToolTest {
         assertEquals(120_000, FsBashTool.timeoutFor(json("{\"command\":\"x\",\"timeoutMs\":0}")), "非正数按缺省");
         assertEquals(120_000, FsBashTool.timeoutFor(json("{\"command\":\"x\",\"timeoutMs\":\"快\"}")), "非数值按缺省");
     }
+
+    @Test
+    void runInBackgroundReturnsTaskIdAndTaskFaceManagesLifecycle() throws Exception {
+        // 后台任务端到端（M23 工单 04）：run_in_background 立即返回 taskId → task-output
+        // 等待完成读输出 → task-stop 对已结束任务幂等说明；前台超时语义不受影响
+        String started = run("{\"command\":\"echo bg-done && sleep 1\",\"run_in_background\":true}");
+        assertTrue(started.contains("[后台任务] bg-1 已启动"), started);
+        assertTrue(started.contains("task-output"), "返回说明指路 task 面: " + started);
+
+        BackgroundTask task = registry.get("bg-1").orElseThrow();
+        // task-output block 等待完成（echo 即输出、sleep 1s 后退出）
+        long deadline = System.currentTimeMillis() + 5_000;
+        String waited = "";
+        while (System.currentTimeMillis() < deadline) {
+            waited = new TaskOutputTool(registry).execute(
+                    new ToolExecution("task-output", json("{\"taskId\":\"bg-1\",\"block\":true,\"timeoutMs\":2000}")));
+            if (waited.contains("[exit code:")) break;
+            Thread.sleep(50);
+        }
+        assertTrue(waited.contains("[exit code: 0]"), "等待后终态含退出码: " + waited);
+        assertTrue(waited.contains("bg-done"), "输出含命令产物: " + waited);
+
+        // task-stop 幂等：已结束任务返回终态说明而非报错
+        String stopped = new TaskStopTool(registry).execute(
+                new ToolExecution("task-stop", json("{\"taskId\":\"bg-1\"}")));
+        assertTrue(stopped.contains("已于先前结束"), stopped);
+    }
+
+    @Test
+    void stopKillsRunningBackgroundTask() throws Exception {
+        String started = run("{\"command\":\"sleep 60\",\"run_in_background\":true}");
+        assertTrue(started.contains("[后台任务] bg-1 已启动"), started);
+        BackgroundTask task = registry.get("bg-1").orElseThrow();
+        assertTrue(task.state() == BackgroundTask.State.RUNNING, "启动后运行中");
+
+        String stopped = new TaskStopTool(registry).execute(
+                new ToolExecution("task-stop", json("{\"taskId\":\"bg-1\"}")));
+        assertTrue(stopped.contains("已终止"), stopped);
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (task.process().isAlive() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertFalse(task.process().isAlive(), "杀树生效");
+    }
+
+    @Test
+    void runInBackgroundWithoutRegistryFailsCleanly() {
+        FsBashTool bare = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE));
+        String result = bare.execute(new ToolExecution("bash", json(
+                "{\"command\":\"echo x\",\"run_in_background\":true}")));
+        assertTrue(result.contains("后台任务注册表未装配"), result);
+    }
+
 }

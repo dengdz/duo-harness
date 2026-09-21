@@ -17,6 +17,17 @@
 
 ## 审查记录
 
+### 2026-09-22 · M23 工单 04 审查（0.18.0 分支，HEAD 工作树：bash run_in_background 与 task 面）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 8a148da）→ 修复 → 全仓 test 收口（OCR 并入双轴行级——本期两坑在 TDD 中实测暴露，双轴覆盖行级；与工单 03 跳步教训的区别：本轮双轴 prompt 明确列行级重点清单，后续保持）。
+- **计数**：双轴 Standards 8（高优 1：通知路由 TOCTOU）+ Spec 2（通知竞态窗口/集成测试缺失）；修复 8 项；新增用例 12（Registry 5 / FsBash 3 / Cli 3 / Web 1）。
+- **模式化问题（本次新识别）**：
+  1. **开轮的 busy 占位判定必须在调用方 CAS，执行方法信任占位**——通知回调 CAS 占位后 startTurn 内部再 CAS 必然失败（占位已 true）丢通知；「判定与执行分离」两处各拿一半就双杀。
+  2. **注册表的监听器要异常隔离 + 关闭先摘**——shutdown 杀树触发的通知会路由进拆树中的呈现位（死 SSE/死会话）；对齐 Context.emit 的隔离约定。
+  3. **终态 first-wins 的状态机要防回写覆盖**——terminate 先置 KILLED 后杀树，监视线程 waitFor 正常返回的 EXITED 会覆盖 KILLED；状态迁移单向（RUNNING→终态不可逆写）。
+  4. **新工具必须同步工具目录文档**——ToolCatalogTest 防漂移闸门抓到 task-output/task-stop 未入 docs/05-参考/工具目录.md（闸门有效性的正面样本）。
+- **收口**：全量 BUILD SUCCESS（tools 190 / agent 176 / web 74 / cli 34 / session 30 / example 14）；报告并入 `.scratch/m23-cli-experience/issues/04-*.md`。
+
 ### 2026-09-22 · M23 工单 03 审查（0.18.0 分支，HEAD 工作树：审批小队列）
 
 - **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 f1ae65b）→ 修复 → 全仓 test 收口（OCR 轮由实现中实测发现替代——/stop 吞应答与 NIO 炸两坑在测试先行暴露）。

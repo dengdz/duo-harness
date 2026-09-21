@@ -55,10 +55,19 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
         tools.register(ctx, new FsEditTool(policy, readGate));
         tools.register(ctx, new FsGlobTool(policy));
         tools.register(ctx, new FsGrepTool(policy));
-        tools.register(ctx, new FsBashTool(policy));
+        // 后台任务（M23 工单 04，ADR-0025 决策二）：注册表发布为服务（呈现位挂完成
+        // 通知路由），bash 转后台 + task-output/task-stop 构造注入同一实例
+        BackgroundTaskRegistry backgroundTasks = new BackgroundTaskRegistry();
+        Disposable registryPublished = ctx.provide(BackgroundTaskRegistry.SERVICE_NAME, backgroundTasks);
+        tools.register(ctx, new FsBashTool(policy, backgroundTasks));
+        tools.register(ctx, new TaskOutputTool(backgroundTasks));
+        tools.register(ctx, new TaskStopTool(backgroundTasks));
 
         return () -> {
             try {
+                backgroundTasks.clearListeners(); // 先摘通知路由：shutdown 的 KILLED 不再路由进拆树中的呈现位
+                backgroundTasks.shutdownAll(); // 插件树停止：杀全部后台进程树（防孤儿）
+                registryPublished.dispose();
                 published.dispose();
             } catch (Exception ignored) {
                 // 服务回收失败无可补救：树正在拆，注册表随 tree 释放，不掩盖拆树主流程

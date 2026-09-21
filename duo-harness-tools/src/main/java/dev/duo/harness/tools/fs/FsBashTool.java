@@ -43,22 +43,32 @@ public final class FsBashTool implements ToolDefinition {
     private static final int MAX_STREAM_CHARS = 100_000;
 
     private final WorkspacePolicy workspace;
+    /** 后台任务注册表（M23 工单 04；null = 未装配——run_in_background 请求时报错）。 */
+    private final BackgroundTaskRegistry registry;
 
     public FsBashTool(WorkspacePolicy workspace) {
+        this(workspace, null);
+    }
+
+    public FsBashTool(WorkspacePolicy workspace, BackgroundTaskRegistry registry) {
         this.workspace = workspace;
+        this.registry = registry;
     }
 
     @Override public String name() { return NAME; }
     @Override public String description() {
         return "执行 shell 命令（bash -c，每次调用全新进程，工作目录为 workspace 根）。"
-                + "返回输出与退出码——非零退出不算错误。timeoutMs 指定超时（默认 120s，上限 600s）。";
+                + "返回输出与退出码——非零退出不算错误。timeoutMs 指定超时（默认 120s，上限 600s）。"
+                + "run_in_background=true 时立即返回任务 id 转后台运行（输出用 task-output 读取、"
+                + "task-stop 终止；后台不受 timeoutMs 约束）。";
     }
     @Override public JsonNode parameters() {
         try {
             return new com.fasterxml.jackson.databind.ObjectMapper().readTree(
                 "{\"type\":\"object\",\"properties\":{"
                 + "\"command\":{\"type\":\"string\",\"description\":\"要执行的命令（bash -c 语义）\"},"
-                + "\"timeoutMs\":{\"type\":\"number\",\"description\":\"超时毫秒（默认 120000，上限 600000）\"}"
+                + "\"timeoutMs\":{\"type\":\"number\",\"description\":\"超时毫秒（默认 120000，上限 600000）\"},"
+                + "\"run_in_background\":{\"type\":\"boolean\",\"description\":\"true = 转后台立即返回任务 id（task-output/task-stop 管理）\"}"
                 + "},\"required\":[\"command\"]}");
         } catch (Exception e) { throw new IllegalStateException(e); }
     }
@@ -69,23 +79,49 @@ public final class FsBashTool implements ToolDefinition {
         return timeoutFor(args) + 5_000L;
     }
 
+    /** 启动 bash 进程（前后台共用）：workspace 根 + env 硬化 + stdin 空设备。 */
+    private Process startProcess(String command) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder("bash", "-c", command);
+        builder.directory(workspace.root().toFile());
+        Map<String, String> env = builder.environment();
+        env.put("NO_COLOR", "1");
+        env.put("TERM", "dumb");
+        env.put("PAGER", "cat");
+        // stdin 接空设备：管道无人写即挂起到超时，继承父进程 stdin 则会偷吃 REPL 输入
+        builder.redirectInput(new java.io.File("/dev/null"));
+        return builder.start();
+    }
+
+    /** 后台分支：启动即注册返回 taskId——进程独立存活，输出由注册表双流读持续积累。 */
+    private String executeInBackground(String command) {
+        if (registry == null) {
+            return error("后台任务注册表未装配（fs 工具插件未携带注册表），无法 run_in_background");
+        }
+        Process process;
+        try {
+            process = startProcess(command);
+        } catch (IOException e) {
+            throw new RuntimeException("bash 无法启动后台进程: " + e.getMessage(), e);
+        }
+        BackgroundTask task = registry.start(process, command);
+        return "[后台任务] " + task.taskId() + " 已启动：" + command
+                + "\n（后台不受 timeoutMs 约束；用 task-output 读输出/等待完成，task-stop 终止。"
+                + "完成时会收到通知。）";
+    }
+
     @Override public String execute(ToolExecution exec) {
         JsonNode args = exec.args();
         String command = args.path("command").asText("");
         if (command.isBlank()) return error("参数 command 不能为空");
+
+        if (args.path("run_in_background").asBoolean(false)) {
+            return executeInBackground(command);
+        }
         long timeoutMs = timeoutFor(args);
 
         Process process;
         try {
-            ProcessBuilder builder = new ProcessBuilder("bash", "-c", command);
-            builder.directory(workspace.root().toFile());
-            Map<String, String> env = builder.environment();
-            env.put("NO_COLOR", "1");
-            env.put("TERM", "dumb");
-            env.put("PAGER", "cat");
-            // stdin 接空设备：管道无人写即挂起到超时，继承父进程 stdin 则会偷吃 REPL 输入
-            builder.redirectInput(new java.io.File("/dev/null"));
-            process = builder.start();
+            process = startProcess(command);
         } catch (IOException e) {
             throw new RuntimeException("bash 无法启动进程: " + e.getMessage(), e);
         }
@@ -137,7 +173,7 @@ public final class FsBashTool implements ToolDefinition {
      * 复查，不为"父进程退没退"所掩盖）。句柄先快照：父进程死亡后
      * {@code descendants()} 即空，届时再取就找不到它们了。
      */
-    private static void terminateTree(Process process) {
+    static void terminateTree(Process process) {
         List<ProcessHandle> descendants = process.descendants().toList();
         descendants.forEach(ProcessHandle::destroy);
         process.destroy();
@@ -150,7 +186,7 @@ public final class FsBashTool implements ToolDefinition {
     }
 
     /** 有界等待进程退出（中断按未退出处理并保留中断标志——调用方随后按 isAlive 复查）。 */
-    private static void waitQuietly(Process process, long millis) {
+    static void waitQuietly(Process process, long millis) {
         try {
             process.waitFor(millis, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
@@ -170,7 +206,7 @@ public final class FsBashTool implements ToolDefinition {
     }
 
     /** 读尽一个流：上限内落 {@link StreamCapture}，其余只计数（缓冲区仍排空，不阻塞子进程）。 */
-    private static void capture(InputStream in, StreamCapture slot) {
+    static void capture(InputStream in, StreamCapture slot) {
         char[] buffer = new char[8_192];
         try (var reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
             int read;
@@ -213,7 +249,7 @@ public final class FsBashTool implements ToolDefinition {
      * 单流读取槽：读线程边读边落，主线程有界等待后取用——读未收尾（子进程留下了
      * 持有管道的后台孙进程）也返回已读部分，不空手。
      */
-    private static final class StreamCapture {
+    static final class StreamCapture {
 
         private final StringBuilder kept = new StringBuilder();
         private long omitted;
