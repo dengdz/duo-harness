@@ -77,11 +77,14 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 视觉能力开关（llm.vision，ADR-0022）：true 时引用解析为 base64 图片部件。 */
     private final boolean vision;
     /**
-     * 运行中消息注入收件箱（父级 steer，M19 ADR-0020 决策 8）：busy 期间外部线程
-     * 经 {@link #injectUserMessage} 投递，send 循环在迭代边界排干——并发队列隔离
-     * 注入线程与 send 线程，多条照排。
+     * 两级收件箱（M23 ADR-0025 决策一；next-step 级由 M19 steer 单级升级）：
+     * busy 期间外部线程经 {@link #injectUserMessage}（next-step，step 边界排干）或
+     * {@link #injectNextTurn}（next-turn，turn 收口后由呈现位排干生效）投递——并发
+     * 队列隔离注入线程与 send 线程，多条照排；收件箱为内存态，消费时才落 user/message。
      */
-    private final java.util.concurrent.ConcurrentLinkedQueue<String> inbox =
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> nextStepInbox =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> nextTurnInbox =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /** 便捷构造：迭代上限取默认值，单一 system 提示（包装为用户指令片段）。 */
@@ -219,27 +222,51 @@ public final class ToolCallingAgent implements ChatAgent {
     }
 
     /**
-     * 运行中注入（M19 ADR-0020 决策 8）：入收件箱即返回——排干只在 send 线程的
-     * 迭代边界发生（会话单写者约定不被破坏）；send 空闲期间投递的文本由下一次
-     * send 的首个迭代边界排干，不丢。
+     * next-step 级注入（M19 立，M23 ADR-0025 升两级命名）：入收件箱即返回——排干
+     * 只在 send 线程的 step 边界发生（会话单写者约定不被破坏）；send 空闲期间投递
+     * 的文本由下一次 send 的首个 step 边界排干，不丢。
      */
     @Override
     public boolean injectUserMessage(String text) {
         if (text == null || text.isBlank()) {
             return false;
         }
-        inbox.add(text);
+        nextStepInbox.add(text);
         return true;
     }
 
+    /** next-turn 级注入（M23 ADR-0025）：只入队不生效——排干交给呈现位收口消费。 */
+    @Override
+    public boolean injectNextTurn(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        nextTurnInbox.add(text);
+        return true;
+    }
+
+    /** turn 收口排干：next-turn 队列全部取走（先进先出），二次调用依次取空。 */
+    @Override
+    public java.util.List<String> drainNextTurn() {
+        if (nextTurnInbox.isEmpty()) {
+            return List.of();
+        }
+        List<String> drained = new ArrayList<>();
+        String text;
+        while ((text = nextTurnInbox.poll()) != null) {
+            drained.add(text);
+        }
+        return List.copyOf(drained);
+    }
+
     /**
-     * 迭代边界排干：逐条落普通 {@code user/message} 后即进入下一轮请求构造——
-     * 不发明 steer 专属事件，多条照排（投影与回放对连续 user/message 天然兼容）；
-     * 飞行中的工具组不受影响（排干只发生在工具组完整跑完之后）。
+     * step 边界排干（next-step 级）：逐条落普通 {@code user/message} 后即进入下一轮
+     * 请求构造——不发明 steer 专属事件，多条照排（投影与回放对连续 user/message
+     * 天然兼容）；飞行中的工具组不受影响（排干只发生在工具组完整跑完之后）。
      */
     private void drainInbox() {
         String injected;
-        while ((injected = inbox.poll()) != null) {
+        while ((injected = nextStepInbox.poll()) != null) {
             session.append(SessionEvent.userMessage(injected));
         }
     }

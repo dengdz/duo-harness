@@ -4,7 +4,13 @@
 
 ## 未发布
 
+### Fixed
+
+- **glob 锚定相对模式永不命中（M23 工单 01 验收实测发现）**：`glob` 以绝对路径直接匹配用户模式，`docs/adr/*.md` 等锚定相对模式零结果（仅 `**` 前缀形态因可吞绝对路径前导段而侥幸可用）；修复 = 先相对化到搜索根再匹配，并补 Java glob `**/` 零目录段变体（根下直接文件靠去前缀匹配器命中）——锚定/任意深度两种形态一致可用，`path` 参数语义同步明确为「模式相对该目录解析」
+
 ### Changed
+
+- **CLI 事件驱动主循环与两级收件箱（M23 工单 01，ADR-0025 决策一）**：终端 REPL 从"阻塞读 + 同步执行"改为读者线程与 turn 线程拆分——agent 执行期间键入的普通文本注入收件箱 next-step 级并回显「已插队」，模型下一步边界即见（修复"执行期输入被静默当新输入消费"缺陷）；执行期斜杠命令照走注册表（busySafe 即行、非 busySafe 得到等待回应，ADR-0020 决策 4 在 CLI 真正生效）；审批/提问应答行经应答闸门路由、EOF/停止即时 fail-closed；EOF 不腰斩执行中的 turn；agent 域注入 seam 升级两级（新增 next-turn 收口排干，多条合并为一条生效，供后台通知消费）；Web busy 注入 202 行为不变
 
 - **M23（0.18.0）启动规划落盘：grill 十二问收敛 + ADR-0025 三裁定 + spec 与 11 张工单**：`docs/adr/0025-M23执行与CLI体验三裁定.md`——①CLI 事件驱动主循环与两级收件箱（虚拟线程常驻读 stdin、next-step step 边界注入/next-turn 收口消费、暂停协作式中断+恢复：Ctrl+C 在跑先停再按退出/空闲即退、`/stop` 兜底、Web 停止按钮、不做原地冻结）②后台任务注册表与输出三层（inline 30k/spill 64MiB/task-output 尾窗 32k、超帽告警不静默、yml 可配）+ task-output/task-stop 两工具 + 完成通知 first-wins 必达（busy 挂 next-turn 收口合并、暂停不杀后台）③.gitignore 自研判定器（红线 4 拒捆绑 rg、全常用子集、.gitignore∪产物目录∪VCS 目录三源并集、glob/grep/@file 同口径）；spec `.scratch/m23-cli-experience/spec.md`（34 条用户故事、七组既有测试 seam）+ 11 张工单（01-06 主线依赖链：主循环→暂停→审批队列→后台→spill→可见化；07-10 零依赖并行：headless --json/.gitignore/技能热加载/上限感知；11 收尾）；术语表 11 词条增改（新增收件箱/暂停/审批小队列/后台任务/spill/忽略判定/NDJSON 事件流/技能热加载，steer 升两级语义、迭代上限增感知提醒、发现根去「不做热加载」）；backlog「CLI 运行中 steer 入口」转 M23 正式范围（ADR-0025 决策一）
 

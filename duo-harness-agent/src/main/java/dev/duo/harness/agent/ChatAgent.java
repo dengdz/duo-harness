@@ -33,16 +33,40 @@ public interface ChatAgent {
     AgentReply send(String userText, AgentListener listener);
 
     /**
-     * 运行中消息注入（父级 steer，M19 ADR-0020 决策 8）：agent 执行（busy）期间
-     * 收到的用户消息进注入收件箱，send 循环在迭代边界排干为普通 user/message
-     * ——下一轮请求即可见，不打断飞行中的工具组（与子代理 send_message 的
+     * 运行中消息注入（两级收件箱的 next-step 级，M19 ADR-0020 决策 8 立、M23
+     * ADR-0025 决策一升级）：agent 执行（busy）期间收到的用户消息进 next-step
+     * 级收件箱，send 循环在 step 边界（下一轮请求构造前）排干为普通 user/message
+     * ——模型下一步即可见，不打断飞行中的工具组（与子代理 send_message 的
      * "下一轮生效"语义对称）。
      *
      * @param text 用户消息文本
-     * @return true = 已接收（将随下一次迭代边界进入会话与请求）；false = 本实现
+     * @return true = 已接收（将随下一次 step 边界进入会话与请求）；false = 本实现
      *         不支持运行中注入（调用方回退既有语义，如 Web 409）
      */
     default boolean injectUserMessage(String text) {
         return false;
+    }
+
+    /**
+     * next-turn 级注入（M23 ADR-0025 决策一）：不进当前 turn——执行中注入不落
+     * 日志、不进后续请求，turn 收口后由呈现位经 {@link #drainNextTurn()} 取走
+     * （生效 = 开新轮，如后台完成通知）。空闲期注入同样只入队，不自动触发——
+     * idle 时的立即唤醒开轮属后台通知路由（M23 工单 04）。
+     *
+     * @param text 排队文本
+     * @return true = 已入队；false = 本实现不支持或文本空白
+     */
+    default boolean injectNextTurn(String text) {
+        return false;
+    }
+
+    /**
+     * turn 收口排干：取走全部 next-turn 排队文本（先进先出，多次调用依次取空）。
+     * 呈现位在 send 返回后调用；多条由呈现位合并为一条生效（ADR-0025 决策二）。
+     *
+     * @return 排队文本（可能为空；实现不支持时恒空）
+     */
+    default java.util.List<String> drainNextTurn() {
+        return java.util.List.of();
     }
 }

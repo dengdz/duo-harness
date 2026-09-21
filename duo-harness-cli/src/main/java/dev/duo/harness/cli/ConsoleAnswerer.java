@@ -13,18 +13,30 @@ import java.util.List;
 /**
  * 终端回答者（ADR-0008 的 M6 呈现位）：审批请求呈现工具名与参数并读 y/n；
  * 提问请求呈现问题与选项，接受序号选择或自由文本。EOF / Ctrl+C / 空输入
- * 一律 fail-closed（拒绝或未作答）。非线程安全：与 REPL 同线程串行使用。
+ * 一律 fail-closed（拒绝或未作答）。行来源可注入：REPL 事件驱动后（M23 工单 01）
+ * 读者线程按应答闸门把输入行路由给本回答者——默认仍直读字符流。
  */
 public final class ConsoleAnswerer implements Answerer {
 
     /** 回答者来源标识（审计署名）。 */
     public static final String SOURCE = "console";
 
-    private final BufferedReader in;
+    private final java.util.function.Supplier<String> lines;
     private final PrintStream out;
 
     public ConsoleAnswerer(BufferedReader in, PrintStream out) {
-        this.in = in;
+        this(() -> {
+            try {
+                return in.readLine();
+            } catch (java.io.IOException e) {
+                return null; // 流关闭 = EOF 同语义（fail-closed）
+            }
+        }, out);
+    }
+
+    /** 行来源注入版（M23 工单 01）：REPL 读者线程经应答闸门供给输入行。 */
+    public ConsoleAnswerer(java.util.function.Supplier<String> lineSource, PrintStream out) {
+        this.lines = java.util.Objects.requireNonNull(lineSource, "lineSource");
         this.out = out;
     }
 
@@ -140,10 +152,6 @@ public final class ConsoleAnswerer implements Answerer {
     }
 
     private String readLine() {
-        try {
-            return in.readLine();
-        } catch (java.io.IOException e) {
-            return null;
-        }
+        return lines.get();
     }
 }
