@@ -386,6 +386,7 @@ public final class WebFace {
         route("/web/", this::handleStatic);
         route("/api/status", this::handleStatus);
         route("/api/message", this::handleMessage);
+        route("/api/stop", this::handleStop);
         route("/api/attachment/upload", this::handleAttachmentUpload);
         route("/api/attachment/read", this::handleAttachmentRead);
         route("/api/session/new", this::handleSessionNew);
@@ -467,7 +468,28 @@ public final class WebFace {
         respondJson(exchange, 200, statusJson());
     }
     /**
-     * 对话入口：立即 202，虚拟线程异步执行 agent.send；
+     * 停止入口（M23 工单 02，ADR-0025 决策一）：POST /api/stop 请求协作式中断——
+     * 与 CLI 的 /stop、Ctrl+C 单击同语义：当前工具终止、已流出文本保留并打中断
+     * 标记、未派发调用补合成结果；会话停在可恢复态，下一条消息即续接。
+     * 空闲（无 send 在飞）返回 409——按钮侧据此复位。
+     */
+    private void handleStop(HttpExchange exchange) throws IOException {
+        if (!requirePost(exchange)) {
+            return;
+        }
+        ChatAgent current = agent;
+        if (current == null) {
+            respondText(exchange, 503, "对话面未就绪（agent 未装配）");
+            return;
+        }
+        if (!agentRunning.get() || !current.requestInterrupt()) {
+            respondText(exchange, 409, "当前无执行中任务");
+            return;
+        }
+        respondJson(exchange, 202, "{\"outcome\":\"interrupt-requested\"}");
+    }
+
+    /** 对话入口：立即 202，虚拟线程异步执行 agent.send；
      * user/message、tool/call、tool/result、assistant/message 由 agent 侧追加（经会话监听器广播），
      * assistant/chunk 由本端 AgentListener 追加（Web 面只补这一种会话事件）。
      */

@@ -431,6 +431,11 @@ public final class Session {
     /** read_image 结果文本中的附件引用标记行前缀（单事实来源：ReadImageTool 同文）。 */
     public static final String READ_IMAGE_REF_MARKER = "附件已入库: ";
 
+    /** 协作式中断投影前缀（M23 工单 02）：已流出文本的标记形态。 */
+    public static final String INTERRUPTED_PREFIX = "[已中断] ";
+    /** 协作式中断投影占位（无流出文本时的非空标记，防空 content 消息）。 */
+    public static final String INTERRUPTED_PLACEHOLDER = "[已中断] 本次回复被用户中断，未产出内容。";
+
     /**
      * read_image 结果的引用解析（M21）：文本含"附件已入库: <id>"标记行即提取 id
      * 为附件引用（mediaType/字节随请求变体解析还原）；无标记返回 null。
@@ -483,6 +488,13 @@ public final class Session {
                 }
                 case SessionEvent.ASSISTANT_MESSAGE ->
                         messages.add(new Message(Message.Role.ASSISTANT, event.text()));
+                case SessionEvent.ASSISTANT_INTERRUPTED -> {
+                    // 协作式中断（M23 工单 02）：已流出文本保留并带中断标记——空文本也
+                    // 落一条标记消息（模型可见中断点；空 content 部分协议拒绝）
+                    String flowed = event.text().strip();
+                    messages.add(new Message(Message.Role.ASSISTANT,
+                            flowed.isEmpty() ? INTERRUPTED_PLACEHOLDER : INTERRUPTED_PREFIX + flowed));
+                }
                 case SessionEvent.TOOL_CALL ->
                         messages.add(Message.assistantWithToolCalls(List.of(new ToolCall(
                                 event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
@@ -572,7 +584,8 @@ public final class Session {
     /** 投影判定：该事件是否入对话消息列表（与 {@link #deriveMessages} 同一语义，尾部窗口映射复用）。 */
     private static boolean projectsToMessage(SessionEvent event) {
         return switch (event.type()) {
-            case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE -> true;
+            case SessionEvent.USER_MESSAGE, SessionEvent.ASSISTANT_MESSAGE,
+                 SessionEvent.ASSISTANT_INTERRUPTED -> true;
             case SessionEvent.TOOL_CALL, SessionEvent.TOOL_RESULT -> event.toolCallId() != null;
             case SessionEvent.SUBAGENT_COMPLETED -> true; // 子代理最终回答进父上下文（父聚合的数据源）
             case SessionEvent.COMPACTION -> true; // 压缩点入投影（以总结替换之前的全部消息）

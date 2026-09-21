@@ -244,9 +244,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // agent 引用经持取器（/new 换绑即换 agent 实例）与单飞标志（busySafe 分级的探针）
         AgentHolder agentHolder = new AgentHolder(agent);
         AtomicBoolean agentBusy = new AtomicBoolean(false);
+        // 协作式中断的再按闸（M23 工单 02）：运行期第一次 Ctrl+C 请求中断，第二次强制退出
+        AtomicBoolean interruptArmed = new AtomicBoolean(false);
         registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
                 maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
-                workspacePolicy);
+                workspacePolicy, agentBusy, interruptArmed);
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
         // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
         PresenterAssembly.restorePermissionMode(
@@ -262,7 +264,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         out.flush();
 
         replThread = Thread.ofVirtual().name("cli-repl").start(() ->
-                replLoop(commands, skills, holder, plan, agentHolder, agentBusy));
+                replLoop(commands, skills, holder, plan, agentHolder, agentBusy, interruptArmed));
+        registerSigintHandler(agentHolder, agentBusy, interruptArmed);
         return this::stop;
     }
 
@@ -351,11 +354,22 @@ public final class CliPlugin implements Plugin<JsonNode> {
                                   ContextGovernance governance, int maxIterations,
                                   int maxParallelToolCalls, Path sessionsDir,
                                   SessionHolder holder, AgentHolder agentHolder,
-                                  PlanHolder plan, WorkspacePolicy workspacePolicy) {
+                                  PlanHolder plan, WorkspacePolicy workspacePolicy,
+                                  AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
         commands.register(ctx, new CommandDefinition("exit", "结束终端对话（会话锁释放，插件保持挂载）",
                 CommandScope.CLI, false, context -> {
                 context.requestEnd();
                 return "";
+            }));
+        // /stop（M23 工单 02，ADR-0025 决策一）：SIGINT 不可拦截环境的兜底暂停入口，
+        // busySafe——运行中即执行；与 Ctrl+C 单击同语义（协作式中断，会话停可恢复态）
+        commands.register(ctx, new CommandDefinition("stop",
+                "协作式中断当前任务（已流出内容保留，会话停在可恢复态；再发消息即续接）",
+                CommandScope.CLI, true, context -> {
+                if (!agentBusy.get() || !agentHolder.agent.requestInterrupt()) {
+                    return "当前无执行中任务，无须中断。";
+                }
+                return "已请求中断当前任务（协作式收口中，稍候）…";
             }));
         commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
                 CommandScope.CLI, false, context -> {
@@ -439,7 +453,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
      * turn 本体跑在 cli-agent 虚拟线程，收口后消费 next-turn 队列（多条合并为一条）。
      */
     private void replLoop(CommandsRegistry commands, SkillRegistry skills, SessionHolder holder,
-                          PlanHolder plan, AgentHolder agentHolder, AtomicBoolean agentBusy) {
+                          PlanHolder plan, AgentHolder agentHolder, AtomicBoolean agentBusy,
+                          AtomicBoolean interruptArmed) {
         AtomicBoolean endRequested = new AtomicBoolean(false);
         try {
             while (!stopped.get() && !endRequested.get()) {
@@ -452,7 +467,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                     break;
                 }
                 handleLine(line.strip(), commands, skills, holder, agentHolder,
-                        agentBusy, endRequested);
+                        agentBusy, endRequested, interruptArmed);
             }
         } catch (IOException e) {
             // stop() 关闭输入流打断阻塞读——按 /exit 同语义收尾（idle）
@@ -463,7 +478,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** 单行路由（M23 事件驱动）：应答闸门 → busy 插队/命令 → idle 分发与 turn 启动。 */
     private void handleLine(String input, CommandsRegistry commands, SkillRegistry skills,
                             SessionHolder holder, AgentHolder agentHolder,
-                            AtomicBoolean agentBusy, AtomicBoolean endRequested) {
+                            AtomicBoolean agentBusy, AtomicBoolean endRequested,
+                            AtomicBoolean interruptArmed) {
         if (input.isEmpty()) {
             return;
         }
@@ -476,13 +492,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
             handleBusyLine(input, commands, skills, holder, agentHolder, agentBusy);
             return;
         }
-        handleIdleLine(input, commands, skills, holder, agentHolder, agentBusy, endRequested);
+        handleIdleLine(input, commands, skills, holder, agentHolder, agentBusy,
+                endRequested, interruptArmed);
     }
 
     /** 空闲行（与阻塞时代同语义）：dispatch（命令 → 技能直调 → 未知报错）→ 透传文本开 turn。 */
     private void handleIdleLine(String input, CommandsRegistry commands, SkillRegistry skills,
                                 SessionHolder holder, AgentHolder agentHolder,
-                                AtomicBoolean agentBusy, AtomicBoolean endRequested) {
+                                AtomicBoolean agentBusy, AtomicBoolean endRequested,
+                                AtomicBoolean interruptArmed) {
         CommandOutcome outcome = commands.dispatch(input,
                 new CommandEnv(CommandScope.CLI, holder::current, out::println,
                         () -> endRequested.set(true), agentBusy::get),
@@ -503,7 +521,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         } else {
             userText = outcome.text();
         }
-        startTurn(userText, agentHolder, agentBusy, endRequested);
+        startTurn(userText, agentHolder, agentBusy, endRequested, interruptArmed);
     }
 
     /**
@@ -554,13 +572,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
      * 直到队列空或收到退出/停止。
      */
     private void startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
-                           AtomicBoolean endRequested) {
+                           AtomicBoolean endRequested, AtomicBoolean interruptArmed) {
         agentBusy.set(true);
         Runnable turn = () -> {
             try {
                 String current = userText;
                 while (current != null && !stopped.get() && !endRequested.get()) {
-                    runOneTurn(current, agentHolder);
+                    runOneTurn(current, agentHolder, interruptArmed);
                     java.util.List<String> queued = agentHolder.agent.drainNextTurn();
                     if (queued.isEmpty()) {
                         break;
@@ -584,11 +602,14 @@ public final class CliPlugin implements Plugin<JsonNode> {
         thread.start();
     }
 
-    /** 单轮执行：send + 流式渲染 + 终态行（异常收敛为错误行，不终结事件循环）。 */
-    private void runOneTurn(String userText, AgentHolder agentHolder) {
+    /** 单轮执行：send + 流式渲染 + 终态行（中断/异常收敛为提示行，不终结事件循环）。 */
+    private void runOneTurn(String userText, AgentHolder agentHolder, AtomicBoolean interruptArmed) {
         try {
             var reply = agentHolder.agent.send(userText, turnListener());
-            if (!reply.completed()) {
+            if (reply.interrupted()) {
+                out.println("  [已中断] 当前任务已暂停——已流出内容保留在会话中，"
+                        + "发送新消息即可从中断处续接。");
+            } else if (!reply.completed()) {
                 out.println("  [异常终止] " + reply.finalText());
             }
         } catch (PluginException e) {
@@ -597,6 +618,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
             // turn 线程不静默死亡（审查修复）：非 Plugin 异常收敛为错误行，事件循环存活
             out.println("  [错误] 执行异常: "
                     + (e.getMessage() != null ? e.getMessage() : e.toString()));
+        } finally {
+            interruptArmed.set(false); // 中断收口完成，再按闸复位
         }
         out.println();
         out.flush();
@@ -727,6 +750,46 @@ public final class CliPlugin implements Plugin<JsonNode> {
         detachAnswerer();
         out.println("=== 对话结束 ===");
         out.flush();
+    }
+
+    /**
+     * SIGINT（Ctrl+C）三态拦截（M23 工单 02，ADR-0025 决策一）：运行期单击 = 协作式中断
+     * （再按一次强制退出 130）；空闲单击 = 退出进程（shutdown hook 级联 dispose）。
+     * 注册以 {@code System.console() != null} 为门：真实终端才拦截——测试/管道/
+     * headless 场景保留 JVM 默认终止（headless --json 的 SIGINT=130 退出码契约天然成立，
+     * ADR-0025）。{@code sun.misc.Signal} 为 HotSpot 内部 API（事实上稳定）——环境
+     * 不支持时静默跳过，暂停仍有 /stop 行命令兜底。
+     */
+    private void registerSigintHandler(AgentHolder agentHolder, AtomicBoolean agentBusy,
+                                       AtomicBoolean interruptArmed) {
+        if (System.console() == null) {
+            return; // 非交互终端：不拦截，保留默认终止语义
+        }
+        try {
+            sun.misc.Signal.handle(new sun.misc.Signal("INT"), sig -> {
+                if (agentBusy.get()) {
+                    // 置 armed 以「中断已被 agent 接受」为前提（审查修复）：busy 但 send
+                    // 已收口的互斥窗口里 requestInterrupt 返回 false——不当"再按"记账，
+                    // 否则新 turn 的第一次 Ctrl+C 会被误判为二次而直接退出
+                    if (!agentHolder.agent.requestInterrupt()) {
+                        return; // 收口竞态窗口：本次按键作废，稍候即空闲
+                    }
+                    if (interruptArmed.compareAndSet(false, true)) {
+                        out.println();
+                        out.println("  [中断] 已请求中断当前任务；再按一次 Ctrl+C 强制退出。");
+                        out.flush();
+                    } else {
+                        Runtime.getRuntime().exit(130); // 二次 Ctrl+C：强制退出（SIGINT 惯例码）
+                    }
+                } else {
+                    Runtime.getRuntime().exit(0); // 空闲：退出进程（shutdown hook 级联清理）
+                }
+            });
+        } catch (Throwable unsupported) {
+            // Signal 不可用（非 HotSpot 等）：提示降级路径（可发现性），/stop 行命令仍可用
+            out.println("[提示] 当前环境不支持 Ctrl+C 拦截，暂停请使用 /stop 命令。");
+            out.flush();
+        }
     }
 
     /** 插件停止（树 dispose / shutdown hook 调用）：打断阻塞读与执行中的 turn，按 idle 收尾。 */

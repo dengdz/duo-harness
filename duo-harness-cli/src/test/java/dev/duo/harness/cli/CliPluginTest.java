@@ -45,7 +45,8 @@ class CliPluginTest {
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：事件驱动 REPL（busy 插队/应答闸门/EOF 不腰斩）、"
                 + "命令注册表入口（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
-                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩、/permission 持久化、/title 改名（17 用例） ===");
+                + "/stop 协作式中断与续接、/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、"
+                + "/compact 压缩、/permission 持久化、/title 改名（19 用例） ===");
     }
 
     interface ToolsView {
@@ -430,8 +431,8 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             String out = fx.output();
-            assertTrue(out.contains("未知命令: /nope（可用命令: export, exit, new, permission, compact, title, plan"),
-                    "五命令注册序即清单序: " + out);
+            assertTrue(out.contains("未知命令: /nope（可用命令: export, exit, stop, new, permission, compact, title, plan"),
+                    "六命令注册序即清单序（/stop 插在 exit 后）: " + out);
         } finally {
             fx.dispose();
         }
@@ -686,6 +687,82 @@ class CliPluginTest {
                 return "probe-done";
             }
         };
+    }
+
+    @Test
+    void stopCommandInterruptsBusyTurnAndResumesOnNextMessage() throws Exception {
+        // /stop 协作式中断（M23 工单 02）：busy 期投递 /stop（busySafe 即行）→ 慢工具
+        // 被打断收口（[已中断] 行 + 会话事件 assistant/interrupted + 未派发调用合成）；
+        // 下一条消息即续接（可恢复态）
+        Path dir = tempDir.resolve("stop");
+        CountDownLatch probeRelease = new CountDownLatch(1);
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    textSink.accept("开始执行");
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "probe", "{}"),
+                            new dev.duo.harness.llm.ToolCallRequest("call_2", "probe", "{}")));
+                }
+                textSink.accept("续接回答");
+                return new dev.duo.harness.llm.LlmTurn("续接回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("问"),
+                InputLine.paced("/stop", "开始执行"),
+                InputLine.paced("继续", "[已中断]"),
+                InputLine.of("/exit")), llm,
+                ctx -> ctx.as(ToolsView.class).tools().register(ctx, blockingProbe(probeRelease)));
+        try {
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (!fx.output().contains("[已中断]") && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            String out = fx.output();
+            assertTrue(out.contains("已请求中断当前任务"), "/stop 回执: " + out);
+            assertTrue(out.contains("[已中断] 当前任务已暂停"), "中断收口行: " + out);
+            probeRelease.countDown(); // 双保险放行（探针即使未被打断也能收尾）
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("续接回答"), "中断后续接即继续: " + fx.output());
+
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.ASSISTANT_INTERRUPTED.equals(e.type())),
+                    "中断标记落会话日志");
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.TOOL_RESULT.equals(e.type())
+                                    && e.text().contains("[interrupted]")),
+                    "未派发调用补合成结果");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void stopCommandWhenIdleExplains() throws Exception {
+        // /stop 空闲态：无任务可中断，明确提示（fail-safe 不误报）
+        Path dir = tempDir.resolve("stop-idle");
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("/stop"), InputLine.of("/exit")),
+                fixedReply("答"));
+        try {
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("当前无执行中任务"), fx.output());
+        } finally {
+            fx.dispose();
+        }
     }
 
     @Test

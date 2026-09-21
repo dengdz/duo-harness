@@ -300,6 +300,76 @@ class WebFaceTest {
     }
 
     @Test
+    void stopEndpointInterruptsBusyAgentAndFreesForNextMessage() throws Exception {
+        // /api/stop（M23 工单 02，ADR-0025 决策一）：busy 中 202 受理并打断 agent（协作式）；
+        // 中断收口后 busy 解除——下一条消息正常受理（可恢复态）；空闲时 409
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Thread> sender =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean interrupted =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        ChatAgent stub = new ChatAgent() {
+            @Override
+            public AgentReply send(String userText, dev.duo.harness.agent.AgentListener listener) {
+                sender.set(Thread.currentThread());
+                listener.onChunk("部分输出");
+                started.countDown();
+                try {
+                    Thread.sleep(5_000);
+                } catch (InterruptedException e) {
+                    interrupted.set(true);
+                    Thread.currentThread().interrupt();
+                }
+                return interrupted.get()
+                        ? new AgentReply("已中断（协作式暂停）", List.of(), false, true)
+                        : new AgentReply("完整回答", List.of(), true);
+            }
+
+            @Override
+            public boolean requestInterrupt() {
+                Thread active = sender.get();
+                if (active == null) {
+                    return false;
+                }
+                interrupted.set(true);
+                active.interrupt();
+                return true;
+            }
+        };
+        start(Session.create(tempDir.resolve("stop-sessions")), stub);
+
+        HttpResponse<String> first = post("/api/message", "{\"text\": \"长任务\"}");
+        assertEquals(202, first.statusCode());
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS), "send 应已开始");
+        HttpResponse<String> stop = post("/api/stop", "{}");
+        assertEquals(202, stop.statusCode(), "busy 中停止请求受理");
+        assertTrue(stop.body().contains("interrupt-requested"), "结构化受理: " + stop.body());
+
+        // 中断收口（打断即醒，5s sleep 不等满）→ busy 解除 → 下一条消息正常受理
+        long deadline = System.currentTimeMillis() + 5_000;
+        HttpResponse<String> next = null;
+        while (System.currentTimeMillis() < deadline) {
+            next = post("/api/message", "{\"text\": \"续接\"}");
+            if (next.statusCode() == 202 && !next.body().contains("injected")) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertEquals(202, next.statusCode(), "中断后下一条消息正常受理（可恢复态）");
+        assertTrue(next.body().isEmpty(), "非注入受理（busy 已解除）: " + next.body());
+    }
+
+    @Test
+    void stopEndpointRefusesBeforeAnyMessage() throws Exception {
+        // 空闲 409：从未发过消息时停止按钮的请求得到明确拒绝（按钮侧据此复位）
+        start(Session.create(tempDir.resolve("idle-sessions")), (userText, listener) ->
+                new AgentReply("答", List.of(), true));
+        HttpResponse<String> idleStop = post("/api/stop", "{}");
+        assertEquals(409, idleStop.statusCode());
+        assertTrue(idleStop.body().contains("无执行中任务"), idleStop.body());
+    }
+
+    @Test
     void concurrentMessageInjectedWhileBusy() throws Exception {
         // 运行中治理（M19 steer，ADR-0020 决策 8）：执行中 POST 不再 409——进 agent
         // 注入收件箱，202 + "已注入" 轻提示；注入文本由 agent 在迭代边界排干

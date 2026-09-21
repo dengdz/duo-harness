@@ -48,6 +48,19 @@ public interface ChatAgent {
     }
 
     /**
+     * 请求协作式中断（M23 工单 02，ADR-0025 决策一）：置中断标志并打断执行中的
+     * send 线程——工具段收敛（bash 杀树同构的中断传导）、流式段异常在标志位下
+     * 收敛为中断收口：已流出文本落 assistant/interrupted、本轮未派发调用补合成
+     * 结果、send 以 interrupted 的 AgentReply 返回。会话停在可恢复态，下一次
+     * send 即续接。不做原地冻结。
+     *
+     * @return true = 已接受（有 send 在飞并已打断）；false = 空闲（无任务可中断）
+     */
+    default boolean requestInterrupt() {
+        return false;
+    }
+
+    /**
      * next-turn 级注入（M23 ADR-0025 决策一）：不进当前 turn——执行中注入不落
      * 日志、不进后续请求，turn 收口后由呈现位经 {@link #drainNextTurn()} 取走
      * （生效 = 开新轮，如后台完成通知）。空闲期注入同样只入队，不自动触发——

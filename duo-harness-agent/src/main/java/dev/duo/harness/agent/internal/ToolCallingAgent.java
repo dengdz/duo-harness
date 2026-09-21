@@ -176,41 +176,82 @@ public final class ToolCallingAgent implements ChatAgent {
         this.vision = vision;
     }
 
+    /**
+     * 协作式中断（M23 工单 02，ADR-0025 决策一）：requestInterrupt 置标志并打断
+     * send 线程；send 在迭代边界 / 工具派发点 / LLM 异常三处检查标志，命中即
+     * 收口——已流出文本落 {@code assistant/interrupted}、本轮未派发调用补合成
+     * 结果（成对无悬空）、返回 interrupted 的 AgentReply。
+     */
+    private volatile boolean interruptRequested;
+    private volatile Thread sendThread;
+
     @Override
     public AgentReply send(String userText, AgentListener listener) {
         Objects.requireNonNull(listener, "listener");
         session.append(SessionEvent.userMessage(userText));
+        // 复位先于线程登记（OCR 修复）：复位与 requestInterrupt 的「置标志后登记检查」
+        // 保持同序——两行之间到达的中断请求按「无 send 在飞」拒绝，不落空为新轮误吞
+        interruptRequested = false;
+        sendThread = Thread.currentThread();
 
         List<ToolInvocation> invocations = new ArrayList<>();
         StringBuilder finalReply = new StringBuilder();
         boolean completed = false;
 
-        for (int iteration = 1; iteration <= maxIterations && !completed; iteration++) {
-            drainInbox();
-            LlmTurn turn = llm.streamTurn(buildRequest(), text -> {
-                listener.onChunk(text);
-                finalReply.append(text);
-            });
+        try {
+            for (int iteration = 1; iteration <= maxIterations && !completed; iteration++) {
+                if (interruptRequested) {
+                    clearResidualInterrupt();
+                    return interruptedReply(finalReply, invocations);
+                }
+                drainInbox();
+                LlmTurn turn;
+                try {
+                    turn = llm.streamTurn(buildRequest(), text -> {
+                        listener.onChunk(text);
+                        finalReply.append(text);
+                    });
+                } catch (RuntimeException e) {
+                    // 流式段被中断打断（阻塞 IO 抛出）——标志位下收敛为中断收口
+                    if (interruptRequested) {
+                        clearResidualInterrupt();
+                        return interruptedReply(finalReply, invocations);
+                    }
+                    throw e;
+                }
 
-            if (!turn.hasToolCalls()) {
-                // provider 真实用量随 assistant/message 落日志（ADR-0009）：llm 域统计
-                // 映射为会话事件词汇——治理与状态展示的取数源，provider 未报告为 null
-                session.append(SessionEvent.assistantMessage(turn.text(),
-                        turn.usage() == null ? null : new TokenUsage(
-                                turn.usage().promptTokens(),
-                                turn.usage().completionTokens(),
-                                turn.usage().totalTokens())));
-                completed = true;
-                break;
+                if (!turn.hasToolCalls()) {
+                    // 流式中途被打断而适配器吞掉中断正常返回的病态场景：标志位下仍按
+                    // 中断收口（残留线程标志会炸后续 NIO 落盘，审查修复）
+                    if (interruptRequested) {
+                        clearResidualInterrupt();
+                        return interruptedReply(finalReply, invocations);
+                    }
+                    // provider 真实用量随 assistant/message 落日志（ADR-0009）：llm 域统计
+                    // 映射为会话事件词汇——治理与状态展示的取数源，provider 未报告为 null
+                    session.append(SessionEvent.assistantMessage(turn.text(),
+                            turn.usage() == null ? null : new TokenUsage(
+                                    turn.usage().promptTokens(),
+                                    turn.usage().completionTokens(),
+                                    turn.usage().totalTokens())));
+                    completed = true;
+                    break;
+                }
+
+                // 工具执行桥：tool_calls 按并发安全性分组执行（ADR-0018）——连续并发安全
+                // 调用成组进虚拟线程滚动池并行执行，独占调用作为顺序屏障单独执行；
+                // 无论完成先后，tool/call 与 tool/result 严格按 model 序成对提交——
+                // 事件日志形态与串行执行同构，游标回放 / 尾窗 / 投影零特判。
+                // 思考内容随 tool/call 事件持久化——会话投影重建的请求历史天然完整
+                // （思考模式 provider 要求历史工具调用消息回传 reasoning，ADR 见 BUG-20260913-03）
+                executeToolCalls(turn, listener, invocations);
+                if (interruptRequested) {
+                    clearResidualInterrupt();
+                    return interruptedReply(finalReply, invocations);
+                }
             }
-
-            // 工具执行桥：tool_calls 按并发安全性分组执行（ADR-0018）——连续并发安全
-            // 调用成组进虚拟线程滚动池并行执行，独占调用作为顺序屏障单独执行；
-            // 无论完成先后，tool/call 与 tool/result 严格按 model 序成对提交——
-            // 事件日志形态与串行执行同构，游标回放 / 尾窗 / 投影零特判。
-            // 思考内容随 tool/call 事件持久化——会话投影重建的请求历史天然完整
-            // （思考模式 provider 要求历史工具调用消息回传 reasoning，ADR 见 BUG-20260913-03）
-            executeToolCalls(turn, listener, invocations);
+        } finally {
+            sendThread = null;
         }
 
         if (!completed) {
@@ -219,6 +260,39 @@ public final class ToolCallingAgent implements ChatAgent {
             return new AgentReply(failure, invocations, false);
         }
         return new AgentReply(finalReply.toString(), invocations, true);
+    }
+
+    /**
+     * 中断收口：已流出文本落 {@code assistant/interrupted}（无内容也落标记点），
+     * reply 携带 interrupted 标志——会话停在可恢复态，下一次 send 即续接。
+     */
+    private AgentReply interruptedReply(StringBuilder finalReply, List<ToolInvocation> invocations) {
+        session.append(SessionEvent.assistantInterrupted(finalReply.toString()));
+        return new AgentReply("已中断（协作式暂停，已流出内容已保留）", invocations, false, true);
+    }
+
+    /** 协作式中断请求：有 send 在飞时置标志 + 打断线程；空闲返回 false。 */
+    @Override
+    public boolean requestInterrupt() {
+        Thread active = sendThread;
+        if (active == null) {
+            return false;
+        }
+        interruptRequested = true;
+        active.interrupt();
+        return true;
+    }
+
+    /**
+     * 清线程残留中断标志（M23 工单 02）：interrupt 的使命在唤醒点（工具 waitFor /
+     * 流式阻塞读抛异常）即完成，判定统一走 {@link #interruptRequested} 布尔——
+     * 带标志线程上做 NIO FileChannel 写会抛 ClosedByInterruptException，会话
+     * 落盘与后续 IO 都会被残留标志炸掉。
+     */
+    private void clearResidualInterrupt() {
+        if (interruptRequested) {
+            Thread.interrupted();
+        }
     }
 
     /**
@@ -280,6 +354,16 @@ public final class ToolCallingAgent implements ChatAgent {
         List<ToolCallRequest> calls = turn.toolCalls();
         int i = 0;
         while (i < calls.size()) {
+            if (interruptRequested) {
+                // 中断后未派发的调用补合成结果（成对无悬空，M23 工单 02）——
+                // 日志忠实表达"模型要求了这些调用、中断使之未执行"，续接时可见
+                for (int rest = i; rest < calls.size(); rest++) {
+                    ToolCallRequest call = calls.get(rest);
+                    commitToolCall(call, ToolResult.error(
+                            "[interrupted] 用户中断，本次调用未执行"), turn, listener, invocations);
+                }
+                return;
+            }
             if (isConcurrentSafe(calls.get(i))) {
                 int j = i + 1;
                 while (j < calls.size() && isConcurrentSafe(calls.get(j))) {
@@ -322,9 +406,25 @@ public final class ToolCallingAgent implements ChatAgent {
                     }
                 }));
             }
+            boolean interruptSeenInGroup = false;
             for (int k = 0; k < group.size(); k++) {
                 ToolCallRequest call = group.get(k);
-                commitToolCall(call, awaitResult(futures.get(k), call), turn, listener, invocations);
+                ToolResult result;
+                if (interruptSeenInGroup) {
+                    // 中断后组内剩余调用：取消池任务（打断飞行中的执行）+ 合成结果——
+                    // 不等各自自然超时（协作式中断的"当前工具终止"语义，M23 工单 02）
+                    futures.get(k).cancel(true);
+                    result = ToolResult.error("[interrupted] 用户中断，本次调用未完成");
+                } else {
+                    result = awaitResult(futures.get(k), call);
+                    if (interruptRequested) {
+                        // 等待方被打断 ≠ 池线程被打断：触发中断的这枚也取消，
+                        // 防 pool.close() 傻等其自然超时（M23 工单 02）
+                        futures.get(k).cancel(true);
+                        interruptSeenInGroup = true;
+                    }
+                }
+                commitToolCall(call, result, turn, listener, invocations);
             }
         }
     }
@@ -340,6 +440,9 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 成对有序提交：tool/call 与 tool/result 相邻落日志 + 回调 + 调用台账（model 序）。 */
     private void commitToolCall(ToolCallRequest call, ToolResult result, LlmTurn turn,
                                 AgentListener listener, List<ToolInvocation> invocations) {
+        // 中断唤醒已完成（工具异常已收敛）：清线程残留标志，防 NIO FileChannel 写在
+        // 带标志线程上抛 ClosedByInterruptException 而杀死收口（后续判定走布尔）
+        clearResidualInterrupt();
         session.append(SessionEvent.toolCall(call.id(), call.name(), call.argumentsJson(),
                 turn.reasoningContent()));
         listener.onToolCall(call.name(), call.argumentsJson());

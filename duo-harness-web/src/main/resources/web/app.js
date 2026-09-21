@@ -44,6 +44,11 @@ const api = {
       body: JSON.stringify(attachments && attachments.length ? { text, attachments } : { text })
     });
   },
+  // 协作式中断（M23 工单 02）：与 CLI /stop、Ctrl+C 单击同语义——已流出内容保留，
+  // 会话停可恢复态，再发消息即续接
+  async stop() {
+    return fetch('/api/stop', { method: 'POST' });
+  },
   // 附件上传（M21 工单 04）：文件 → base64 → 入库，返回引用元数据（发送时随消息提交）
   async uploadAttachment(file) {
     const data = await new Promise((resolve, reject) => {
@@ -876,6 +881,7 @@ const app = (() => {
     const btn = $('#send');
     btn.disabled = busy;
     btn.textContent = busy ? (label || '…') : '发送';
+    $('#stop').hidden = !busy; // 停止按钮只在执行中出现（M23 工单 02：发送侧与执行侧同busy）
   }
 
   function clearSendBusy() {
@@ -884,6 +890,7 @@ const app = (() => {
       btn.disabled = false;
       btn.textContent = '发送';
     }
+    $('#stop').hidden = true;
   }
 
   let sendInFlight = false; // 请求在途闸：只拦重入，不拦"思考中"——执行中发消息是合法注入
@@ -979,6 +986,23 @@ const app = (() => {
   }
   $('#send').addEventListener('click', send);
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  // 停止按钮（M23 工单 02）：协作式中断——202 受理后按钮保持到中断收口
+  // （run/error 帧到达即复位）；409 = 已无任务（并发收口），直接复位
+  $('#stop').addEventListener('click', async () => {
+    try {
+      const res = await api.stop();
+      if (res.status === 202) {
+        showToast('已请求中断（协作式收口中，稍候）', 'info');
+      } else if (res.status === 409) {
+        showToast('当前无执行中任务', 'info');
+        $('#stop').hidden = true;
+      } else {
+        showToast('中断请求失败（HTTP ' + res.status + '）', 'err');
+      }
+    } catch (err) {
+      showToast('中断请求失败：' + errText(err), 'err');
+    }
+  });
   // 附件入口（M21 工单 04）：粘贴与拖拽图片 → 上传入列（vision 关闭时端点 409 提示）
   $('#input').addEventListener('paste', (e) => handleAttachmentFiles(e.clipboardData.files));
 

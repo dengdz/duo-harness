@@ -17,6 +17,18 @@
 
 ## 审查记录
 
+### 2026-09-22 · M23 工单 02 审查（0.18.0 分支，HEAD 工作树：暂停——协作式中断与恢复）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 3eaa2ba）→ 修复 → OCR（委托模式，9 代码文件行级）→ 修复 → 四模块 test 收口。
+- **计数**：双轴 Standards 7（硬违规 2：CHANGELOG/事件表缺行）+ Spec 4 疑点（1 真窗口）；OCR 新增 1（微竞态复位序）；修复 6 项（armed 误判窗口、完成路径残留标志缺口、CHANGELOG、事件表、命名、静默降级提示）。
+- **模式化问题（本次新识别）**：
+  1. **中断唤醒后的线程标志残留会炸 NIO**——interrupt 只作唤醒用，唤醒点后立即 Thread.interrupted() 清除、判定走布尔；否则 FileChannel.write 抛 ClosedByInterruptException 杀死收口（三测试同根失败的真实根因）。
+  2. **虚拟线程池的「等待方被打断 ≠ 任务被打断」**——future.get 抛 InterruptedException 后必须对触发枚 self-cancel(true)，try-with-resources 的 ExecutorService.close() 会傻等池任务自然超时。
+  3. **SIGINT 拦截以 System.console() 门控**——真实终端才拦、测试/管道/headless 保留默认终止；headless 的 SIGINT=130 退出码契约天然成立（工单 07 直接受益）。
+  4. **再按闸（armed）置位必须以「中断被接受」为前提**——与 busy 标志的生命周期不同步时（收口复位与 busy 清除间的窗口）会误杀新 turn 的第一次按键。
+- **视觉验证先例**：browser-use 全链路（按钮出现→点击→中断卡→复位→续接）+ 隔离 DUO_HOME 起真实装配（避开用户活会话锁与固定端口）。
+- **收口**：agent 176 / web 71 / cli 29 / session 30 全绿；报告并入 `.scratch/m23-cli-experience/issues/02-*.md`。
+
 ### 2026-09-21 · M23 工单 01 审查（0.18.0 分支，HEAD 工作树：事件驱动主循环与两级收件箱）
 
 - **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 5857def）→ 修复 → OCR（委托模式，workspace 5 代码文件全覆盖 + 2 测试文件由双轴轮覆盖）→ 修复 → cli+agent+web 三模块 test 收口。
