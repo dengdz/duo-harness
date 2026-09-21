@@ -7,6 +7,7 @@
 | 别名 | 项目 | 本地路径 | 开源地址 |
 |---|---|---|---|
 | DSH | deepseek-harness | /Users/zhangyl/IdeaProjects/deepseek-harness | https://github.com/deepseek-ai/deepseek-harness |
+| ZCode | zcode（v3.14.0，TS/pnpm monorepo：桌面端 / Web / Agent CLI） | /Users/zhangyl/IdeaProjects/ZCode | https://github.com/zai-org/ZCode |
 
 ## 功能分析条目
 
@@ -17,4 +18,4 @@
 | DSH | 核心功能全景 | [DSH/核心功能全景.md](DSH/核心功能全景.md) | c291e7961a515f6d7af9304e7fd1d257929aef26 | 当前（2026-09-13） |
 | DSH | web 工具族 | [DSH/web工具族/](DSH/web工具族/)（架构设计 / 代码说明 / 细节备忘） | ddefc45fbc7f8e46dd73185e68295696d1297887 | 当前（2026-09-20） |
 | DSH | 输入面与会话工具 | [DSH/输入面与会话工具/](DSH/输入面与会话工具/)（架构设计 / 代码说明 / 细节备忘） | ddefc45fbc7f8e46dd73185e68295696d1297887 | 当前（2026-09-20） |
-| DSH+ZCode | 子代理派发与提示词生成对照 | [subagent-派发与提示词对照.md](subagent-派发与提示词对照.md) | DSH c291e796；ZCode app.asar + ~/.zcode/cli/agents 实证 | 当前（2026-09-16） |
+| DSH+ZCode | 子代理派发与提示词生成对照 | [subagent-派发与提示词对照.md](subagent-派发与提示词对照.md) | DSH c291e796；ZCode app.asar + ~/.zcode/cli/agents 实证 | 当前（2026-09-16）；ZCode 侧为安装产物实证——源码已注册（锚点 872ad96），后续引用建议源码级复核 |
