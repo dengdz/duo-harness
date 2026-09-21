@@ -10,9 +10,13 @@ import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * 迷你 filesystem MCP 服务器：SDK server 侧构建（真实 stdio 协议），不依赖外部运行时。
@@ -25,13 +29,17 @@ import java.util.Map;
  * </ul>
  *
  * <p>由 demo 的 MCP 连接作为子进程拉起：
- * {@code java -cp <classpath> MiniFileSystemServer <rootDir>}。main 以
- * {@code sleep(MAX_VALUE)} 保活——断连靠进程被杀（父进程 dispose / 测试 cleanup）。</p>
+ * {@code java -cp <classpath> MiniFileSystemServer <rootDir>}。stdin 关闭
+ * （父进程退出或被强杀）即自行退出——不依赖父进程显式销毁，父 JVM 异常
+ * 终止也不会留下孤儿进程。</p>
  */
 public final class MiniFileSystemServer {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final McpJsonMapper JSON = new JacksonMcpJsonMapper(MAPPER);
+
+    /** stdin EOF 信号：SDK 读循环经包装流见到流尾即放行，main 随之退出。 */
+    private static final CountDownLatch STDIN_CLOSED = new CountDownLatch(1);
 
     private final Path root;
 
@@ -48,17 +56,50 @@ public final class MiniFileSystemServer {
                 .normalize());
         Files.createDirectories(server.root);
 
-        var provider = new StdioServerTransportProvider(JSON);
+        // 包装 stdin 监视 EOF：本类是唯一读者（监视不抢字节），SDK 见到流尾会关闭
+        // session，main 等同一信号退出进程
+        var provider = new StdioServerTransportProvider(JSON, watchedStdin(), System.out);
         McpSyncServer mcp = McpServer.sync(provider)
                 .serverInfo("mini-filesystem", "1.0.0")
                 .capabilities(McpSchema.ServerCapabilities.builder()
                         .tools(true)
                         .build())
                 .build();
-        mcp.addTool(server.readTool());
-        mcp.addTool(server.writeTool());
-        // stdio provider 在后台线程读 stdin；main 阻塞保活
-        Thread.sleep(Long.MAX_VALUE);
+        try {
+            mcp.addTool(server.readTool());
+            mcp.addTool(server.writeTool());
+        } catch (RuntimeException e) {
+            if (STDIN_CLOSED.getCount() == 0) {
+                // stdin 已关（传输已死）：addTool 的通知失败是退出竞态的预期噪声，按自退处理
+            } else {
+                throw e;
+            }
+        }
+        STDIN_CLOSED.await();
+        System.exit(0);
+    }
+
+    /** 包装 System.in：读到流尾（read 返回 -1）即放行 EOF 闸门，字节原样转发。 */
+    private static InputStream watchedStdin() {
+        return new FilterInputStream(System.in) {
+            @Override
+            public int read() throws IOException {
+                int b = super.read();
+                if (b < 0) {
+                    STDIN_CLOSED.countDown();
+                }
+                return b;
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                int n = super.read(b, off, len);
+                if (n < 0) {
+                    STDIN_CLOSED.countDown();
+                }
+                return n;
+            }
+        };
     }
 
     private McpServerFeatures.SyncToolSpecification readTool() {

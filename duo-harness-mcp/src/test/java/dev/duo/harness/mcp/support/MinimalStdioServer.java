@@ -10,10 +10,14 @@ import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * 测试夹具：极简 stdio MCP 服务器（SDK server 侧构建，协议真实）。
@@ -21,7 +25,7 @@ import java.util.Map;
  * <p>启动模式由 args[0] 控制：</p>
  * <ul>
  *   <li>{@code normal} —— 注册 ping（回声）、boom（isError）、typed（带 outputSchema
- *       的结构化结果）后常驻</li>
+ *       的结构化结果）后常驻（stdin EOF 即自退）</li>
  *   <li>{@code grow} —— 先注册 ping，800ms 后动态补挂 late_tool
  *       （server 侧自动发出 tools/list_changed，演示变更重同步）</li>
  *   <li>{@code dup} —— 注册 {@code a.b} 与 {@code a$b}（命名清洗后同为 {@code a_b}）</li>
@@ -45,7 +49,10 @@ public final class MinimalStdioServer {
         if ("once".equals(mode) && !markAndClaim(args)) {
             System.exit(7);
         }
-        var provider = new StdioServerTransportProvider(JSON);
+        // 包装 stdin 监视 EOF：读到流尾即放行闸门（本类是唯一读者，不抢字节）；
+        // main 等闸门后退出——父 JVM 退出/强杀不留孤儿（与 MiniFileSystemServer 同机制）
+        CountDownLatch stdinClosed = new CountDownLatch(1);
+        var provider = new StdioServerTransportProvider(JSON, watchedStdin(stdinClosed), System.out);
         // 工具能力必须构建时声明——否则 addTool 抛 McpError（夹具启动即崩）
         McpSyncServer server = McpServer.sync(provider)
                 .serverInfo("minimal-test-server", "1.0.0")
@@ -54,20 +61,54 @@ public final class MinimalStdioServer {
                         .build())
                 .build();
         if ("dup".equals(mode)) {
-            server.addTool(fixedTool("a.b", "清洗后与 a$b 重名"));
-            server.addTool(fixedTool("a$b", "清洗后与 a.b 重名"));
+            addToolOrEof(stdinClosed, server, fixedTool("a.b", "清洗后与 a$b 重名"),
+                    fixedTool("a$b", "清洗后与 a.b 重名"));
         } else {
-            server.addTool(echoTool());
-            server.addTool(boomTool());
-            server.addTool(typedTool());
-            server.addTool(typedBadTool());
+            addToolOrEof(stdinClosed, server, echoTool(), boomTool(), typedTool(), typedBadTool());
             if ("grow".equals(mode)) {
                 Thread.sleep(800);
-                server.addTool(fixedTool("late_tool", "动态补挂的工具"));
+                addToolOrEof(stdinClosed, server, fixedTool("late_tool", "动态补挂的工具"));
             }
         }
-        // stdio provider 在后台线程读 stdin；main 阻塞保活
-        Thread.sleep(Long.MAX_VALUE);
+        stdinClosed.await();
+        System.exit(0);
+    }
+
+    /** 挂工具；stdin 已关时的通知失败是退出竞态的预期噪声，按自退处理，否则真抛。 */
+    private static void addToolOrEof(CountDownLatch stdinClosed, McpSyncServer server,
+                                     McpServerFeatures.SyncToolSpecification... tools) {
+        try {
+            for (McpServerFeatures.SyncToolSpecification tool : tools) {
+                server.addTool(tool);
+            }
+        } catch (RuntimeException e) {
+            if (stdinClosed.getCount() != 0) {
+                throw e;
+            }
+        }
+    }
+
+    /** 包装 System.in：读到流尾（read 返回 -1）即放行 EOF 闸门，字节原样转发。 */
+    private static InputStream watchedStdin(CountDownLatch stdinClosed) {
+        return new FilterInputStream(System.in) {
+            @Override
+            public int read() throws IOException {
+                int b = super.read();
+                if (b < 0) {
+                    stdinClosed.countDown();
+                }
+                return b;
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                int n = super.read(b, off, len);
+                if (n < 0) {
+                    stdinClosed.countDown();
+                }
+                return n;
+            }
+        };
     }
 
     /**

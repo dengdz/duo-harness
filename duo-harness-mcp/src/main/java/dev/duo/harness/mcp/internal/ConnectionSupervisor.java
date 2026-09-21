@@ -59,6 +59,8 @@ final class ConnectionSupervisor {
     private volatile StdioClientTransport transport;
     /** 重连循环线程（dispose 时中断退避睡眠）。 */
     private volatile Thread loopThread;
+    /** JVM 退出兜底钩子：宿主未 dispose 即退出时关 client（级联销毁 server 进程）。 */
+    private volatile Thread exitHook;
 
     /** 连接事件监听：CONNECTED 后触发工具同步；预算耗尽/禁用重连后触发工具注销。 */
     interface Listener {
@@ -237,6 +239,22 @@ final class ConnectionSupervisor {
         }
         transport = newTransport;
         client = newClient;
+        registerExitHook();
+    }
+
+    /**
+     * 注册 JVM 退出兜底钩子（仅一次；重连不重复挂）：宿主正常退出但未 dispose
+     * （demo 主流程抛错、测试 JVM 收尾）时关 client 级联销毁 server 进程。
+     * 宿主被强杀（kill -9）钩子不跑，由 server 侧 stdin EOF 自退兜底。
+     */
+    private void registerExitHook() {
+        if (exitHook != null) {
+            return;
+        }
+        Thread hook = new Thread(this::stop,
+                "mcp-conn-" + options.serverName() + "-exit-cleanup");
+        exitHook = hook;
+        Runtime.getRuntime().addShutdownHook(hook);
     }
 
     /** 断连后的退避睡眠：可被 dispose 中断。 */
@@ -277,9 +295,23 @@ final class ConnectionSupervisor {
         return firstFailure;
     }
 
-    /** 停止一切：置 STOPPED、中断循环线程、关闭当前连接。幂等。 */
+    /** 退出兜底钩子（注册在册返回线程；未注册或已注销返回 null）——测试观测用。 */
+    Thread exitHook() {
+        return exitHook;
+    }
+
+    /** 停止一切：注销退出钩子、置 STOPPED、中断循环线程、关闭当前连接。幂等。 */
     void stop() {
         closed = true;
+        Thread hook = exitHook;
+        if (hook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(hook);
+                exitHook = null;
+            } catch (IllegalStateException shutdownInProgress) {
+                // JVM 退出序列中（钩子自身触发 stop）：无处注销，进程即将终止
+            }
+        }
         lock.lock();
         try {
             state = State.STOPPED;

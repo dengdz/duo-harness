@@ -4,6 +4,11 @@
 
 ## 0.16.0（2026-09-21）
 
+### Fixed
+
+- **MCP stdio 子进程不再泄漏为孤儿进程**：server 侧（`MiniFileSystemServer` 与测试夹具 `MinimalStdioServer`）由 `sleep(MAX_VALUE)` 纯保活改为 stdin EOF 即自退——父 JVM 退出或被强杀后管道断流，子进程自行终止，不再依赖父进程显式销毁；client 侧 `ConnectionSupervisor` 增 JVM 退出钩子兜底——宿主正常退出但未 dispose（demo 主流程抛错、测试收尾）时关连接级联销毁 server 进程（强杀场景钩子不跑，由 EOF 自退兜底）。实测背景：泄漏孤儿最长驻留 >90 分钟
+- **构建/测试 JVM 强制 headless**：根 pom surefire 补 `argLine=-Djava.awt.headless=true`——测试 JVM 不再向 macOS AppKit 注册为 GUI 应用，Dock 不随构建闪现 Java 图标（`BufferedImage`/`ImageIO` 等 headless 照常可用）
+
 ### Changed
 
 - **duo-code-review 第二轮审查切换委托模式**：OCR 行级审查由 `open-code-review`（LLM 端点，一次近 40 分钟）改为 `open-code-review-delegate`（委托模式，约 5 分钟）——OCR 仅做文件选取与规则解析，行级审查由 agent 亲自执行；名单、覆盖率口径与报告模板不变

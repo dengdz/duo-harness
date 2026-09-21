@@ -28,7 +28,7 @@ class ConnectionLifecycleTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：ConnectionLifecycleTest —— 连接生命周期：真实 stdio 协议下的"
-                + " 首连、断连重连恢复、预算耗尽、failOnStartupError 两态、停止即断（4 用例） ===");
+                + " 首连、断连重连恢复、预算耗尽、failOnStartupError 两态、停止即断、退出钩子兜底（5 用例） ===");
     }
 
     private ConnectionSupervisor supervisor;
@@ -90,6 +90,20 @@ class ConnectionLifecycleTest {
         supervisor.stop();
         assertEquals(ConnectionSupervisor.State.STOPPED, supervisor.state());
         assertTrue(supervisor.firstFailure() == null, "成功连接不应记录失败");
+    }
+
+    @Test
+    void registersExitHookAndUnregistersOnStop() throws Exception {
+        // 宿主未 dispose 即退 JVM 的兜底：连接成功注册退出钩子，停止时注销
+        supervisor = new ConnectionSupervisor(options("normal", 3, false));
+        supervisor.runFirstAttempt();
+        assertEquals(ConnectionSupervisor.State.CONNECTED, awaitState(supervisor,
+            ConnectionSupervisor.State.CONNECTED));
+
+        assertTrue(supervisor.exitHook() != null, "连接成功应注册 JVM 退出兜底钩子");
+
+        supervisor.stop();
+        assertTrue(supervisor.exitHook() == null, "停止应注销退出钩子");
     }
 
     @Test
