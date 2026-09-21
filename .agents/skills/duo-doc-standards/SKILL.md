@@ -49,10 +49,11 @@ description: 管理 duo-harness 文档的位置和结构——文档在 docs/ �
 5. **结构对账**：最近的提交动了包结构、模块或公共 API 时，检查架构段落、教程里的包路径、配置示例中的类名字符串（如 yml 里的插件 FQCN——编译器不查字符串引用，漏改只在运行时爆）是否同 diff 更新。
 6. **导航对账**（文档站专检）：`config.mts` 的 nav/sidebar 条目与 `docs/` 实际 md 文件双向对账——docs/ 下有文件而 sidebar 无条目 = 漏同步（导航不可见）；sidebar 有条目而文件不存在 = 死链。重点核对 adr/ 目录：ADR 文件数应等于 sidebar"决策记录"分组的条目数。push main（触发部署）前必查。
    机械核对命令（两数必须相等；曾两次漏挂 ADR——0006、0007——故固化为命令而非口头纪律。
-   按 sidebar 条目文本计数（`text: '000`），不能用 `link: '/adr/` 计数——nav 顶层的 ADR 入口会多算一）：
+   按 sidebar 的 adr 链接计数并扣掉 nav 顶层一条（`text: '000` 前缀匹配对双位数 ADR 会漏计——0010+ 不以 000 开头，2026-09-21 审计实测踩坑）：
    ```sh
-   ls docs/adr/*.md | wc -l && grep -c "text: '000" docs/.vitepress/config.mts
+   ls docs/adr/*.md | wc -l && grep -c "link: '/adr/" docs/.vitepress/config.mts
    ```
+   两数相等 = 24 份 ADR + nav 顶层 1 条 `/adr/` 入口，即 grep 数应比文件数**多 1**。
 7. **状态三档标注**：功能描述必须落在正确档位——门面可用 / 底层可用需手动组装 / 已定义未接线（对照已知限制清单）。把未接线功能写成可用是 blocker 级错误。同一文档内多处状态标注（头部状态行、表格行内的"规划/建设中"标记）必须互相一致——自相矛盾的状态字段是新鲜度欠账最直接的信号。
 
 ## 验证
