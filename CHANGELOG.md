@@ -14,6 +14,8 @@
 
 ### Changed
 
+- **审批小队列（M23 工单 03，ADR-0025）**：Web 回答者由单待答升级 FIFO 排队——并发到达的第二个请求不再被拒（防御性升级，串行架构下不悬空）；CLI 审批呈现加本轮序号（第 2 项起显示「本轮第 i 项审批」，turn 边界归零）；Web 审批卡支持 Esc 键拒绝（与 FIFO 最旧完成语义对齐）；中断余项合成 deny——应答等待被打断按 fail-closed 收口且不残留线程中断标志（防审批审计事件落盘被 NIO 炸）；CLI 应答等待期斜杠命令逃逸闸门（/stop 在审批等待时可执行，不再被吞作应答）
+
 - **CLI 事件驱动主循环与两级收件箱（M23 工单 01，ADR-0025 决策一）**：终端 REPL 从"阻塞读 + 同步执行"改为读者线程与 turn 线程拆分——agent 执行期间键入的普通文本注入收件箱 next-step 级并回显「已插队」，模型下一步边界即见（修复"执行期输入被静默当新输入消费"缺陷）；执行期斜杠命令照走注册表（busySafe 即行、非 busySafe 得到等待回应，ADR-0020 决策 4 在 CLI 真正生效）；审批/提问应答行经应答闸门路由、EOF/停止即时 fail-closed；EOF 不腰斩执行中的 turn；agent 域注入 seam 升级两级（新增 next-turn 收口排干，多条合并为一条生效，供后台通知消费）；Web busy 注入 202 行为不变
 
 - **M23（0.18.0）启动规划落盘：grill 十二问收敛 + ADR-0025 三裁定 + spec 与 11 张工单**：`docs/adr/0025-M23执行与CLI体验三裁定.md`——①CLI 事件驱动主循环与两级收件箱（虚拟线程常驻读 stdin、next-step step 边界注入/next-turn 收口消费、暂停协作式中断+恢复：Ctrl+C 在跑先停再按退出/空闲即退、`/stop` 兜底、Web 停止按钮、不做原地冻结）②后台任务注册表与输出三层（inline 30k/spill 64MiB/task-output 尾窗 32k、超帽告警不静默、yml 可配）+ task-output/task-stop 两工具 + 完成通知 first-wins 必达（busy 挂 next-turn 收口合并、暂停不杀后台）③.gitignore 自研判定器（红线 4 拒捆绑 rg、全常用子集、.gitignore∪产物目录∪VCS 目录三源并集、glob/grep/@file 同口径）；spec `.scratch/m23-cli-experience/spec.md`（34 条用户故事、七组既有测试 seam）+ 11 张工单（01-06 主线依赖链：主循环→暂停→审批队列→后台→spill→可见化；07-10 零依赖并行：headless --json/.gitignore/技能热加载/上限感知；11 收尾）；术语表 11 词条增改（新增收件箱/暂停/审批小队列/后台任务/spill/忽略判定/NDJSON 事件流/技能热加载，steer 升两级语义、迭代上限增感知提醒、发现根去「不做热加载」）；backlog「CLI 运行中 steer 入口」转 M23 正式范围（ADR-0025 决策一）

@@ -40,6 +40,14 @@ public final class ConsoleAnswerer implements Answerer {
         this.out = out;
     }
 
+    /** 本轮审批到达序（M23 工单 03：逐个呈现「本轮第 i 项」，turn 边界归零）。 */
+    private int approvalSeq;
+
+    /** turn 边界：审批计数归零（呈现位在启动每轮时调用）。 */
+    public void beginTurn() {
+        approvalSeq = 0;
+    }
+
     /** 亲和路由（M19，ADR-0020 决策 7）：本回答者代表终端呈现位。 */
     @Override
     public String presenterId() {
@@ -86,7 +94,9 @@ public final class ConsoleAnswerer implements Answerer {
 
     /** 审批呈现与作答：y = 允许本次，其余/EOF = 拒绝。 */
     private InteractionAnswer answerApproval(InteractionRequest request) {
-        out.println("  [待审批] 工具 " + request.subject() + " 请求执行");
+        approvalSeq++;
+        String ordinal = approvalSeq > 1 ? "（本轮第 " + approvalSeq + " 项审批）" : "";
+        out.println("  [待审批] 工具 " + request.subject() + " 请求执行" + ordinal);
         if (!request.detail().isBlank()) {
             out.println("          参数: " + request.detail());
         }

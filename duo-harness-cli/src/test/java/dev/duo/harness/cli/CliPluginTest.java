@@ -46,7 +46,7 @@ class CliPluginTest {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：事件驱动 REPL（busy 插队/应答闸门/EOF 不腰斩）、"
                 + "命令注册表入口（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
                 + "/stop 协作式中断与续接、/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、"
-                + "/compact 压缩、/permission 持久化、/title 改名（19 用例） ===");
+                + "/compact 压缩、/permission 持久化、/title 改名、审批等待中 /stop 余项 deny（20 用例） ===");
     }
 
     interface ToolsView {
@@ -760,6 +760,61 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             assertTrue(fx.output().contains("当前无执行中任务"), fx.output());
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void stopDuringPendingApprovalDeniesItAndInterrupts() throws Exception {
+        // 中断余项合成 deny（M23 工单 03）：审批等待中 /stop——应答闸门的等待线程被
+        // 打断按 fail-closed（deny）收口，无悬挂请求；审批 deny 后 turn 按中断收口
+        Path dir = tempDir.resolve("stop-approval");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    textSink.accept("开始执行");
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"sleep 30\"}")));
+                }
+                textSink.accept("续接回答");
+                return new dev.duo.harness.llm.LlmTurn("续接回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("跑个长命令"),
+                InputLine.paced("/stop", "[待审批]"),
+                InputLine.paced("继续", "[已中断]"),
+                InputLine.of("/exit")), llm);
+        try {
+            fx.awaitIdle(); // 会话锁释放后再开 latest（中断→续接→/exit 全链收尾）
+            String out = fx.output();
+            assertTrue(out.contains("[待审批] 工具 bash"), "审批卡呈现: " + out);
+            assertTrue(out.contains("已请求中断当前任务"), "/stop 在应答等待期逃逸闸门生效: " + out);
+            assertTrue(out.contains("[已中断]"), "审批 deny 后按中断收口: " + out);
+
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.APPROVAL_DECIDED.equals(e.type())
+                                    && e.text().startsWith("deny")),
+                    "审批以 deny 决出（fail-closed 合成）");
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.ASSISTANT_INTERRUPTED.equals(e.type())),
+                    "中断标记落日志");
+            latest.close();
         } finally {
             fx.dispose();
         }

@@ -870,7 +870,16 @@ const app = (() => {
   }
   $('#subagentClose').addEventListener('click', closeSubagentDrawer);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#subagentDrawer').hidden) closeSubagentDrawer();
+    if (e.key !== 'Escape') return;
+    if (!$('#subagentDrawer').hidden) { closeSubagentDrawer(); return; }
+    // Esc = 拒绝当前审批（M23 工单 03，ADR-0025）：**最旧**一张未冻结的审批卡——与
+    // 服务端 complete() 的 FIFO 最旧完成语义对齐（审查修复：多卡时不点新卡造成
+    // 视觉与语义错位）；复用拒绝按钮点击（冻结卡 + POST deny），计划/提问卡不受影响
+    const pending = $$('.card.interactive', document.getElementById('messages'))
+      .filter(c => c.dataset.toolName !== 'exit_plan_mode'
+        && c.querySelector('[data-action="answer"][data-approved="false"]'));
+    if (pending.length) pending[0]
+      .querySelector('[data-action="answer"][data-approved="false"]').click();
   });
 
 

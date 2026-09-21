@@ -104,6 +104,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** 回答者注册的注销器（idle 与 stop 均摘除；幂等守卫见 #detachAnswerer）。 */
     private Disposable answererRegistration;
     private volatile boolean answererDetached;
+    /** 终端回答者实例（M23 工单 03：turn 边界审批计数归零的直连句柄）。 */
+    private volatile ConsoleAnswerer consoleAnswerer;
 
     /** 生产构造：System.in/out + 配置装配。 */
     public CliPlugin() {
@@ -218,8 +220,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
                 maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
                 requestVariants, visionEnabled, fileDelivery);
+        ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out);
+        this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
-                new AuditingAnswerer(holder::current, new ConsoleAnswerer(answerGate::awaitLine, out)));
+                new AuditingAnswerer(holder::current, console));
         PlanHolder plan = new PlanHolder();
         PresenterAssembly.registerInteractionTools(ctx, tools, answers, ChatAgent.PRESENTER_CLI,
                 holder::current, () -> {
@@ -483,8 +487,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         if (input.isEmpty()) {
             return;
         }
-        // 应答行优先：审批/提问在飞时输入行是给回答者的（y/n、序号、自由文本）
-        if (answerGate.pending()) {
+        // 应答行优先：审批/提问在飞时输入行是给回答者的（y/n、序号、自由文本）——
+        // 斜杠行例外（M23 工单 03 审查发现）：应答等待期的 /stop 若被闸门吞作应答，
+        // 中断入口即被挡死；命令行逃逸闸门走 busy 分发（/stop 即行、其余照旧分级）
+        if (answerGate.pending() && !input.startsWith("/")) {
             answerGate.offer(input);
             return;
         }
@@ -573,6 +579,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
      */
     private void startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
                            AtomicBoolean endRequested, AtomicBoolean interruptArmed) {
+        consoleAnswerer.beginTurn(); // 审批计数归零（本轮第 i 项从 1 起，M23 工单 03）
         agentBusy.set(true);
         Runnable turn = () -> {
             try {
@@ -703,7 +710,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 }
                 return null;
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                // 协作式中断唤醒（M23 工单 03）：不重设线程标志——中断语义由
+                // interruptRequested 布尔承载，残留标志会炸后续 NIO 落盘
+                // （审批审计事件的 append 在工具线程上，ClosedByInterruptException）
                 return null;
             } finally {
                 pending.set(false);

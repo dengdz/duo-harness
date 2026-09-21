@@ -17,6 +17,16 @@
 
 ## 审查记录
 
+### 2026-09-22 · M23 工单 03 审查（0.18.0 分支，HEAD 工作树：审批小队列）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 f1ae65b）→ 修复 → 全仓 test 收口（OCR 轮由实现中实测发现替代——/stop 吞应答与 NIO 炸两坑在测试先行暴露）。
+- **计数**：双轴 Standards 6（硬违规 2：CHANGELOG/视觉证据补录）+ Spec 3 疑点；修复 6 项（Esc/FIFO 对齐、pendingAsks 删除、CHANGELOG、测试复位真验证、格式、NIO 标志两处）。
+- **模式化问题（本次新识别）**：
+  1. **「唤醒即清」纪律要覆盖交互链路**——InterruptedException 的 catch 重设标志在 ask 路径上会炸审计事件落盘（approval/decided 的 NIO 写）；工具链路有 commitToolCall 清扫，交互链路无——两域的 catch都要不重设（布尔承载判定）。
+  2. **应答闸门会吞命令**——行缓冲闸门把一切输入行当应答，/stop 被吞成 deny 回答挡死中断入口；闸门路由要给斜杠命令留逃逸口。
+  3. **前端选择器索引与服务端队列语义要对齐**——Esc 点最新卡 vs complete 最旧的错位只在多卡时显现，但排队化引入的场景恰是它——前端动作与服务端语义同一端为准（FIFO 最旧）。
+- **收口**：tools 183 / agent 176 / web 73 / cli 31 / session 30 全绿；报告并入 `.scratch/m23-cli-experience/issues/03-*.md`。
+
 ### 2026-09-22 · M23 工单 02 审查（0.18.0 分支，HEAD 工作树：暂停——协作式中断与恢复）
 
 - **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 3eaa2ba）→ 修复 → OCR（委托模式，9 代码文件行级）→ 修复 → 四模块 test 收口。
