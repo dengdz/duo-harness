@@ -13,23 +13,27 @@ import java.nio.file.FileSystems;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import java.util.Set;
 import java.util.stream.Stream;
 
-/** grep 工具：逐文件逐行正则匹配 + include 单 glob 过滤（拒取反与逗号列表）+ NUL 二进制行跳过 + VCS 目录跳过 + 截断 250 条。 */
+/** grep 工具：逐文件逐行正则匹配 + include 单 glob 过滤（拒取反与逗号列表）+ NUL 二进制行跳过 + 忽略判定跳过（M23 工单 08）+ 截断 250 条。 */
 public final class FsGrepTool implements ToolDefinition {
 
     public static final String NAME = "grep";
     private static final int MAX_RESULTS = 250;
-    private static final Set<String> VCS_DIRS = Set.of(".git", ".svn", ".hg", ".bzr", ".jj");
 
     private final WorkspacePolicy workspace;
+    private final IgnorePolicy ignore;
 
-    public FsGrepTool(WorkspacePolicy workspace) { this.workspace = workspace; }
+    public FsGrepTool(WorkspacePolicy workspace) { this(workspace, IgnorePolicy.load(workspace.root())); }
+
+    public FsGrepTool(WorkspacePolicy workspace, IgnorePolicy ignore) {
+        this.workspace = workspace;
+        this.ignore = ignore;
+    }
 
     @Override public String name() { return NAME; }
     @Override public String description() {
-        return "按正则表达式搜索文件内容，命中输出为 路径:行号:文本。跳过含 NUL 的二进制行与 .git 等版本控制目录。";
+        return "按正则表达式搜索文件内容，命中输出为 路径:行号:文本。跳过含 NUL 的二进制行、.gitignore 忽略的目标与版本控制/产物目录。";
     }
     @Override public JsonNode parameters() {
         try {
@@ -69,7 +73,7 @@ public final class FsGrepTool implements ToolDefinition {
         } else if (Files.isDirectory(searchRoot)) {
             try (Stream<Path> stream = Files.walk(searchRoot)) {
                 stream.filter(Files::isRegularFile)
-                      .filter(p -> !isInVcsDir(p))
+                      .filter(p -> !ignore.ignored(p, false))
                       .filter(p -> includeMatcher == null || includeMatcher.matches(p.getFileName()))
                       .forEach(p -> searchFile(p, compiled, hits));
             } catch (IOException e) {
@@ -101,12 +105,6 @@ public final class FsGrepTool implements ToolDefinition {
         }
     }
 
-    private static boolean isInVcsDir(Path path) {
-        for (Path part : path) {
-            if (VCS_DIRS.contains(part.toString())) return true;
-        }
-        return false;
-    }
 
     private static String error(String msg) { return "[grep 错误] " + msg; }
 }

@@ -195,6 +195,17 @@ public final class PresenterAssembly {
     }
 
     /**
+     * 对话执行者（呈现位标记 + 迭代上限显式、并发取内核缺省）：不关心并发调参的
+     * 呈现位用本重载——internal 缺省常量不外泄，呈现位经公开重载即可获得缺省并发。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      ContextGovernance governance, String presenterId) {
+        return chatAgent(llm, tools, session, prompts, maxIterations,
+                ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance, presenterId);
+    }
+
+    /**
      * 对话执行者（M21 工单 05 视觉版，ADR-0022）：{@code variants} 非空且
      * {@code vision=true} 时，消息附件引用解析为请求变体并以 base64 图片部件进请求。
      */

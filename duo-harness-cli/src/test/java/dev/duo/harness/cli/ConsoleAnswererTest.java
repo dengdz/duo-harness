@@ -24,7 +24,7 @@ class ConsoleAnswererTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：ConsoleAnswererTest —— 终端回答者：审批 y/n、EOF fail-closed、"
-                + "序号与自由文本回答、多选、未知类型放弃（6 用例） ===");
+                + "序号与自由文本回答、多选、未知类型放弃、审批序号呈现与 turn 归零（7 用例） ===");
     }
 
     /** 从脚本输入构造回答者。 */
@@ -102,5 +102,42 @@ class ConsoleAnswererTest {
         InteractionRequest unknown = new InteractionRequest("未知类型", "x", "", List.of(), false);
 
         assertNull(answerer("y").answer(unknown), "未知请求类型放弃作答权（交下一个回答者）");
+    }
+
+    @Test
+    void approvalOrdinalRendersPerTurnAndResets() throws Exception {
+        // 审批小队列计数（M23 工单 03）：第 1 项不带序号（单审批零噪声），第 2 项起
+        // 呈现「本轮第 i 项审批」；beginTurn（turn 边界）归零重新计数
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        BufferedReader in = new BufferedReader(new java.io.InputStreamReader(
+                new java.io.ByteArrayInputStream("y\ny\n".getBytes(StandardCharsets.UTF_8)),
+                StandardCharsets.UTF_8));
+        ConsoleAnswerer answerer = new ConsoleAnswerer(in,
+                new PrintStream(buf, true, StandardCharsets.UTF_8));
+        answerer.beginTurn();
+        answerer.answer(InteractionRequest.approval("bash", "{}"));
+        answerer.answer(InteractionRequest.approval("write", "{}"));
+        String out = buf.toString(StandardCharsets.UTF_8);
+        int first = out.indexOf("[待审批] 工具 bash 请求执行");
+        int second = out.indexOf("[待审批] 工具 write 请求执行（本轮第 2 项审批）");
+        assertTrue(first >= 0 && second > first, "第 2 项起带序号: " + out);
+        assertTrue(out.indexOf("（本轮第 1 项审批）") < 0, "首项零噪声不带序号: " + out);
+
+        // turn 边界归零（同实例验证 beginTurn 真复位，抓不复位回归）：
+        // 答过两项的同一回答者 beginTurn 后首项回到零噪声形态
+        java.io.ByteArrayOutputStream buf2 = new java.io.ByteArrayOutputStream();
+        BufferedReader in2 = new BufferedReader(new java.io.InputStreamReader(
+                new java.io.ByteArrayInputStream("y\n".getBytes(StandardCharsets.UTF_8)),
+                StandardCharsets.UTF_8));
+        ConsoleAnswerer same = new ConsoleAnswerer(in2,
+                new PrintStream(buf2, true, StandardCharsets.UTF_8));
+        same.beginTurn();
+        same.answer(InteractionRequest.approval("bash", "{}"));
+        same.answer(InteractionRequest.approval("write", "{}"));
+        assertTrue(buf2.toString(StandardCharsets.UTF_8).contains("本轮第 2 项"), "计数已走两项");
+        same.beginTurn();
+        same.answer(InteractionRequest.approval("bash", "{}"));
+        assertTrue(!buf2.toString(StandardCharsets.UTF_8).contains("本轮第 3 项"),
+                "beginTurn 后重头计数（新首项零噪声）");
     }
 }

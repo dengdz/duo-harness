@@ -18,8 +18,8 @@ import java.util.function.Supplier;
  * @param requestEnd 请求结束回调（/exit 同款命令经 CommandContext#requestEnd 表达）
  * @param agentBusy  agent 单飞探针（true = 执行中；busySafe 分级的判定输入）。契约：
  *                   探针结论须在 handler 执行全程保持有效——呈现位以执行互斥保证
- *                   （WebFace：非 busySafe 命令经 dispatch 前占住单飞标志；CLI 单线程
- *                   REPL 天然无窗口）
+ *                   （WebFace：非 busySafe 命令经 dispatch 前占住单飞标志；CLI 事件
+ *                   驱动后 turn 跑在独立线程，单飞标志贯穿收口才释放）
  */
 public record CommandEnv(CommandScope presenter, Supplier<Session> session,
                          Consumer<String> echo, Runnable requestEnd,

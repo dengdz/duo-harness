@@ -34,6 +34,13 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 助手完整消息（全部 chunk 拼接后的最终文本）。 */
     public static final String ASSISTANT_MESSAGE = "assistant/message";
 
+    /**
+     * 协作式中断标记（M23 工单 02，ADR-0025 决策一）：暂停时已流出的助手文本以本
+     * 事件落日志（text 可为空串 = 无流出内容的中断点）；投影为带中断标记的
+     * assistant 消息——重放与续接时模型可见"上一轮被中断在何处"。
+     */
+    public static final String ASSISTANT_INTERRUPTED = "assistant/interrupted";
+
     /** 工具调用开始（text = 参数 JSON；toolCallId/toolName 携带关联信息，reasoning 携带思考内容）。 */
     public static final String TOOL_CALL = "tool/call";
 
@@ -175,6 +182,12 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：助手完整消息 + 真实 token 用量（provider 报告时随事件持久化，ADR-0009）。 */
     public static SessionEvent assistantMessage(String text, TokenUsage usage) {
         return new SessionEvent(ASSISTANT_MESSAGE, System.currentTimeMillis(), text, null, null, null, usage);
+    }
+
+    /** 便捷工厂：协作式中断标记（M23 工单 02，ADR-0025 决策一；text = 已流出的助手文本，无内容为空串）。 */
+    public static SessionEvent assistantInterrupted(String text) {
+        return new SessionEvent(ASSISTANT_INTERRUPTED, System.currentTimeMillis(),
+                text == null ? "" : text);
     }
 
     /** 便捷工厂：工具调用开始（id 关联模型发起的调用；无思考内容）。 */

@@ -30,7 +30,7 @@ class InteractionRegistryTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：InteractionRegistryTest —— 交互服务：回答者注册与作用域摘除、"
-                + "注册序遍历（null 交下一个）、无人在场或全部放弃 fail-closed、发起方亲和路由矩阵（10 用例） ===");
+                + "注册序遍历（null 交下一个）、无人在场或全部放弃 fail-closed、发起方亲和路由矩阵、并发 ask 各归各回答者不串位（11 用例） ===");
     }
 
     /** 服务视图接口（方法名即服务名 "answers"）。 */
@@ -237,5 +237,49 @@ class InteractionRegistryTest {
         InteractionAnswer answer = answers().ask(InteractionRequest.approval("echo", "{}"));
         assertFalse(answer.approved(), "手动注销后回答者不再在场");
         assertEquals(InteractionAnswer.SOURCE_FAIL_CLOSED, answer.source());
+    }
+
+    @Test
+    void concurrentAsksRouteToOwnPresenterConcurrently() throws Exception {
+        // 审批小队列并发面（M23 工单 03）：两个 ask 并发在飞（各自发起方标记）——
+        // 亲和路由不回退也不串位：cli 发起进 cli 回答者、web 发起进 web 回答者，
+        // 两回答者可同时挂起等待（队列化的并发前提）
+        java.util.concurrent.CountDownLatch cliBusy = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch webBusy = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> cliGot = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> webGot = new java.util.concurrent.atomic.AtomicReference<>();
+        Answerer cliAnswerer = new Answerer() {
+            @Override public InteractionAnswer answer(InteractionRequest req) {
+                cliGot.set(req.subject());
+                cliBusy.countDown();
+                return InteractionAnswer.allow("cli-test");
+            }
+            @Override public String presenterId() { return "cli"; }
+        };
+        Answerer webAnswerer = new Answerer() {
+            @Override public InteractionAnswer answer(InteractionRequest req) {
+                webGot.set(req.subject());
+                webBusy.countDown();
+                return InteractionAnswer.deny("web-test");
+            }
+            @Override public String presenterId() { return "web"; }
+        };
+        answers().register(root, cliAnswerer);
+        answers().register(root, webAnswerer);
+
+        java.util.concurrent.atomic.AtomicReference<InteractionAnswer> cliAsk = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<InteractionAnswer> webAsk = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread cliThread = Thread.ofVirtual().start(() ->
+                cliAsk.set(answers().ask(InteractionRequest.approval("from-cli", "{}", "cli"))));
+        Thread webThread = Thread.ofVirtual().start(() ->
+                webAsk.set(answers().ask(InteractionRequest.approval("from-web", "{}", "web"))));
+        org.junit.jupiter.api.Assertions.assertTrue(cliBusy.await(3, java.util.concurrent.TimeUnit.SECONDS), "cli 回答者已接住");
+        org.junit.jupiter.api.Assertions.assertTrue(webBusy.await(3, java.util.concurrent.TimeUnit.SECONDS), "web 回答者已接住（并发在飞）");
+        cliThread.join(3_000);
+        webThread.join(3_000);
+        org.junit.jupiter.api.Assertions.assertEquals("from-cli", cliGot.get(), "cli 发起进 cli 回答者");
+        org.junit.jupiter.api.Assertions.assertEquals("from-web", webGot.get(), "web 发起进 web 回答者");
+        org.junit.jupiter.api.Assertions.assertTrue(cliAsk.get().approved(), "答案不串位（cli ask 拿 allow）");
+        org.junit.jupiter.api.Assertions.assertFalse(webAsk.get().approved(), "答案不串位（web ask 拿 deny）");
     }
 }

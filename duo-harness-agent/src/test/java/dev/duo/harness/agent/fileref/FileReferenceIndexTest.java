@@ -26,11 +26,12 @@ class FileReferenceIndexTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：FileReferenceIndexTest —— 路径索引防护矩阵（5 用例） ===");
+        System.out.println("\n=== 套件：FileReferenceIndexTest —— 路径索引防护矩阵（6 用例） ===");
     }
 
     private List<String> paths(int maxEntries) throws Exception {
-        FileReferenceIndex index = new FileReferenceIndex(dir, maxEntries);
+        FileReferenceIndex index = new FileReferenceIndex(dir, maxEntries,
+                dev.duo.harness.tools.fs.IgnorePolicy.load(dir));
         return index.buildIndex().stream().map(FileReferenceIndex.Candidate::path)
                 .collect(Collectors.toList());
     }
@@ -44,6 +45,21 @@ class FileReferenceIndexTest {
         assertTrue(out.contains("README.md"));
         assertTrue(out.contains("src"));
         assertTrue(out.contains("src/main/App.java"));
+    }
+
+    @Test
+    void gitignoreTargetsExcludedSameAsTools() throws Exception {
+        // 同口径（M23 工单 08）：.gitignore 忽略的目标不进补全索引——
+        // 补全看得到的 grep 一定看得到（同一判定器同口径）
+        Files.writeString(dir.resolve(".gitignore"), "generated.txt\n");
+        Files.writeString(dir.resolve("generated.txt"), "x");
+        Files.writeString(dir.resolve("handmade.txt"), "x");
+        FileReferenceIndex index = new FileReferenceIndex(dir, 1000,
+                dev.duo.harness.tools.fs.IgnorePolicy.load(dir));
+        List<String> paths = index.buildIndex().stream()
+                .map(FileReferenceIndex.Candidate::path).collect(Collectors.toList());
+        assertTrue(paths.contains("handmade.txt"), "可见文件在索引");
+        assertTrue(!paths.contains("generated.txt"), ".gitignore 目标不进索引: " + paths);
     }
 
     @Test
@@ -102,7 +118,8 @@ class FileReferenceIndexTest {
 
     @Test
     void resolveOutsideWorkspaceIsNull() {
-        FileReferenceIndex index = new FileReferenceIndex(dir, 1000);
+        FileReferenceIndex index = new FileReferenceIndex(dir, 1000,
+                dev.duo.harness.tools.fs.IgnorePolicy.load(dir));
         assertEquals(dir.resolve("a.txt").normalize(), index.resolve("a.txt"));
         assertNull(index.resolve("../outside.txt"));
         assertNull(index.resolve("/etc/passwd"));

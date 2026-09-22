@@ -68,7 +68,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
     public Set<String> optionalInject() {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
                 dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
-                dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME);
+                dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME,
+                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME);
     }
 
     @Override
@@ -158,6 +159,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
                     DuoHome.resolve().resolveDir("agent-sessions"), pageSize,
                     attachments, () -> llm.vision(), sessionQuery);
+            // 后台任务完成通知路由（M23 工单 04）：fs 行在场时挂载——注册表缺席零感
+            if (ctx.hasService(dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME)) {
+                face.setBackgroundTaskRegistry(ctx.as(WebBackgroundTasksView.class).backgroundTasks());
+            }
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
@@ -295,4 +300,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     /** 页长上界：尾窗快照缓冲与页长成正比，防配置错误演变为内存耗尽（OCR #21）。 */
     static final int MAX_PAGE_SIZE = 1_000;
+
+    /** 后台任务注册表的视图接口（服务名 backgroundTasks，M23 工单 04）。 */
+    interface WebBackgroundTasksView {
+
+        dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks();
+    }
 }

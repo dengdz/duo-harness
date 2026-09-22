@@ -2,6 +2,38 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.18.0（2026-09-22）
+
+### Added
+
+- **迭代上限感知（M23 工单 10，ADR-0025）**：agent 距迭代上限剩 2 轮（含本轮）的那次请求，组装时附加 `<system-reminder>` 提醒段引导模型主动收敛（"剩余 2 轮，请收敛并交付结论"）——不落会话日志、不改变上限值与达限行为（超限仍 completed=false，可见化不变）；提醒位于治理投影之后必达（compaction 不吞）、恰好一次不刷屏
+
+- **技能热加载（M23 工单 09，ADR-0025）**：修改 SKILL.md 或新增/删除技能免重启即生效——watch 监视四发现根（含根目录首次创建），变更触发重扫描（内容有变 revision 递增），技能清单片段按内容 sha256 digest 去重：变化才重发、只重发一次；模型侧 skill 工具与清单即时读到最新内容；watch 不可用（环境限制）降级为启动扫描 + 日志警告，不阻断技能发现
+
+- **.gitignore 忽略判定器：三消费点同口径（M23 工单 08，ADR-0025 决策三）**：glob/grep/@file 补全共用自研忽略判定（不捆绑 rg）——逐级堆叠解析各目录 .gitignore 与根 .git/info/exclude，git 同语义（! 反选 last-match-wins、** 跨层、字符类、尾 / 目录限定、前导 / 锚定、\ 转义含转义行尾空格，坏行静默跳过）；判定取 .gitignore ∪ 硬编码产物目录（node_modules/target 等）∪ VCS 目录并集——.gitignore 目标从三处结果同时消失，口径分裂消灭；祖先目录被忽略即整树剪枝（目录内反选救不回，git 同义）；已知姿态差异记 limitations（未闭合 [ 按坏行、判定按会话缓存）
+
+- **headless --json：脚本化任务驱动（M23 工单 07，ADR-0025）**：`DuoMain --json [--session-id <id>] [装配.yml] <任务文本...>` 一次性跑任务——stdout 输出逐行 JSON 事件流（词汇：session/status/text/tool_call/tool_result/error/final，工单计"七类"以列举为准；text 仅在 assistant/message 提交点发射，final 帧承载无损答案豁免截断、必发为消费锚点；status 帧带实测 token 用量、缺样本省略），诊断只走 stderr；退出码即成败契约（completed→0 否则 1、SIGTERM→0、SIGINT→130、usage→2）；headless 流内禁交互——审批/提问自动拒绝并发显式 error 帧（审计落会话、final 必达不挂死）；`--session-id` 恢复既有会话续跑（事件流连续不重放）；装配 yml 自动禁用 cli/web 呈现位行（headless 自身即第三呈现位）；中间帧 8K/32K 截断降级链（超限 `truncated:true`，duo 帧字段恒为标量故无"降级标量"中间级——与 DSH 四段链的记档差异）
+
+- **bash 输出三层与 spill（M23 工单 05，ADR-0025 决策二）**：bash 输出分层——内存尾窗（默认 30k 字符）+ 懒 spill 落盘（超 inline 预算才落盘，`task-output`/回传路径可回读全量）+ 64Mi 字符超帽显式告警不静默；三层预算与 task-output 尾窗（32k）经 `fs-tools` 行 config.output 段 yml 可配；前台后台共用分层机制，后台 settle 刷 spill 缓冲防回读缺尾，插件停止清理 spill 无残渣
+
+- **后台任务可见化（M23 工单 06）**：CLI 提示符带后台状态段——有运行中任务时显示 `[后台 N 个运行中]`，全部完成显示 `[后台已完成 bg-N]`，无任务零噪声；Web 状态面新增「后台任务」区块（id/命令/状态/退出码，终态保留呈现）；任务按发起呈现位归属过滤（复用 presenterId）——CLI 与 Web 双开时互不串显（验收实测修正：CLI 触发的任务不再出现在 Web 新会话状态面，完成通知同样各归各位），无归属任务（子代理/直调）双面均可见
+
+- **bash run_in_background 与 task 面（M23 工单 04，ADR-0025 决策二）**：bash 工具新增 `run_in_background` 参数——立即返回任务 id（bg-N）转后台运行（后台不受 timeoutMs 约束，暂停/中断不杀后台，进程退出全杀防孤儿）；新增 `task-output`（block/timeout 等待或快照读输出尾部窗口）与 `task-stop`（杀进程树，幂等）两工具；完成通知必达——agent 空闲自动开新轮消费、执行中挂收件箱 next-turn 收口合并消费（first-wins 每任务至多一条）；CLI 与 Web 双呈现位同款路由
+
+- **暂停：协作式中断与恢复（M23 工单 02，ADR-0025 决策一）**：运行期可随时暂停 agent 任务——CLI 运行期 Ctrl+C 单击触发协作式中断（当前工具终止、已流出文本保留、再按一次强制退出 130，空闲单击退出进程；`System.console()` 门控，测试/headless/管道环境保留默认终止语义），`/stop` 行命令为兜底入口；Web 输入框旁停止按钮（执行中出现）+ `POST /api/stop`；中断时已流出文本落 `assistant/interrupted` 会话事件（投影带 `[已中断]` 前缀，重放/续接可见中断点）、本轮未派发的工具调用补合成结果（日志可重放无悬空）；会话停在可恢复态，下一条消息即续接。不做原地冻结
+
+### Fixed
+
+- **glob 锚定相对模式永不命中（M23 工单 01 验收实测发现）**：`glob` 以绝对路径直接匹配用户模式，`docs/adr/*.md` 等锚定相对模式零结果（仅 `**` 前缀形态因可吞绝对路径前导段而侥幸可用）；修复 = 先相对化到搜索根再匹配，并补 Java glob `**/` 零目录段变体（根下直接文件靠去前缀匹配器命中）——锚定/任意深度两种形态一致可用，`path` 参数语义同步明确为「模式相对该目录解析」
+
+### Changed
+
+- **审批小队列（M23 工单 03，ADR-0025）**：Web 回答者由单待答升级 FIFO 排队——并发到达的第二个请求不再被拒（防御性升级，串行架构下不悬空）；CLI 审批呈现加本轮序号（第 2 项起显示「本轮第 i 项审批」，turn 边界归零）；Web 审批卡支持 Esc 键拒绝（与 FIFO 最旧完成语义对齐）；中断余项合成 deny——应答等待被打断按 fail-closed 收口且不残留线程中断标志（防审批审计事件落盘被 NIO 炸）；CLI 应答等待期斜杠命令逃逸闸门（/stop 在审批等待时可执行，不再被吞作应答）
+
+- **CLI 事件驱动主循环与两级收件箱（M23 工单 01，ADR-0025 决策一）**：终端 REPL 从"阻塞读 + 同步执行"改为读者线程与 turn 线程拆分——agent 执行期间键入的普通文本注入收件箱 next-step 级并回显「已插队」，模型下一步边界即见（修复"执行期输入被静默当新输入消费"缺陷）；执行期斜杠命令照走注册表（busySafe 即行、非 busySafe 得到等待回应，ADR-0020 决策 4 在 CLI 真正生效）；审批/提问应答行经应答闸门路由、EOF/停止即时 fail-closed；EOF 不腰斩执行中的 turn；agent 域注入 seam 升级两级（新增 next-turn 收口排干，多条合并为一条生效，供后台通知消费）；Web busy 注入 202 行为不变
+
+- **M23（0.18.0）启动规划落盘：grill 十二问收敛 + ADR-0025 三裁定 + spec 与 11 张工单**：`docs/adr/0025-M23执行与CLI体验三裁定.md`——①CLI 事件驱动主循环与两级收件箱（虚拟线程常驻读 stdin、next-step step 边界注入/next-turn 收口消费、暂停协作式中断+恢复：Ctrl+C 在跑先停再按退出/空闲即退、`/stop` 兜底、Web 停止按钮、不做原地冻结）②后台任务注册表与输出三层（inline 30k/spill 64MiB/task-output 尾窗 32k、超帽告警不静默、yml 可配）+ task-output/task-stop 两工具 + 完成通知 first-wins 必达（busy 挂 next-turn 收口合并、暂停不杀后台）③.gitignore 自研判定器（红线 4 拒捆绑 rg、全常用子集、.gitignore∪产物目录∪VCS 目录三源并集、glob/grep/@file 同口径）；spec `.scratch/m23-cli-experience/spec.md`（34 条用户故事、七组既有测试 seam）+ 11 张工单（01-06 主线依赖链：主循环→暂停→审批队列→后台→spill→可见化；07-10 零依赖并行：headless --json/.gitignore/技能热加载/上限感知；11 收尾）；术语表 11 词条增改（新增收件箱/暂停/审批小队列/后台任务/spill/忽略判定/NDJSON 事件流/技能热加载，steer 升两级语义、迭代上限增感知提醒、发现根去「不做热加载」）；backlog「CLI 运行中 steer 入口」转 M23 正式范围（ADR-0025 决策一）
+
 ## 0.17.0（2026-09-21）
 
 ### Changed

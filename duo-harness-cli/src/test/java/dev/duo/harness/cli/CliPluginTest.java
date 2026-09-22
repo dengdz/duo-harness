@@ -26,9 +26,13 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -40,9 +44,10 @@ class CliPluginTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：REPL 循环、命令注册表入口"
-                + "（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
-                + "/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、/compact 压缩、/permission 持久化、/title 改名（14 用例） ===");
+        System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：事件驱动 REPL（busy 插队/应答闸门/EOF 不腰斩）、"
+                + "命令注册表入口（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
+                + "/stop 协作式中断与续接、/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、"
+                + "/compact 压缩、/permission 持久化、/title 改名、审批等待中 /stop 余项 deny、后台完成通知双路径、中断不杀后台、后台任务提示行（25 用例） ===");
     }
 
     interface ToolsView {
@@ -58,14 +63,33 @@ class CliPluginTest {
     @TempDir
     Path tempDir;
 
-    /** 脚本化 REPL 夹具：注入输入/mock LLM/临时会话目录，跑完脚本等 idle。 */
+    /** 脚本输入行：text + 可选等待标记（null = 默认等第 N 个 idle 提示符「你>」）。 */
+    private record InputLine(String text, String awaitMarker) {
+
+        static InputLine of(String text) {
+            return new InputLine(text, null);
+        }
+
+        /** busy 期投递：等输出出现标记（如「[调工具]」「[待审批]」）才写行。 */
+        static InputLine paced(String text, String marker) {
+            return new InputLine(text, marker);
+        }
+    }
+
+    /** 脚本化 REPL 夹具：节奏化注入输入/mock LLM/临时会话目录，跑完脚本等 idle。 */
     private static final class Fixture {
         final ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
         final Context root = Context.root();
         final Path sessionsDir;
+        private final List<InputLine> lines;
+        private volatile String feederError;
 
         Fixture(Path sessionsDir, String scriptedInput, LlmAdapter llm) throws Exception {
-            this(sessionsDir, scriptedInput, llm, null);
+            this(sessionsDir, splitLines(scriptedInput), llm, null);
+        }
+
+        Fixture(Path sessionsDir, List<InputLine> lines, LlmAdapter llm) throws Exception {
+            this(sessionsDir, lines, llm, null);
         }
 
         /**
@@ -75,7 +99,13 @@ class CliPluginTest {
          */
         Fixture(Path sessionsDir, String scriptedInput, LlmAdapter llm,
                 java.util.function.Consumer<Context> preAssembly) throws Exception {
+            this(sessionsDir, splitLines(scriptedInput), llm, preAssembly);
+        }
+
+        Fixture(Path sessionsDir, List<InputLine> lines, LlmAdapter llm,
+                java.util.function.Consumer<Context> preAssembly) throws Exception {
             this.sessionsDir = sessionsDir;
+            this.lines = lines;
             root.plugin(new ToolsPlugin(), null).awaitStartup();
             root.plugin(new PromptPlugin(), JsonNodeFactory.instance.objectNode()
                     .put("systemPrompt", "测试提示")).awaitStartup();
@@ -98,12 +128,70 @@ class CliPluginTest {
             if (preAssembly != null) {
                 preAssembly.accept(root);
             }
+            // 节奏化输入（M23 工单 01 事件驱动）：管道 + 供给线程按节奏写行——
+            // 默认等第 N 个 idle 提示符（模拟真人逐轮输入），标记行等 busy 期信号
+            java.io.PipedOutputStream pipe = new java.io.PipedOutputStream();
             BufferedReader in = new BufferedReader(new InputStreamReader(
-                    new ByteArrayInputStream(scriptedInput.getBytes(StandardCharsets.UTF_8)),
-                    StandardCharsets.UTF_8));
+                    new java.io.PipedInputStream(pipe, 4096), StandardCharsets.UTF_8));
             // 声明 config 类型即须提供 config 块（内核严格绑定，字段可省）
             root.plugin(new CliPlugin(in, new PrintStream(outBuf, true, StandardCharsets.UTF_8),
                     sessionsDir, llm), JsonNodeFactory.instance.objectNode()).awaitStartup();
+            startFeeder(pipe);
+        }
+
+        private static List<InputLine> splitLines(String scriptedInput) {
+            return java.util.Arrays.stream(scriptedInput.split("\n"))
+                    .map(String::strip)
+                    .filter(s -> !s.isEmpty())
+                    .map(InputLine::of)
+                    .toList();
+        }
+
+        /** 输入供给线程：逐行等待节奏点（提示符计数或标记出现）后写入，写尽关管即 EOF。 */
+        private void startFeeder(java.io.PipedOutputStream pipe) {
+            Thread.ofVirtual().name("cli-input-feeder").start(() -> {
+                try {
+                    for (int i = 0; i < lines.size(); i++) {
+                        InputLine line = lines.get(i);
+                        long deadline = System.currentTimeMillis() + 10_000;
+                        boolean ready = false;
+                        while (System.currentTimeMillis() < deadline) {
+                            ready = line.awaitMarker() != null
+                                    ? output().contains(line.awaitMarker())
+                                    : promptCount(output()) >= i + 1;
+                            if (ready) {
+                                break;
+                            }
+                            Thread.sleep(20);
+                        }
+                        if (!ready) {
+                            throw new IllegalStateException("第 " + i + " 行（" + line.text()
+                                    + "）未在时限内等到节奏点");
+                        }
+                        pipe.write((line.text() + "\n").getBytes(StandardCharsets.UTF_8));
+                        pipe.flush();
+                    }
+                } catch (Exception e) {
+                    feederError = e.getMessage() == null ? e.toString() : e.getMessage();
+                } finally {
+                    try {
+                        pipe.close(); // 写尽即 EOF（读者线程 readLine 返回 null）
+                    } catch (java.io.IOException ignored) {
+                        // 已关
+                    }
+                }
+            });
+        }
+
+        /** 输出中 idle 提示符「你>」的出现次数（默认节奏的基准）。 */
+        private static int promptCount(String output) {
+            int count = 0;
+            int idx = 0;
+            while ((idx = output.indexOf("你> ", idx)) >= 0) {
+                count++;
+                idx += 3;
+            }
+            return count;
         }
 
         String output() {
@@ -152,10 +240,16 @@ class CliPluginTest {
         void awaitIdle() throws InterruptedException {
             long deadline = System.currentTimeMillis() + 10_000;
             while (System.currentTimeMillis() < deadline) {
+                if (feederError != null) {
+                    throw new AssertionError("输入供给线程失败: " + feederError + "\n输出:\n" + output());
+                }
                 if (output().contains("=== 对话结束 ===")) {
                     return;
                 }
                 Thread.sleep(50);
+            }
+            if (feederError != null) {
+                throw new AssertionError("输入供给线程失败: " + feederError + "\n输出:\n" + output());
             }
             throw new AssertionError("REPL 未在时限内进入 idle，输出:\n" + output());
         }
@@ -299,8 +393,10 @@ class CliPluginTest {
                 return new dev.duo.harness.llm.LlmTurn("已执行", List.of());
             }
         };
-        // 输入流：第一行触发工具调用，第二行是审批的 "y"
-        Fixture fx = new Fixture(dir, "写入\ny\n/exit\n", llm);
+        // 输入流：第一行触发工具调用，第二行是审批的 "y"（busy 期按 [待审批] 标记投递——
+        // 应答行经事件驱动读者线程的应答闸门路由给 ConsoleAnswerer，M23 工单 01）
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("写入"), InputLine.paced("y", "[待审批]"),
+                InputLine.of("/exit")), llm);
         try {
             fx.awaitIdle();
             String out = fx.output();
@@ -336,8 +432,8 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             String out = fx.output();
-            assertTrue(out.contains("未知命令: /nope（可用命令: export, exit, new, permission, compact, title, plan"),
-                    "五命令注册序即清单序: " + out);
+            assertTrue(out.contains("未知命令: /nope（可用命令: export, exit, stop, new, permission, compact, title, plan"),
+                    "六命令注册序即清单序（/stop 插在 exit 后）: " + out);
         } finally {
             fx.dispose();
         }
@@ -398,7 +494,8 @@ class CliPluginTest {
                 return new dev.duo.harness.llm.LlmTurn("完成", List.of());
             }
         };
-        Fixture fx = new Fixture(dir, "跑个命令\ny\n/exit\n", llm);
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("跑个命令"), InputLine.paced("y", "[待审批]"),
+                InputLine.of("/exit")), llm);
         try {
             fx.awaitIdle();
             String out = fx.output();
@@ -406,6 +503,537 @@ class CliPluginTest {
             assertTrue(out.contains("[调工具] bash {\"command\":\"echo 呈现回归\"}"),
                     "通用叙述行原样含工具名与参数: " + out);
             assertTrue(out.contains("[工具结果] 呈现回归"), "通用结果行回填命令输出: " + out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void busyInputSteersIntoNextStepAndReachesNextRequest() throws Exception {
+        // 执行期键入（M23 工单 01，ADR-0025 决策一）：busy 期普通文本注入收件箱
+        // next-step 级，提示行回显「已插队」，下一轮请求可见——不再被静默当新输入消费。
+        // 探针工具阻塞执行制造稳定 busy 窗口：插队确认出现后才放行工具，注入必在边界前
+        Path dir = tempDir.resolve("steer");
+        CountDownLatch probeRelease = new CountDownLatch(1);
+        AtomicReference<dev.duo.harness.llm.ChatRequest> secondRequest = new AtomicReference<>();
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    // 先流出一段文本再调阻塞探针——「开始执行」即稳定 busy 期标记
+                    // （[调工具] 在工具执行完成后才打印，不能作投递节奏标记）
+                    textSink.accept("开始执行");
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "probe", "{}")));
+                }
+                secondRequest.set(request);
+                textSink.accept("最终回答");
+                return new dev.duo.harness.llm.LlmTurn("最终回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("问"), InputLine.paced("插队提示", "开始执行"),
+                InputLine.of("/exit")), llm, ctx -> ctx.as(ToolsView.class).tools().register(ctx,
+                blockingProbe(probeRelease)));
+        try {
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (!fx.output().contains("[已插队]") && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            assertTrue(fx.output().contains("[已插队] 插队提示"),
+                    "插队回显可见: " + fx.output());
+            probeRelease.countDown();
+            fx.awaitIdle();
+
+            assertTrue(secondRequest.get().messages().stream()
+                            .anyMatch(m -> m.content() != null && m.content().contains("插队提示")),
+                    "插队文本进下一轮请求（模型下一步可见）");
+            assertTrue(fx.output().contains("[工具结果] probe-done"),
+                    "飞行中工具组照常执行: " + fx.output());
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void busyCommandRefusesNonBusySafeAndRunsBusySafe() throws Exception {
+        // 执行期命令分级（ADR-0020 决策 4 在事件驱动 CLI 真正生效）：busySafe 命令
+        // 即行（/permission 查看），非 busySafe 得到等待回应（/exit 被拒），空闲后
+        // 再 /exit 正常退出
+        Path dir = tempDir.resolve("busy-cmd");
+        CountDownLatch probeRelease = new CountDownLatch(1);
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    // 先流出标记文本再调阻塞探针（busy 窗口锚点，理由同上）
+                    textSink.accept("开始执行");
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "probe", "{}")));
+                }
+                textSink.accept("完成");
+                return new dev.duo.harness.llm.LlmTurn("完成", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("问"), InputLine.paced("/permission", "开始执行"),
+                InputLine.paced("/exit", "开始执行"), InputLine.of("/exit")), llm,
+                ctx -> ctx.as(ToolsView.class).tools().register(ctx, blockingProbe(probeRelease)));
+        try {
+            long deadline = System.currentTimeMillis() + 10_000;
+            String out;
+            while (System.currentTimeMillis() < deadline) {
+                out = fx.output();
+                if (out.contains("当前预设: read-only") && out.contains("agent 执行中，需等待空闲")) {
+                    break;
+                }
+                Thread.sleep(20);
+            }
+            out = fx.output();
+            assertTrue(out.contains("当前预设: read-only"), "busySafe 命令执行期即行: " + out);
+            assertTrue(out.contains("agent 执行中，需等待空闲"), "非 busySafe 命令得到等待回应: " + out);
+            probeRelease.countDown();
+            fx.awaitIdle();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void eofDuringBusyWaitsForTurnCompletion() throws Exception {
+        // EOF 不腰斩执行中的 turn（M23 事件驱动语义）：读者线程读到 EOF 时 turn 在飞
+        // ——join 等收尾再 idle，最终回答完整落盘
+        Path dir = tempDir.resolve("eof-busy");
+        CountDownLatch releaseTurn = new CountDownLatch(1);
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                try {
+                    releaseTurn.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                textSink.accept("慢回答");
+                return new dev.duo.harness.llm.LlmTurn("慢回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("问")), llm);
+        try {
+            Thread.sleep(200); // 让 EOF 先于释放到达（读者线程进入 join 等待）
+            releaseTurn.countDown();
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("慢回答"), "EOF 不腰斩：最终回答完整呈现: " + fx.output());
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    /** 阻塞探针工具：执行等待放行闩（制造稳定 busy 窗口），只读可并发。 */
+    private static dev.duo.harness.tools.ToolDefinition blockingProbe(CountDownLatch release) {
+        return new dev.duo.harness.tools.ToolDefinition() {
+            @Override
+            public String name() {
+                return "probe";
+            }
+
+            @Override
+            public String description() {
+                return "只读探针";
+            }
+
+            @Override
+            public com.fasterxml.jackson.databind.JsonNode parameters() {
+                return JsonNodeFactory.instance.objectNode().put("type", "object");
+            }
+
+            @Override
+            public boolean isConcurrencySafe(com.fasterxml.jackson.databind.JsonNode args) {
+                return true;
+            }
+
+            @Override
+            public Object execute(dev.duo.harness.tools.ToolExecution execution) {
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                return "probe-done";
+            }
+        };
+    }
+
+    @Test
+    void stopCommandInterruptsBusyTurnAndResumesOnNextMessage() throws Exception {
+        // /stop 协作式中断（M23 工单 02）：busy 期投递 /stop（busySafe 即行）→ 慢工具
+        // 被打断收口（[已中断] 行 + 会话事件 assistant/interrupted + 未派发调用合成）；
+        // 下一条消息即续接（可恢复态）
+        Path dir = tempDir.resolve("stop");
+        CountDownLatch probeRelease = new CountDownLatch(1);
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    textSink.accept("开始执行");
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "probe", "{}"),
+                            new dev.duo.harness.llm.ToolCallRequest("call_2", "probe", "{}")));
+                }
+                textSink.accept("续接回答");
+                return new dev.duo.harness.llm.LlmTurn("续接回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("问"),
+                InputLine.paced("/stop", "开始执行"),
+                InputLine.paced("继续", "[已中断]"),
+                InputLine.of("/exit")), llm,
+                ctx -> ctx.as(ToolsView.class).tools().register(ctx, blockingProbe(probeRelease)));
+        try {
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (!fx.output().contains("[已中断]") && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            String out = fx.output();
+            assertTrue(out.contains("已请求中断当前任务"), "/stop 回执: " + out);
+            assertTrue(out.contains("[已中断] 当前任务已暂停"), "中断收口行: " + out);
+            probeRelease.countDown(); // 双保险放行（探针即使未被打断也能收尾）
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("续接回答"), "中断后续接即继续: " + fx.output());
+
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.ASSISTANT_INTERRUPTED.equals(e.type())),
+                    "中断标记落会话日志");
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.TOOL_RESULT.equals(e.type())
+                                    && e.text().contains("[interrupted]")),
+                    "未派发调用补合成结果");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void stopCommandWhenIdleExplains() throws Exception {
+        // /stop 空闲态：无任务可中断，明确提示（fail-safe 不误报）
+        Path dir = tempDir.resolve("stop-idle");
+        Fixture fx = new Fixture(dir, List.of(InputLine.of("/stop"), InputLine.of("/exit")),
+                fixedReply("答"));
+        try {
+            fx.awaitIdle();
+            assertTrue(fx.output().contains("当前无执行中任务"), fx.output());
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void stopDuringPendingApprovalDeniesItAndInterrupts() throws Exception {
+        // 中断余项合成 deny（M23 工单 03）：审批等待中 /stop——应答闸门的等待线程被
+        // 打断按 fail-closed（deny）收口，无悬挂请求；审批 deny 后 turn 按中断收口
+        Path dir = tempDir.resolve("stop-approval");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                          java.util.function.Consumer<String> textSink) {
+                turn++;
+                if (turn == 1) {
+                    textSink.accept("开始执行");
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"sleep 30\"}")));
+                }
+                textSink.accept("续接回答");
+                return new dev.duo.harness.llm.LlmTurn("续接回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("跑个长命令"),
+                InputLine.paced("/stop", "[待审批]"),
+                InputLine.paced("继续", "[已中断]"),
+                InputLine.of("/exit")), llm);
+        try {
+            fx.awaitIdle(); // 会话锁释放后再开 latest（中断→续接→/exit 全链收尾）
+            String out = fx.output();
+            assertTrue(out.contains("[待审批] 工具 bash"), "审批卡呈现: " + out);
+            assertTrue(out.contains("已请求中断当前任务"), "/stop 在应答等待期逃逸闸门生效: " + out);
+            assertTrue(out.contains("[已中断]"), "审批 deny 后按中断收口: " + out);
+
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.APPROVAL_DECIDED.equals(e.type())
+                                    && e.text().startsWith("deny")),
+                    "审批以 deny 决出（fail-closed 合成）");
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            SessionEvent.ASSISTANT_INTERRUPTED.equals(e.type())),
+                    "中断标记落日志");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void backgroundTaskCompletionRoutesAsIdleNewTurn() throws Exception {
+        // 后台完成通知（M23 工单 04）：空闲期后台任务完成 → 自动开新 turn 消费通知
+        // （无需用户再输入）；通知含 taskId 与终态。mock turn1 发 bash 后台调用，
+        // 审批 y 放行后 turn2 直答收口——后台完成时 agent 已空闲，通知自动开轮
+        Path dir = tempDir.resolve("bg-idle");
+        java.util.concurrent.atomic.AtomicInteger turn = new java.util.concurrent.atomic.AtomicInteger();
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (turn.incrementAndGet() == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-notice-done\",\"run_in_background\":true}")));
+                }
+                textSink.accept("已转后台");
+                return new dev.duo.harness.llm.LlmTurn("已转后台", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("用后台方式跑 echo bg-notice-done"),
+                InputLine.paced("y", "[待审批]"),
+                InputLine.of("/exit")), llm);
+        try {
+            fx.awaitIdle(); // 「已转后台」轮结束，agent 空闲
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (!fx.output().contains("[后台任务完成] bg-1") && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            // 通知以 user/message 落日志（CLI 不回显用户消息）——stdout 判据是「排队消息生效」
+            assertTrue(fx.output().contains("[排队消息生效]"), "通知轮自动开跑: " + fx.output());
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1")),
+                    "完成通知落会话日志: " + latest.events().stream().map(SessionEvent::type).toList());
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("bg-notice-done")),
+                    "后台产物在通知文本中");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void backgroundTaskCompletionDuringBusyMergesAtTurnClose() throws Exception {
+        // busy 期完成通知（M23 工单 04）：同一 turn 内先转后台（echo 秒完成）再进入
+        // 慢步骤——完成时 agent busy → 通知挂 next-turn → turn 收口「排队消息生效」
+        // 合并消费。mock：turn1 发后台 bash 调用，turn2 慢直答（拉长 busy 窗口）
+        Path dir = tempDir.resolve("bg-busy");
+        java.util.concurrent.atomic.AtomicInteger turn = new java.util.concurrent.atomic.AtomicInteger();
+        dev.duo.harness.llm.LlmAdapter slow = new dev.duo.harness.llm.LlmAdapter() {
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (turn.incrementAndGet() == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-during-busy\",\"run_in_background\":true}")));
+                }
+                try { Thread.sleep(2_500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                textSink.accept("长任务结束");
+                return new dev.duo.harness.llm.LlmTurn("长任务结束", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("先转后台跑一条命令，然后慢慢收尾"),
+                InputLine.paced("y", "[待审批]"),
+                InputLine.of("/exit")), slow);
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("[后台任务] bg-1 已启动"), "后台任务受理: " + out);
+            assertTrue(out.contains("[排队消息生效]"), "next-turn 收口合并消费: " + out);
+            assertTrue(out.contains("[后台任务] bg-1 已启动：echo bg-during-busy"),
+                    "后台产物在启动回执: " + out);
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1")),
+                    "完成通知落会话日志");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void interruptionSparesBackgroundTaskAndNoticeStillArrives() throws Exception {
+        // 暂停不杀后台（M23 工单 04 与 02 集成）：后台任务启动即完成（echo 即返），
+        // 完成通知在慢直答轮在飞期到达 → busy 挂 next-turn；turn 被协作式中断收口后
+        // [排队消息生效] 合并消费——中断不碰注册表、通知不丢（会话日志可见）
+        Path dir = tempDir.resolve("bg-interrupt");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int phase = 0;
+
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (phase == 0) {
+                    phase = 1;
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-survives\",\"run_in_background\":true}")));
+                }
+                if (phase == 1) {
+                    // 慢直答制造可打断窗口：/stop 的中断在此打断（收口后续接轮走 phase 2）
+                    phase = 2;
+                    try {
+                        Thread.sleep(8_000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("流被中断打断", e);
+                    }
+                    textSink.accept("不应到达");
+                    return new dev.duo.harness.llm.LlmTurn("不应到达", List.of());
+                }
+                textSink.accept("续接回答");
+                return new dev.duo.harness.llm.LlmTurn("续接回答", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("转后台跑一条长命令"),
+                InputLine.paced("y", "[待审批]"),
+                InputLine.paced("/stop", "[后台任务] bg-1 已启动"),
+                InputLine.paced("好了没", "已请求中断当前任务"),
+                InputLine.of("/exit")), llm);
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("已请求中断当前任务"), "/stop 生效: " + out);
+            assertTrue(out.contains("[已中断]"), "turn 中断收口: " + out);
+            assertTrue(out.contains("续接回答"), "中断后续接: " + out);
+            long deadline = System.currentTimeMillis() + 10_000;
+            Session latest = null;
+            while (System.currentTimeMillis() < deadline) {
+                latest = Session.latest(dir);
+                boolean noticed = latest.events().stream().anyMatch(e ->
+                        "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1"));
+                if (noticed) break;
+                latest.close();
+                Thread.sleep(100);
+            }
+            assertTrue(latest.events().stream().anyMatch(e ->
+                    "user/message".equals(e.type()) && e.text().contains("[后台任务完成] bg-1")),
+                    "中断后完成通知照达（不杀后台、通知不丢）");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
+
+    @Test
+    void backgroundTaskE2EReceiptAndNotificationConsumed() throws Exception {
+        // 后台任务 E2E（M23 工单 04/06）：转后台受理（y 审批放行）→ bg-1 秒完成（echo）
+        // → 完成通知在「已转后台」轮在飞期到达 → busy 挂 next-turn → 该轮收口
+        // [排队消息生效] 合并消费（REPL 活跃期内的完整链路）。
+        // 已知边界：REPL 结束（/exit/EOF→goIdle）后到达的通知不呈现（呈现位已拆，
+        // 会话已关——与「进程退出全灭」同族的合理边界）
+        Path dir = tempDir.resolve("bg-hint");
+        java.util.concurrent.atomic.AtomicInteger turn = new java.util.concurrent.atomic.AtomicInteger();
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (turn.incrementAndGet() == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-notice\",\"run_in_background\":true}")));
+                }
+                try { Thread.sleep(800); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                textSink.accept("已转后台");
+                return new dev.duo.harness.llm.LlmTurn("已转后台", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("转后台跑一条带延迟的命令"),
+                InputLine.paced("y", "[待审批]")), llm);
+        try {
+            // 等 bg-1 完成 → 通知轮自动消费（EOF 已到但通知轮能跑：endRequested=false）
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (!fx.output().contains("[排队消息生效]")
+                    && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+            }
+            assertTrue(fx.output().contains("[排队消息生效]"), "通知轮消费: " + fx.output());
+            fx.awaitIdle();
+            // 通知文本作为 user/message 落会话日志（不打印 stdout）
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            "user/message".equals(e.type())
+                                    && e.text().contains("[后台任务完成] bg-1")),
+                    "通知文本落会话日志");
+            latest.close();
         } finally {
             fx.dispose();
         }
@@ -635,5 +1263,30 @@ class CliPluginTest {
             }
         }
         throw new AssertionError("子代理未在时限内完成");
+    }
+
+    @Test
+    void backgroundHintRendersRunningAndDone() throws Exception {
+        // 提示行渲染纯函数直测（M23 工单 06）：运行中显示计数、全部完成显示最近完成、
+        // 无任务零噪声——渲染只依赖注册表快照（与 E2E 时序解耦，消除 flaky）
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        assertEquals("", dev.duo.harness.cli.CliPlugin.backgroundHint(registry), "无任务零噪声");
+
+        // 阻塞任务运行中 → 计数提示
+        var process = new ProcessBuilder("bash", "-c", "sleep 30").start();
+        registry.start(process, "sleep 30");
+        String hint = dev.duo.harness.cli.CliPlugin.backgroundHint(registry);
+        assertTrue(hint.contains("[后台 1 个运行中]"), "运行中计数: " + hint);
+
+        // 归属过滤（M23 工单 06 验收修正）：web 发起的任务不占 CLI 提示符——
+        // 无归属（null）与 cli 发起的可见
+        var webProcess = new ProcessBuilder("bash", "-c", "sleep 30").start();
+        registry.start(webProcess, "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_WEB);
+        var cliProcess = new ProcessBuilder("bash", "-c", "sleep 30").start();
+        registry.start(cliProcess, "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        String filtered = dev.duo.harness.cli.CliPlugin.backgroundHint(registry);
+        assertTrue(filtered.contains("[后台 2 个运行中]"),
+                "cli+无归属计数、web 任务被滤除: " + filtered);
+        registry.shutdownAll(); // 清理：杀任务进程
     }
 }

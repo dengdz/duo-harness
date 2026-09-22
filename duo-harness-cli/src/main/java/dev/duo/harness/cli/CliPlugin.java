@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -57,9 +58,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p><b>纯对话装配</b>（ADR-0019）：workspace 声明为可选依赖——boot yml 不装
  * fs 工具插件行时本插件照常启动，`/permission` 降级提示"未挂载"。</p>
  *
- * <p>线程约定：REPL 循环独占虚拟线程（cli-repl）；{@link #stop} 可从树 dispose
- * 线程并发调用（关输入流打断阻塞读 + 原子停止标志）；会话与回答者的清理在 idle
- * 收尾点单线程执行，stop 只负责打断。</p>
+ * <p><b>事件驱动主循环</b>（M23 工单 01，ADR-0025 决策一）：REPL 从"阻塞 readLine +
+ * 同步执行"改为读者线程与 turn 线程拆分——读者线程常驻读 stdin：空闲期走命令分发
+ * 与 turn 启动；busy 期普通文本注入收件箱 next-step 级（插队，提示行回显「已插队」）、
+ * 斜杠命令照走注册表（busySafe 即行，非 busySafe 得到等待回应）；审批/提问/计划的
+ * 应答行经应答闸门优先路由给 {@link ConsoleAnswerer}。turn 线程执行 send，收口后
+ * 消费收件箱 next-turn 级（多条合并为一条，立即开新轮）。执行期输入不再沉入行缓冲
+ * 被静默当新输入消费。</p>
+ *
+ * <p>线程约定：读者线程独占虚拟线程（cli-repl）；执行期 turn 跑在独立虚拟线程
+ * （cli-agent）；{@link #stop} 可从树 dispose 线程并发调用（关输入流打断阻塞读 +
+ * 打断两个线程 + 应答闸门 fail-closed）；会话与回答者的清理在 idle 收尾点单线程
+ * 执行（读者线程 join turn 线程后统一收尾），stop 只负责打断。busy 期 busySafe
+ * 命令在读者线程落会话事件，与 turn 线程的对话事件并发——同 Web 面 busySafe
+ * 命令的既有同况，数据安全由 Session.append 内部锁保证（「单写者」约定按呈现位
+ * 主对话流口径理解，审查已对账）。</p>
  *
  * <p>配置（块内字段可省）：
  * <pre>{@code config:
@@ -81,9 +94,23 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
     private final AtomicBoolean stopped = new AtomicBoolean(false);
     private Thread replThread;
+    /** 执行中的 turn 线程（cli-agent；stop 打断与读者线程 EOF 等待的锚点）。 */
+    private volatile Thread turnThread;
+    /**
+     * 应答闸门（M23 工单 01）：审批/提问/计划的输入行通道——读者线程见 pending
+     * 即把行路由进来，ConsoleAnswerer 经 {@code awaitLine()} 取行；EOF/stop 置
+     * closed 后取行立即 fail-closed（不依赖在飞时序补行，审查修复）。
+     */
+    private final AnswerGate answerGate = new AnswerGate();
     /** 回答者注册的注销器（idle 与 stop 均摘除；幂等守卫见 #detachAnswerer）。 */
     private Disposable answererRegistration;
     private volatile boolean answererDetached;
+    /** 终端回答者实例（M23 工单 03：turn 边界审批计数归零的直连句柄）。 */
+    private volatile ConsoleAnswerer consoleAnswerer;
+    /** turn 收口/停止标志（M23 工单 04：通知路由的 idle 开轮需要跨方法可达）。 */
+    private final AtomicBoolean endRequested = new AtomicBoolean(false);
+    /** 后台任务注册表（M23 工单 04/06；null = fs 工具未装——提示行无后台段）。 */
+    private volatile dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks;
 
     /** 生产构造：System.in/out + 配置装配。 */
     public CliPlugin() {
@@ -116,7 +143,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> optionalInject() {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
-                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME);
+                dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
+                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME);
     }
 
     @Override
@@ -198,8 +226,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
                 maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
                 requestVariants, visionEnabled, fileDelivery);
+        ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out);
+        this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
-                new AuditingAnswerer(holder::current, new ConsoleAnswerer(in, out)));
+                new AuditingAnswerer(holder::current, console));
         PlanHolder plan = new PlanHolder();
         PresenterAssembly.registerInteractionTools(ctx, tools, answers, ChatAgent.PRESENTER_CLI,
                 holder::current, () -> {
@@ -224,9 +254,33 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // agent 引用经持取器（/new 换绑即换 agent 实例）与单飞标志（busySafe 分级的探针）
         AgentHolder agentHolder = new AgentHolder(agent);
         AtomicBoolean agentBusy = new AtomicBoolean(false);
+        // 协作式中断的再按闸（M23 工单 02）：运行期第一次 Ctrl+C 请求中断，第二次强制退出
+        AtomicBoolean interruptArmed = new AtomicBoolean(false);
+        // 后台任务完成通知路由（M23 工单 04，ADR-0025 决策二）：agent 空闲 → 直接开新
+        // turn 消费通知（first-wins 必达）；busy → 挂收件箱 next-turn（turn 收口合并消费）。
+        // 注册表缺席（fs 工具未装）即无通知，零感
+        if (ctx.hasService(dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME)) {
+            var registry = ctx.as(BackgroundTasksView.class).backgroundTasks();
+            this.backgroundTasks = registry;
+            registry.addListener(task -> {
+                // 归属过滤（M23 工单 06 验收修正）：CLI 只消费本位发起（或无归属）的任务，
+                // Web 侧任务完成不在终端开轮/注入
+                if (task.owner() != null && !dev.duo.harness.agent.ChatAgent.PRESENTER_CLI.equals(task.owner())) {
+                    return;
+                }
+                String notice = task.notice();
+                if (agentBusy.compareAndSet(false, true)) {
+                    startTurn(notice, agentHolder, agentBusy, interruptArmed); // 空闲：开新轮消费
+                } else {
+                    // busy：挂 next-turn 收口合并消费。已知边界（审查记档）：与 turn 收口
+                    // 竞态窗口内注入的通知延至下次交互消费——不丢（必达=延迟语义）
+                    agentHolder.agent.injectNextTurn(notice);
+                }
+            });
+        }
         registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
                 maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
-                workspacePolicy);
+                workspacePolicy, agentBusy, interruptArmed);
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
         // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
         PresenterAssembly.restorePermissionMode(
@@ -242,7 +296,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         out.flush();
 
         replThread = Thread.ofVirtual().name("cli-repl").start(() ->
-                replLoop(commands, skills, holder, plan, agentHolder, agentBusy));
+                replLoop(commands, skills, holder, plan, agentHolder, agentBusy, interruptArmed));
+        registerSigintHandler(agentHolder, agentBusy, interruptArmed);
         return this::stop;
     }
 
@@ -331,11 +386,22 @@ public final class CliPlugin implements Plugin<JsonNode> {
                                   ContextGovernance governance, int maxIterations,
                                   int maxParallelToolCalls, Path sessionsDir,
                                   SessionHolder holder, AgentHolder agentHolder,
-                                  PlanHolder plan, WorkspacePolicy workspacePolicy) {
+                                  PlanHolder plan, WorkspacePolicy workspacePolicy,
+                                  AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
         commands.register(ctx, new CommandDefinition("exit", "结束终端对话（会话锁释放，插件保持挂载）",
                 CommandScope.CLI, false, context -> {
                 context.requestEnd();
                 return "";
+            }));
+        // /stop（M23 工单 02，ADR-0025 决策一）：SIGINT 不可拦截环境的兜底暂停入口，
+        // busySafe——运行中即执行；与 Ctrl+C 单击同语义（协作式中断，会话停可恢复态）
+        commands.register(ctx, new CommandDefinition("stop",
+                "协作式中断当前任务（已流出内容保留，会话停在可恢复态；再发消息即续接）",
+                CommandScope.CLI, true, context -> {
+                if (!agentBusy.get() || !agentHolder.agent.requestInterrupt()) {
+                    return "当前无执行中任务，无须中断。";
+                }
+                return "已请求中断当前任务（协作式收口中，稍候）…";
             }));
         commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
                 CommandScope.CLI, false, context -> {
@@ -413,95 +479,323 @@ public final class CliPlugin implements Plugin<JsonNode> {
     }
 
     /**
-     * REPL 主循环（M19 起输入解释走命令注册表共享入口）：读行 → dispatch（命令 →
-     * 技能直调 → 未知命令报错）→ 命令即回显结果（/exit 经结束回调跳出），透传文本
-     * 交 agent 执行（单飞标志随执行期置位——busySafe 分级的探针）。
+     * REPL 读者循环（M23 事件驱动，ADR-0025 决策一）：常驻读 stdin——空闲行走命令
+     * 分发与 turn 启动；busy 行普通文本注入收件箱 next-step 级（插队回显）、斜杠命令
+     * 照走注册表、应答行经闸门路由回答者；EOF 时不腰斩执行中的 turn（join 后收尾）。
+     * turn 本体跑在 cli-agent 虚拟线程，收口后消费 next-turn 队列（多条合并为一条）。
      */
     private void replLoop(CommandsRegistry commands, SkillRegistry skills, SessionHolder holder,
-                          PlanHolder plan, AgentHolder agentHolder, AtomicBoolean agentBusy) {
-        AtomicBoolean endRequested = new AtomicBoolean(false);
+                          PlanHolder plan, AgentHolder agentHolder, AtomicBoolean agentBusy,
+                          AtomicBoolean interruptArmed) {
         try {
-            while (!stopped.get()) {
-                out.print("你> ");
+            while (!stopped.get() && !endRequested.get()) {
+                out.print(backgroundHint() + "你> ");
                 out.flush();
                 String line = in.readLine();
                 if (line == null) {
+                    answerGate.close(); // 在飞应答随 EOF 立即 fail-closed，随后 join 收尾
+                    awaitTurnThread();
                     break;
                 }
-                String input = line.strip();
-                if (input.isEmpty()) {
-                    continue;
-                }
-                CommandOutcome outcome = commands.dispatch(input,
-                        new CommandEnv(CommandScope.CLI, holder::current, out::println,
-                                () -> endRequested.set(true), agentBusy::get),
-                        skills);
-                if (endRequested.get()) {
-                    break; // /exit：请求结束回调已置位（done 审计已落盘）
-                }
-                String userText;
-                if (outcome.isCommand()) {
-                    if (!outcome.text().isEmpty()) {
-                        out.println(outcome.text());
-                        out.flush();
-                    }
-                    if (outcome.forward() == null) {
-                        continue;
-                    }
-                    userText = outcome.forward(); // /plan 携任务描述：回显结果后再推进
-                } else {
-                    userText = outcome.text();
-                }
-                agentBusy.set(true);
-                try {
-                    var reply = agentHolder.agent.send(userText, new AgentListener() {
-                        @Override
-                        public void onChunk(String text) {
-                            out.print(text);
-                            out.flush();
-                        }
-
-                        @Override
-                        public void onToolCall(String toolName, String argumentsJson) {
-                            if (TodoWriteTool.NAME.equals(toolName)) {
-                                // 清单更新的参数是整表 JSON（终端不画清单）——只打动作行，
-                                // 计数摘要随 onToolResult 的结果文本给出（ADR-0018）
-                                out.println();
-                                out.println("  [清单] 更新任务清单…");
-                                out.flush();
-                                return;
-                            }
-                            out.println();
-                            out.println("  [调工具] " + toolName + " " + argumentsJson);
-                            out.flush();
-                        }
-
-                        @Override
-                        public void onToolResult(String toolName, String resultText, boolean isError) {
-                            if (TodoWriteTool.NAME.equals(toolName)) {
-                                out.println("  [清单] " + resultText);
-                                out.flush();
-                                return;
-                            }
-                            out.println("  [工具" + (isError ? "错误] " : "结果] ") + resultText);
-                            out.flush();
-                        }
-                    });
-                    if (!reply.completed()) {
-                        out.println("  [异常终止] " + reply.finalText());
-                    }
-                } catch (PluginException e) {
-                    out.println("  [错误] " + e.getMessage());
-                } finally {
-                    agentBusy.set(false);
-                }
-                out.println();
-                out.flush();
+                handleLine(line.strip(), commands, skills, holder, agentHolder,
+                        agentBusy, interruptArmed);
             }
         } catch (IOException e) {
             // stop() 关闭输入流打断阻塞读——按 /exit 同语义收尾（idle）
         }
         goIdle(holder, plan);
+    }
+
+    /** 单行路由（M23 事件驱动）：应答闸门 → busy 插队/命令 → idle 分发与 turn 启动。 */
+    private void handleLine(String input, CommandsRegistry commands, SkillRegistry skills,
+                            SessionHolder holder, AgentHolder agentHolder,
+                            AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
+        if (input.isEmpty()) {
+            return;
+        }
+        // 应答行优先：审批/提问在飞时输入行是给回答者的（y/n、序号、自由文本）——
+        // 斜杠行例外（M23 工单 03 审查发现）：应答等待期的 /stop 若被闸门吞作应答，
+        // 中断入口即被挡死；命令行逃逸闸门走 busy 分发（/stop 即行、其余照旧分级）
+        if (answerGate.pending() && !input.startsWith("/")) {
+            answerGate.offer(input);
+            return;
+        }
+        if (agentBusy.get()) {
+            handleBusyLine(input, commands, skills, holder, agentHolder, agentBusy);
+            return;
+        }
+        handleIdleLine(input, commands, skills, holder, agentHolder, agentBusy, interruptArmed);
+    }
+
+    /** 空闲行（与阻塞时代同语义）：dispatch（命令 → 技能直调 → 未知报错）→ 透传文本开 turn。 */
+    private void handleIdleLine(String input, CommandsRegistry commands, SkillRegistry skills,
+                                SessionHolder holder, AgentHolder agentHolder,
+                                AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
+        CommandOutcome outcome = commands.dispatch(input,
+                new CommandEnv(CommandScope.CLI, holder::current, out::println,
+                        () -> endRequested.set(true), agentBusy::get),
+                skills);
+        if (endRequested.get()) {
+            return; // /exit：请求结束回调已置位（done 审计已落盘），读者循环随即跳出
+        }
+        String userText;
+        if (outcome.isCommand()) {
+            if (!outcome.text().isEmpty()) {
+                out.println(outcome.text());
+                out.flush();
+            }
+            if (outcome.forward() == null) {
+                return;
+            }
+            userText = outcome.forward(); // /plan 携任务描述：回显结果后再推进
+        } else {
+            userText = outcome.text();
+        }
+        // CAS 封口：与后台通知线程的开轮竞争败北时改插队（消息不丢）
+        if (!agentBusy.compareAndSet(false, true)) {
+            agentHolder.agent.injectUserMessage(userText);
+            return;
+        }
+        startTurn(userText, agentHolder, agentBusy, interruptArmed);
+    }
+
+    /**
+     * busy 行（M23 事件驱动，修复"执行期输入被当新输入消费"）：普通文本/技能直调注入
+     * 收件箱 next-step 级并回显「已插队」；斜杠命令照走注册表——busySafe 立即执行，
+     * 非 busySafe 得到等待回应（BUSY_REFUSAL，ADR-0020 决策 4）；命令转发文本同走插队。
+     */
+    private void handleBusyLine(String input, CommandsRegistry commands, SkillRegistry skills,
+                                SessionHolder holder, AgentHolder agentHolder,
+                                AtomicBoolean agentBusy) {
+        CommandOutcome outcome = commands.dispatch(input,
+                new CommandEnv(CommandScope.CLI, holder::current, out::println,
+                        () -> {
+                        }, agentBusy::get),
+                skills);
+        if (outcome.isCommand()) {
+            if (!outcome.text().isEmpty()) {
+                out.println();
+                out.println("  " + outcome.text());
+                out.flush();
+            }
+            if (outcome.forward() != null) {
+                steerIntoNextStep(outcome.forward(), agentHolder);
+            }
+            return;
+        }
+        steerIntoNextStep(outcome.text(), agentHolder);
+    }
+
+    /** next-step 插队 + 提示行回显（ADR-0025 决策一）：注入失败（不支持）时如实提示。 */
+    private void steerIntoNextStep(String text, AgentHolder agentHolder) {
+        boolean accepted = agentHolder.agent.injectUserMessage(text);
+        String preview = text.split("\n", 2)[0];
+        if (preview.length() > 40) {
+            preview = preview.substring(0, 40) + "…";
+        }
+        if (accepted) {
+            out.println("  [已插队] " + preview + "（下一步边界生效）");
+        } else {
+            out.println("  [提示] 当前 agent 不支持运行中注入，输入未送达。");
+        }
+        out.flush();
+    }
+
+    /**
+     * 启动 turn 线程（cli-agent）：单飞标志置位后再派生（读者线程随后即见 busy）；
+     * 收口后消费 next-turn 队列——多条合并为一条立即开新轮（ADR-0025 决策一/二），
+     * 直到队列空或收到退出/停止。
+     */
+    private boolean startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
+                              AtomicBoolean interruptArmed) {
+        // busy 占位由调用方 CAS 完成（M23 工单 04 审查修复：通知线程与读者线程的
+        // 开轮竞争在调用方用 compareAndSet 封口，本方法信任占位无条件执行）
+        Runnable turn = () -> {
+            try {
+                String current = userText;
+                while (current != null && !stopped.get() && !endRequested.get()) {
+                    runOneTurn(current, agentHolder, interruptArmed);
+                    java.util.List<String> queued = agentHolder.agent.drainNextTurn();
+                    if (queued.isEmpty()) {
+                        break;
+                    }
+                    current = String.join("\n\n", queued);
+                    out.println("  [排队消息生效]");
+                    out.flush();
+                }
+            } finally {
+                agentBusy.set(false);
+            }
+        };
+        // 先登记后启动（审查修复）：stop 在登记与启动的窗口内也能命中打断——
+        // NEW 态线程 interrupt 是无害空操作；停止后不启动，busy 标志就地复位
+        Thread thread = Thread.ofVirtual().name("cli-agent").unstarted(turn);
+        turnThread = thread;
+        if (stopped.get()) {
+            agentBusy.set(false);
+            return true;
+        }
+        thread.start();
+        return true;
+    }
+
+    /** 单轮执行：send + 流式渲染 + 终态行（中断/异常收敛为提示行，不终结事件循环）。 */
+    private void runOneTurn(String userText, AgentHolder agentHolder, AtomicBoolean interruptArmed) {
+        try {
+            var reply = agentHolder.agent.send(userText, turnListener());
+            if (reply.interrupted()) {
+                out.println("  [已中断] 当前任务已暂停——已流出内容保留在会话中，"
+                        + "发送新消息即可从中断处续接。");
+            } else if (!reply.completed()) {
+                out.println("  [异常终止] " + reply.finalText());
+            }
+        } catch (PluginException e) {
+            out.println("  [错误] " + e.getMessage());
+        } catch (RuntimeException e) {
+            // turn 线程不静默死亡（审查修复）：非 Plugin 异常收敛为错误行，事件循环存活
+            out.println("  [错误] 执行异常: "
+                    + (e.getMessage() != null ? e.getMessage() : e.toString()));
+        } finally {
+            interruptArmed.set(false); // 中断收口完成，再按闸复位
+        }
+        out.println();
+        out.flush();
+    }
+
+    /** 流式渲染监听（工具叙述行通用形态，M12-03 起零工具特化；清单动作行除外）。 */
+    private AgentListener turnListener() {
+        return new AgentListener() {
+            @Override
+            public void onChunk(String text) {
+                out.print(text);
+                out.flush();
+            }
+
+            @Override
+            public void onToolCall(String toolName, String argumentsJson) {
+                if (TodoWriteTool.NAME.equals(toolName)) {
+                    // 清单更新的参数是整表 JSON（终端不画清单）——只打动作行，
+                    // 计数摘要随 onToolResult 的结果文本给出（ADR-0018）
+                    out.println();
+                    out.println("  [清单] 更新任务清单…");
+                    out.flush();
+                    return;
+                }
+                out.println();
+                out.println("  [调工具] " + toolName + " " + argumentsJson);
+                out.flush();
+            }
+
+            @Override
+            public void onToolResult(String toolName, String resultText, boolean isError) {
+                if (TodoWriteTool.NAME.equals(toolName)) {
+                    out.println("  [清单] " + resultText);
+                    out.flush();
+                    return;
+                }
+                out.println("  [工具" + (isError ? "错误] " : "结果] ") + resultText);
+                out.flush();
+            }
+        };
+    }
+
+    /**
+     * 应答闸门：审批/提问/计划的输入行通道（M23 工单 01）。回答者经 {@link #awaitLine()}
+     * 取行（置位 pending），读者线程见 pending 即把行路由进来；EOF/stop 置 closed 后
+     * 取行按 null 返回（fail-closed）——即使审批在 EOF 之后才发起也不挂死（审查修复）。
+     *
+     * <p>已知边界：pending 置位发生在回答者被询问之后——读者查询与置位间的微窗内键入
+     * 的行会被当 steer 注入（无害：模型可见该文本；真实输入秒级 vs 窗口微秒级）。</p>
+     */
+    private static final class AnswerGate {
+        private final java.util.concurrent.BlockingQueue<String> lines =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        private final AtomicBoolean pending = new AtomicBoolean(false);
+        private volatile boolean closed = false;
+
+        /** 读者线程投递一行（y/n、序号、自由文本）。 */
+        void offer(String line) {
+            lines.offer(line);
+        }
+
+        /** 输入终结（EOF / stop）：等待中的取行立即 fail-closed 返回。 */
+        void close() {
+            closed = true;
+            lines.offer("");
+        }
+
+        boolean pending() {
+            return pending.get();
+        }
+
+        /** 回答者取行：阻塞至有行/终结/打断；终结与打断均按 null（fail-closed）返回。 */
+        String awaitLine() {
+            pending.set(true);
+            try {
+                while (!closed) {
+                    String line = lines.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if (line != null) {
+                        return line;
+                    }
+                }
+                return null;
+            } catch (InterruptedException e) {
+                // 协作式中断唤醒（M23 工单 03）：不重设线程标志——中断语义由
+                // interruptRequested 布尔承载，残留标志会炸后续 NIO 落盘
+                // （审批审计事件的 append 在工具线程上，ClosedByInterruptException）
+                return null;
+            } finally {
+                pending.set(false);
+            }
+        }
+    }
+
+    /**
+     * 后台提示段（M23 工单 06 可见化）：有运行中/已终态后台任务时，提示符前缀带
+     * 计数与最近完成——无任务返回空串（零噪声）。
+     */
+    private String backgroundHint() {
+        return backgroundHint(backgroundTasks);
+    }
+
+    /** 纯函数形态（可直测，M23 工单 06）：hint 渲染只依赖注册表快照。CLI 只看本位
+     * 发起（或无归属）的任务——Web 侧任务不占终端提示符（M23 工单 06 验收修正）。 */
+    static String backgroundHint(dev.duo.harness.tools.fs.BackgroundTaskRegistry registry) {
+        var mine = ownedTasks(registry, dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        if (mine.isEmpty()) {
+            return "";
+        }
+        long running = mine.stream()
+                .filter(t -> t.state() == dev.duo.harness.tools.fs.BackgroundTask.State.RUNNING).count();
+        if (running > 0) {
+            return "[后台 " + running + " 个运行中] ";
+        }
+        var latest = mine.get(mine.size() - 1);
+        return "[后台已完成 " + latest.taskId() + "] ";
+    }
+
+    /** 归属过滤（呈现位复用 presenterId，M19）：本位发起或无归属（null，双面可见）。 */
+    static List<dev.duo.harness.tools.fs.BackgroundTask> ownedTasks(
+            dev.duo.harness.tools.fs.BackgroundTaskRegistry registry, String presenterId) {
+        if (registry == null) {
+            return List.of();
+        }
+        return registry.all().stream()
+                .filter(t -> t.owner() == null || t.owner().equals(presenterId))
+                .toList();
+    }
+
+    /** 读者线程等执行中的 turn 收尾（EOF 不腰斩在飞任务；stop 打断即返回）。 */
+    private void awaitTurnThread() {
+        Thread thread = turnThread;
+        if (thread == null) {
+            return;
+        }
+        try {
+            thread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** 摘除计划指导片段（Disposable 声明受检异常；失败不阻断流程）。 */
@@ -532,18 +826,63 @@ public final class CliPlugin implements Plugin<JsonNode> {
         out.flush();
     }
 
-    /** 插件停止（树 dispose / shutdown hook 调用）：打断阻塞读并按 idle 收尾。 */
+    /**
+     * SIGINT（Ctrl+C）三态拦截（M23 工单 02，ADR-0025 决策一）：运行期单击 = 协作式中断
+     * （再按一次强制退出 130）；空闲单击 = 退出进程（shutdown hook 级联 dispose）。
+     * 注册以 {@code System.console() != null} 为门：真实终端才拦截——测试/管道/
+     * headless 场景保留 JVM 默认终止（headless --json 的 SIGINT=130 退出码契约天然成立，
+     * ADR-0025）。{@code sun.misc.Signal} 为 HotSpot 内部 API（事实上稳定）——环境
+     * 不支持时静默跳过，暂停仍有 /stop 行命令兜底。
+     */
+    private void registerSigintHandler(AgentHolder agentHolder, AtomicBoolean agentBusy,
+                                       AtomicBoolean interruptArmed) {
+        if (System.console() == null) {
+            return; // 非交互终端：不拦截，保留默认终止语义
+        }
+        try {
+            sun.misc.Signal.handle(new sun.misc.Signal("INT"), sig -> {
+                if (agentBusy.get()) {
+                    // 置 armed 以「中断已被 agent 接受」为前提（审查修复）：busy 但 send
+                    // 已收口的互斥窗口里 requestInterrupt 返回 false——不当"再按"记账，
+                    // 否则新 turn 的第一次 Ctrl+C 会被误判为二次而直接退出
+                    if (!agentHolder.agent.requestInterrupt()) {
+                        return; // 收口竞态窗口：本次按键作废，稍候即空闲
+                    }
+                    if (interruptArmed.compareAndSet(false, true)) {
+                        out.println();
+                        out.println("  [中断] 已请求中断当前任务；再按一次 Ctrl+C 强制退出。");
+                        out.flush();
+                    } else {
+                        Runtime.getRuntime().exit(130); // 二次 Ctrl+C：强制退出（SIGINT 惯例码）
+                    }
+                } else {
+                    Runtime.getRuntime().exit(0); // 空闲：退出进程（shutdown hook 级联清理）
+                }
+            });
+        } catch (Throwable unsupported) {
+            // Signal 不可用（非 HotSpot 等）：提示降级路径（可发现性），/stop 行命令仍可用
+            out.println("[提示] 当前环境不支持 Ctrl+C 拦截，暂停请使用 /stop 命令。");
+            out.flush();
+        }
+    }
+
+    /** 插件停止（树 dispose / shutdown hook 调用）：打断阻塞读与执行中的 turn，按 idle 收尾。 */
     private void stop() {
         if (!stopped.compareAndSet(false, true)) {
             return;
         }
         try {
-            in.close(); // 解除 readLine 阻塞（System.in 的关闭无害——进程正在退出）
+            in.close(); // 解除读者线程 readLine 阻塞（System.in 的关闭无害——进程正在退出）
         } catch (IOException ignored) {
             // 已关
         }
         if (replThread != null) {
             replThread.interrupt();
+        }
+        answerGate.close(); // 在飞应答随停止立即 fail-closed
+        Thread activeTurn = turnThread;
+        if (activeTurn != null) {
+            activeTurn.interrupt(); // NEW 态为无害空操作；已启动的在飞应答/执行随打断收敛
         }
     }
 
@@ -659,5 +998,11 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliWorkspaceView {
 
         WorkspacePolicy workspace();
+    }
+
+    /** 后台任务注册表的视图接口（服务名 backgroundTasks，M23 工单 04）。 */
+    interface BackgroundTasksView {
+
+        dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks();
     }
 }

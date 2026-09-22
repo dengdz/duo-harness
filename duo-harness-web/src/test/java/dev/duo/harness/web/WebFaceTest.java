@@ -50,7 +50,7 @@ class WebFaceTest {
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
                 + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
                 + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏/入口栅栏 Host 与 Origin）、会话锁冲突与幂等切换、fail-closed 宽限、"
-                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）（38 用例） ===");
+                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）、后台完成通知双路径、后台任务可见化（41 用例） ===");
     }
 
     interface ToolsView {
@@ -297,6 +297,211 @@ class WebFaceTest {
         assertEquals(SessionEvent.USER_MESSAGE, session.events().get(0).type());
         assertEquals("你好", session.events().get(0).text());
         assertEquals("你好呀", session.events().get(1).text());
+    }
+
+    @Test
+    void stopEndpointInterruptsBusyAgentAndFreesForNextMessage() throws Exception {
+        // /api/stop（M23 工单 02，ADR-0025 决策一）：busy 中 202 受理并打断 agent（协作式）；
+        // 中断收口后 busy 解除——下一条消息正常受理（可恢复态）；空闲时 409
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Thread> sender =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean interrupted =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        ChatAgent stub = new ChatAgent() {
+            @Override
+            public AgentReply send(String userText, dev.duo.harness.agent.AgentListener listener) {
+                sender.set(Thread.currentThread());
+                listener.onChunk("部分输出");
+                started.countDown();
+                try {
+                    Thread.sleep(5_000);
+                } catch (InterruptedException e) {
+                    interrupted.set(true);
+                    Thread.currentThread().interrupt();
+                }
+                return interrupted.get()
+                        ? new AgentReply("已中断（协作式暂停）", List.of(), false, true)
+                        : new AgentReply("完整回答", List.of(), true);
+            }
+
+            @Override
+            public boolean requestInterrupt() {
+                Thread active = sender.get();
+                if (active == null) {
+                    return false;
+                }
+                interrupted.set(true);
+                active.interrupt();
+                return true;
+            }
+        };
+        start(Session.create(tempDir.resolve("stop-sessions")), stub);
+
+        HttpResponse<String> first = post("/api/message", "{\"text\": \"长任务\"}");
+        assertEquals(202, first.statusCode());
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS), "send 应已开始");
+        HttpResponse<String> stop = post("/api/stop", "{}");
+        assertEquals(202, stop.statusCode(), "busy 中停止请求受理");
+        assertTrue(stop.body().contains("interrupt-requested"), "结构化受理: " + stop.body());
+
+        // 中断收口（打断即醒，5s sleep 不等满）→ busy 解除 → 下一条消息正常受理
+        long deadline = System.currentTimeMillis() + 5_000;
+        HttpResponse<String> next = null;
+        while (System.currentTimeMillis() < deadline) {
+            next = post("/api/message", "{\"text\": \"续接\"}");
+            if (next.statusCode() == 202 && !next.body().contains("injected")) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertEquals(202, next.statusCode(), "中断后下一条消息正常受理（可恢复态）");
+        assertTrue(next.body().isEmpty(), "非注入受理（busy 已解除）: " + next.body());
+    }
+
+    @Test
+    void stopEndpointRefusesBeforeAnyMessage() throws Exception {
+        // 空闲 409：从未发过消息时停止按钮的请求得到明确拒绝（按钮侧据此复位）
+        start(Session.create(tempDir.resolve("idle-sessions")), (userText, listener) ->
+                new AgentReply("答", List.of(), true));
+        HttpResponse<String> idleStop = post("/api/stop", "{}");
+        assertEquals(409, idleStop.statusCode());
+        assertTrue(idleStop.body().contains("无执行中任务"), idleStop.body());
+    }
+
+
+    @Test
+    void backgroundTaskCompletionRoutesIdleNewTurnAndBusyNextTurn() throws Exception {
+        // 后台完成通知路由（M23 工单 04）：空闲期任务完成 → 通知作为新 turn 送 agent
+        // （桩记录 send 文本）；busy 期任务完成 → injectNextTurn 挂收件箱
+        dev.duo.harness.tools.fs.BackgroundTaskRegistry registry =
+                new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        java.util.List<String> sent = new CopyOnWriteArrayList<>();
+        java.util.List<String> queued = new CopyOnWriteArrayList<>();
+        java.util.concurrent.CountDownLatch busyInFlight = new java.util.concurrent.CountDownLatch(1);
+        ChatAgent stub = new ChatAgent() {
+            @Override
+            public AgentReply send(String userText, dev.duo.harness.agent.AgentListener listener) {
+                sent.add(userText);
+                if (userText.startsWith("[后台任务完成]")) {
+                    return new AgentReply("已收到通知", List.of(), true);
+                }
+                try {
+                    busyInFlight.countDown();
+                    Thread.sleep(2_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new AgentReply("忙完了", List.of(), true);
+            }
+
+            @Override
+            public boolean injectNextTurn(String text) {
+                queued.add(text);
+                return true;
+            }
+        };
+        start(Session.create(tempDir.resolve("bg-sessions")), stub);
+        face.setBackgroundTaskRegistry(registry);
+
+        // 空闲路径：任务完成 → 通知自动开轮（桩 send 收到通知文本）
+        registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo idle-notice");
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (sent.stream().noneMatch(t -> t.startsWith("[后台任务完成]"))
+                && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertTrue(sent.stream().anyMatch(t -> t.startsWith("[后台任务完成]")),
+                "空闲通知自动开轮: " + sent);
+
+        // busy 路径：send 在飞（latch 拉住）→ 任务完成 → injectNextTurn 挂队
+        HttpResponse<String> msg = post("/api/message", "{\"text\": \"忙任务\"}");
+        assertEquals(202, msg.statusCode());
+        assertTrue(busyInFlight.await(3, java.util.concurrent.TimeUnit.SECONDS));
+        registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo busy-notice");
+        deadline = System.currentTimeMillis() + 5_000;
+        while (queued.isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertEquals(1, queued.size(), "busy 通知挂 next-turn");
+        assertTrue(queued.get(0).contains("busy-notice"), "通知文本完整: " + queued);
+    }
+
+
+    @Test
+    void statusJsonCarriesBackgroundTasksAndConvergesAfterCompletion() throws Exception {
+        // 后台任务可见化（M23 工单 06）：注册表在场时 /api/status 携带任务数组
+        // （id/命令/状态/退出码）；任务完成/被 stop 后状态收敛（无幽灵 RUNNING）
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        ChatAgent stub = (userText, listener) -> new AgentReply("答", List.of(), true);
+        start(Session.create(tempDir.resolve("bg-status")), stub);
+        face.setBackgroundTaskRegistry(registry);
+
+        // 无任务：无字段或空数组（前端占位 —）
+        String empty = get("/api/status");
+        assertFalse(empty.contains("bg-"), "无任务不出现任务条目: "
+                + empty.substring(0, Math.min(120, empty.length())));
+
+        // 运行中：RUNNING 状态可见
+        var task = registry.start(new ProcessBuilder("bash", "-c", "sleep 5").start(), "sleep 5");
+        String running = get("/api/status");
+        assertTrue(running.contains("\"taskId\":\"" + task.taskId() + "\""),
+                "运行中任务可见: " + running);
+        assertTrue(running.contains("RUNNING"), "运行中状态: " + running);
+
+        // 终态收敛：task-stop 后状态转 KILLED（无幽灵 RUNNING）
+        new dev.duo.harness.tools.fs.TaskStopTool(registry).execute(
+                new ToolExecution("task-stop",
+                        com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                                .objectNode().put("taskId", task.taskId())));
+        long deadline = System.currentTimeMillis() + 5_000;
+        String done = "";
+        boolean killed = false;
+        while (System.currentTimeMillis() < deadline) {
+            done = get("/api/status");
+            if (done.contains("KILLED")) { killed = true; break; }
+            Thread.sleep(20);
+        }
+        assertTrue(killed, "终态收敛（无幽灵 RUNNING）: " + done);
+    }
+
+    @Test
+    void statusJsonFiltersTasksByWebOwnership() throws Exception {
+        // 归属过滤（M23 工单 06 验收修正）：状态面只列 web 发起（或无归属）的任务——
+        // CLI 侧任务不串显到浏览器新会话
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        ChatAgent stub = (userText, listener) -> new AgentReply("答", List.of(), true);
+        start(Session.create(tempDir.resolve("bg-owner")), stub);
+        face.setBackgroundTaskRegistry(registry);
+
+        var webTask = registry.start(new ProcessBuilder("bash", "-c", "sleep 30").start(),
+                "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_WEB);
+        var cliTask = registry.start(new ProcessBuilder("bash", "-c", "sleep 30").start(),
+                "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        String status = get("/api/status");
+        assertTrue(status.contains("\"taskId\":\"" + webTask.taskId() + "\""),
+                "web 任务可见: " + status);
+        assertFalse(status.contains("\"taskId\":\"" + cliTask.taskId() + "\""),
+                "cli 任务不串显: " + status);
+        registry.shutdownAll();
+    }
+
+    @Test
+    void completionNoticeIgnoresCliOwnedTasks() throws Exception {
+        // 归属过滤（M23 工单 06 验收修正）：CLI 侧任务完成不在 Web 开通知轮/注入
+        List<String> sent = new CopyOnWriteArrayList<>();
+        ChatAgent stub = (userText, listener) -> {
+            sent.add(userText);
+            return new AgentReply("答", List.of(), true);
+        };
+        start(Session.create(tempDir.resolve("bg-owner-notice")), stub);
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        face.setBackgroundTaskRegistry(registry);
+
+        registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo cli-side",
+                dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        Thread.sleep(500); // 任务早已终态：无归属过滤放行的通知即无轮开启
+        assertTrue(sent.isEmpty(), "cli 任务完成不触发 Web 通知轮: " + sent);
     }
 
     @Test

@@ -44,6 +44,11 @@ const api = {
       body: JSON.stringify(attachments && attachments.length ? { text, attachments } : { text })
     });
   },
+  // 协作式中断（M23 工单 02）：与 CLI /stop、Ctrl+C 单击同语义——已流出内容保留，
+  // 会话停可恢复态，再发消息即续接
+  async stop() {
+    return fetch('/api/stop', { method: 'POST' });
+  },
   // 附件上传（M21 工单 04）：文件 → base64 → 入库，返回引用元数据（发送时随消息提交）
   async uploadAttachment(file) {
     const data = await new Promise((resolve, reject) => {
@@ -865,7 +870,16 @@ const app = (() => {
   }
   $('#subagentClose').addEventListener('click', closeSubagentDrawer);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#subagentDrawer').hidden) closeSubagentDrawer();
+    if (e.key !== 'Escape') return;
+    if (!$('#subagentDrawer').hidden) { closeSubagentDrawer(); return; }
+    // Esc = 拒绝当前审批（M23 工单 03，ADR-0025）：**最旧**一张未冻结的审批卡——与
+    // 服务端 complete() 的 FIFO 最旧完成语义对齐（审查修复：多卡时不点新卡造成
+    // 视觉与语义错位）；复用拒绝按钮点击（冻结卡 + POST deny），计划/提问卡不受影响
+    const pending = $$('.card.interactive', document.getElementById('messages'))
+      .filter(c => c.dataset.toolName !== 'exit_plan_mode'
+        && c.querySelector('[data-action="answer"][data-approved="false"]'));
+    if (pending.length) pending[0]
+      .querySelector('[data-action="answer"][data-approved="false"]').click();
   });
 
 
@@ -876,6 +890,7 @@ const app = (() => {
     const btn = $('#send');
     btn.disabled = busy;
     btn.textContent = busy ? (label || '…') : '发送';
+    $('#stop').hidden = !busy; // 停止按钮只在执行中出现（M23 工单 02：发送侧与执行侧同busy）
   }
 
   function clearSendBusy() {
@@ -884,6 +899,7 @@ const app = (() => {
       btn.disabled = false;
       btn.textContent = '发送';
     }
+    $('#stop').hidden = true;
   }
 
   let sendInFlight = false; // 请求在途闸：只拦重入，不拦"思考中"——执行中发消息是合法注入
@@ -979,6 +995,23 @@ const app = (() => {
   }
   $('#send').addEventListener('click', send);
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  // 停止按钮（M23 工单 02）：协作式中断——202 受理后按钮保持到中断收口
+  // （run/error 帧到达即复位）；409 = 已无任务（并发收口），直接复位
+  $('#stop').addEventListener('click', async () => {
+    try {
+      const res = await api.stop();
+      if (res.status === 202) {
+        showToast('已请求中断（协作式收口中，稍候）', 'info');
+      } else if (res.status === 409) {
+        showToast('当前无执行中任务', 'info');
+        $('#stop').hidden = true;
+      } else {
+        showToast('中断请求失败（HTTP ' + res.status + '）', 'err');
+      }
+    } catch (err) {
+      showToast('中断请求失败：' + errText(err), 'err');
+    }
+  });
   // 附件入口（M21 工单 04）：粘贴与拖拽图片 → 上传入列（vision 关闭时端点 409 提示）
   $('#input').addEventListener('paste', (e) => handleAttachmentFiles(e.clipboardData.files));
 
@@ -1317,6 +1350,21 @@ const app = (() => {
         row.innerHTML = '<td class="mono"></td><td class="desc"></td>';
         row.cells[0].textContent = t.name;
         row.cells[1].textContent = t.description;
+      }
+      // 后台任务区块（M23 工单 06）：注册表缺席无字段 → 占位；终态保留呈现（收敛可见）
+      const bgLine = $('#bgTasks');
+      const tasks = data.backgroundTasks;
+      if (!tasks || !tasks.length) {
+        bgLine.textContent = '—';
+      } else {
+        bgLine.innerHTML = '';
+        for (const t of tasks) {
+          const item = document.createElement('div');
+          item.className = 'bg-task mono';
+          const stateText = t.state === 'RUNNING' ? '运行中' : (t.exitCode === 0 ? '完成(0)' : '结束(' + t.exitCode + ')');
+          item.textContent = t.taskId + ' · ' + stateText + ' · ' + t.command;
+          bgLine.appendChild(item);
+        }
       }
     } catch (e) {
       statusFailures++;

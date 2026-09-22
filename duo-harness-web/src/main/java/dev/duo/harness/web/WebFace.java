@@ -105,6 +105,67 @@ public final class WebFace {
     private final AtomicBoolean busy = new AtomicBoolean(false);
     /** agent send 执行中标志：busySafe 分级的探针（busy 兼作命令互斥，两者分离）。 */
     private final AtomicBoolean agentRunning = new AtomicBoolean(false);
+    /** 后台任务注册表（M23 工单 04；null = 未注入——完成通知路由不挂载）。 */
+    private volatile dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks;
+
+    /** 注入后台任务注册表（完成通知路由；可选——fs 工具未装的部署无通知）。 */
+    public void setBackgroundTaskRegistry(dev.duo.harness.tools.fs.BackgroundTaskRegistry registry) {
+        this.backgroundTasks = registry;
+        if (registry != null) {
+            // 完成通知路由（M23 工单 04，ADR-0025 决策二）：与 CLI 同款双路径——
+            // 空闲直接开新 turn 消费（虚拟线程），busy 挂收件箱 next-turn 收口合并
+            registry.addListener(task -> {
+                // 归属过滤（M23 工单 06 验收修正）：Web 只消费本位发起（或无归属）的
+                // 任务——CLI 侧任务完成不在浏览器开轮/注入
+                if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
+                    return;
+                }
+                ChatAgent current = agent;
+                if (current == null) return;
+                String notice = task.notice();
+                if (busy.compareAndSet(false, true)) {
+                    startAgentTurn(notice, current);
+                } else {
+                    current.injectNextTurn(notice);
+                }
+            });
+        }
+    }
+
+    /**
+     * 启动一轮 agent 执行（虚拟线程）+ next-turn 排干循环（M23 工单 04）：通知路由与
+     * 用户消息共用——turn 收口后 next-turn 队列非空则合并续跑，直到队列空。
+     */
+    private void startAgentTurn(String text, ChatAgent current) {
+        agentRunning.set(true);
+        Thread.ofVirtual().start(() -> {
+            String currentText = text;
+            try {
+                while (currentText != null) {
+                    dev.duo.harness.agent.AgentReply reply =
+                            current.send(currentText, new dev.duo.harness.agent.AgentListener() {
+                                @Override
+                                public void onChunk(String chunk) {
+                                    session.append(SessionEvent.assistantChunk(chunk));
+                                }
+                            });
+                    if (!reply.completed()) {
+                        // 迭代上限 / 中断等未完成终止（ADR-0018）：CLI 有 [异常终止] 行，
+                        // Web 直推 run/error 错误卡补齐可见性（BUG-20260917-03 同口径）
+                        pushTransientFrame(toJson(SessionEvent.errorEvent(reply.finalText())));
+                    }
+                    java.util.List<String> queued = current.drainNextTurn();
+                    currentText = queued.isEmpty() ? null : String.join("\n\n", queued);
+                }
+            } catch (Exception e) {
+                log.warn("消息处理失败", e);
+                pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
+            } finally {
+                agentRunning.set(false);
+                busy.set(false);
+            }
+        });
+    }
     /** 心跳调度器（保活 + 死连接摘除）。 */
     private final java.util.concurrent.ScheduledExecutorService heartbeat =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -386,6 +447,7 @@ public final class WebFace {
         route("/web/", this::handleStatic);
         route("/api/status", this::handleStatus);
         route("/api/message", this::handleMessage);
+        route("/api/stop", this::handleStop);
         route("/api/attachment/upload", this::handleAttachmentUpload);
         route("/api/attachment/read", this::handleAttachmentRead);
         route("/api/session/new", this::handleSessionNew);
@@ -467,7 +529,28 @@ public final class WebFace {
         respondJson(exchange, 200, statusJson());
     }
     /**
-     * 对话入口：立即 202，虚拟线程异步执行 agent.send；
+     * 停止入口（M23 工单 02，ADR-0025 决策一）：POST /api/stop 请求协作式中断——
+     * 与 CLI 的 /stop、Ctrl+C 单击同语义：当前工具终止、已流出文本保留并打中断
+     * 标记、未派发调用补合成结果；会话停在可恢复态，下一条消息即续接。
+     * 空闲（无 send 在飞）返回 409——按钮侧据此复位。
+     */
+    private void handleStop(HttpExchange exchange) throws IOException {
+        if (!requirePost(exchange)) {
+            return;
+        }
+        ChatAgent current = agent;
+        if (current == null) {
+            respondText(exchange, 503, "对话面未就绪（agent 未装配）");
+            return;
+        }
+        if (!agentRunning.get() || !current.requestInterrupt()) {
+            respondText(exchange, 409, "当前无执行中任务");
+            return;
+        }
+        respondJson(exchange, 202, "{\"outcome\":\"interrupt-requested\"}");
+    }
+
+    /** 对话入口：立即 202，虚拟线程异步执行 agent.send；
      * user/message、tool/call、tool/result、assistant/message 由 agent 侧追加（经会话监听器广播），
      * assistant/chunk 由本端 AgentListener 追加（Web 面只补这一种会话事件）。
      */
@@ -652,32 +735,7 @@ public final class WebFace {
         }
         attachmentRefs.forEach(session::appendUserAttachment); // 引用先于 agent 侧 user/message
         exchange.sendResponseHeaders(202, -1);
-        agentRunning.set(true);
-        Thread.ofVirtual().start(() -> {
-            try {
-                dev.duo.harness.agent.AgentReply reply =
-                        current.send(userText, new dev.duo.harness.agent.AgentListener() {
-                            @Override
-                            public void onChunk(String chunk) {
-                                session.append(SessionEvent.assistantChunk(chunk));
-                            }
-                        });
-                if (!reply.completed()) {
-                    // 迭代上限等未完成终止（ADR-0018）：CLI 有 [异常终止] 行而 Web 面原先
-                    // 无提示地停住（BUG-20260917-03 验收 B）——直推 run/error 错误卡补齐可见性；
-                    // 直推帧不落会话历史，与异常路径同一呈现口径
-                    pushTransientFrame(toJson(SessionEvent.errorEvent(reply.finalText())));
-                }
-            } catch (Exception e) {
-                // 错误呈现：非会话事件直推帧（页面渲染 [错误] 卡），不污染会话历史；
-                // 帧内只给通用文案——异常细节服务端日志留痕，不外推（M10-02 脱敏口径）
-                log.warn("消息处理失败", e);
-                pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
-            } finally {
-                agentRunning.set(false);
-                busy.set(false);
-            }
-        });
+        startAgentTurn(userText, current);
     }
     /**
      * 斜杠命令分支（M19）：经命令注册表共享入口解释输入——命中命令同步执行于 Web
@@ -1236,6 +1294,24 @@ public final class WebFace {
                         .put("thresholdTokens", occupancy.thresholdTokens())
                         .put("windowTokens", occupancy.windowTokens())
                         .put("fromProvider", occupancy.fromProvider());
+            }
+            // 后台任务区块（M23 工单 06）：注册表在场时列出本位发起（或无归属）的任务
+            // （id/命令/状态/退出码），终态保留呈现（收敛可见）——CLI 侧任务不串显
+            // （M23 工单 06 验收修正），注册表缺席零字段
+            if (backgroundTasks != null) {
+                var tasksNode = root.putArray("backgroundTasks");
+                for (var task : backgroundTasks.all()) {
+                    if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
+                        continue;
+                    }
+                    var node = tasksNode.addObject()
+                            .put("taskId", task.taskId())
+                            .put("command", task.command())
+                            .put("state", task.state().name());
+                    if (task.isCompleted()) {
+                        node.put("exitCode", task.exitCode());
+                    }
+                }
             }
             return root.toString();
         } catch (Exception e) {

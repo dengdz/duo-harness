@@ -29,7 +29,7 @@ class FsToolsTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：FsToolsTest —— fs 文件工具五件：read 三帽窗口、"
-                + "write 原子+闸门、edit 四态失败、glob/grep 检索（26 用例） ===");
+                + "write 原子+闸门、edit 四态失败、glob/grep 检索（29 用例） ===");
     }
 
     @BeforeEach
@@ -284,6 +284,48 @@ class FsToolsTest {
         long lines = result.lines().filter(s -> !s.isBlank() && !s.startsWith("…")).count();
         assertEquals(100, lines, "截断 100 条");
         assertTrue(result.contains("and 5 more files"), "未显示计数: " + result);
+    }
+
+    @Test
+    void globAnchoredRelativePatternMatches() throws IOException {
+        // 锚定相对模式（验收实测发现）：pattern 相对搜索根匹配——
+        // 绝对路径直接对 matcher.matches 会永不命中（仅 ** 前缀形态侥幸可用）
+        Files.createDirectories(ws.resolve("docs").resolve("adr"));
+        Files.writeString(ws.resolve("docs").resolve("adr").resolve("0001-中文文件名.md"), "x");
+        Files.writeString(ws.resolve("docs").resolve("top.md"), "x");
+        FsGlobTool tool = new FsGlobTool(policy);
+        String result = tool.execute(exec(json("{\"pattern\":\"docs/adr/*.md\"}")));
+        assertTrue(result.contains("0001-中文文件名.md"),
+                "锚定相对模式命中（含中文文件名）: " + result);
+        assertFalse(result.contains("top.md"), "目录外不命中");
+    }
+
+    @Test
+    void globPatternRelativizesToProvidedPath() throws IOException {
+        // path 参数 = 搜索起始目录：pattern 相对该目录解析（不是相对 workspace 根）
+        Files.createDirectories(ws.resolve("src").resolve("main"));
+        Files.writeString(ws.resolve("src").resolve("main").resolve("App.java"), "class App");
+        FsGlobTool tool = new FsGlobTool(policy);
+        String result = tool.execute(exec(json(
+                "{\"pattern\":\"main/*.java\",\"path\":\"src\"}")));
+        assertTrue(result.contains("App.java"), "pattern 相对 path 参数解析: " + result);
+    }
+
+    @Test
+    void gitignoreIgnoredTargetsVanishFromGlobAndGrep() throws IOException {
+        // 同口径集成断言（M23 工单 08）：.gitignore 忽略的目标在 glob 结果与
+        // grep 命中里同时消失——判定器为三消费点唯一口径
+        Files.writeString(ws.resolve(".gitignore"), "secrets.txt\n");
+        Files.writeString(ws.resolve("secrets.txt"), "token=abc\n");
+        Files.writeString(ws.resolve("visible.txt"), "token=ok\n");
+        FsGlobTool glob = new FsGlobTool(policy);
+        String globResult = glob.execute(exec(json("{\"pattern\":\"**/*.txt\"}")));
+        assertTrue(globResult.contains("visible.txt"), "可见文件在 glob: " + globResult);
+        assertFalse(globResult.contains("secrets.txt"), ".gitignore 目标从 glob 消失");
+        FsGrepTool grep = new FsGrepTool(policy);
+        String grepResult = grep.execute(exec(json("{\"pattern\":\"token\"}")));
+        assertTrue(grepResult.contains("visible.txt"), "可见文件在 grep: " + grepResult);
+        assertFalse(grepResult.contains("secrets.txt"), ".gitignore 目标从 grep 消失");
     }
 
     // ---- grep ----

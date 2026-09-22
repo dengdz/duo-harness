@@ -55,6 +55,13 @@ mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
 ```
 
+日常验收/反复启动加 `-DskipTests`（`-am` 会拉起上游全部模块，`package` 默认逐模块跑全量测试，属收口 `mvn test` 的职责）——首次构建或发布前仍用原命令完整跑：
+
+```bash
+mvn -pl duo-harness-example -am package exec:java -DskipTests \
+  -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
+```
+
 LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含本机 fs 工具族六件（read / write / edit / glob / grep / bash，workspace 绑定 = 启动进程的当前目录）、三档权限预设（默认 workspace-write，终端 `/permission [档位]` 查看与切换），以及 web 工具族（M20：`web_fetch` 恒在；解开 `agent-demo.yml` 的 `search` 注释并 `export TAVILY_API_KEY=…` 即含 `web_search`）。标志性场景：
 
 | 输入 | 预期 |
@@ -109,6 +116,25 @@ LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含�
 | 终端敲 `/export`（或 Web 敲，自动下载） | 当前目录生成 `duo-session-<id>.md` 人读记录（角色/时间戳 + 工具摘要 + 附件清单）；`/export json` 得日志原样副本（逐行等价） |
 
 注：会话检索为内存倒排索引（个人会话规模量级），检索/补全均懒构建——启动零成本，首次使用才扫；图片投递缺省 inline base64，`llm.imageDelivery: files` 切 DeepSeek 形态 Files API 上传换 file_id（省大图传输，仅 DeepSeek 端点可用，见[已知限制](../limitations.md)）。
+
+## headless --json（M23，ADR-0025）
+
+同一入口加 `--json`：一次性跑任务，stdout 输出逐行 JSON 事件流（NDJSON），退出码即成败——自动化脚本/CI 不碰交互界面：
+
+```bash
+mvn -pl duo-harness-example -am package exec:java -DskipTests \
+  -Dexec.mainClass=dev.duo.harness.example.DuoMain \
+  -Dexec.args="--json 总结一下当前目录结构"
+```
+
+| 消费点 | 预期 |
+|---|---|
+| stdout 逐行 JSON | `session{sessionId,cwd}` 开场 → `status{phase}` 相位 → `tool_call{callId,tool,input}` / `tool_result{callId,status,result|error}` 工具过程 → `text{text}` 提交点全文 → `final{text}` 无损答案（消费锚点） |
+| 退出码 | completed→0；迭代上限/异常→1；SIGTERM→0、SIGINT→130；usage 错误→2 |
+| 诊断 | 只走 stderr——stdout 可以直接接 `jq` / `grep '"type":"final"'` 管道消费 |
+| 禁交互 | 审批/提问自动拒绝 + 显式 `error` 帧，流程不挂死；超长中间帧 8K/32K 截断带 `truncated:true`（final 永不截断） |
+| 恢复会话 | `--session-id <id>` 续跑既有会话（事件流只推新事件）；会话被占/不存在退出码 1 |
+| yml 装配 | 首个 positional 若为 .yml 文件即自定义装配（cli/web 呈现位行自动禁用），缺省 agent-demo.yml |
 
 ## 技能与计划模式 REPL（M7）
 
