@@ -6,6 +6,8 @@
 
 ### Added
 
+- **.gitignore 忽略判定器：三消费点同口径（M23 工单 08，ADR-0025 决策三）**：glob/grep/@file 补全共用自研忽略判定（不捆绑 rg）——逐级堆叠解析各目录 .gitignore 与根 .git/info/exclude，git 同语义（! 反选 last-match-wins、** 跨层、字符类、尾 / 目录限定、前导 / 锚定、\ 转义含转义行尾空格，坏行静默跳过）；判定取 .gitignore ∪ 硬编码产物目录（node_modules/target 等）∪ VCS 目录并集——.gitignore 目标从三处结果同时消失，口径分裂消灭；祖先目录被忽略即整树剪枝（目录内反选救不回，git 同义）；已知姿态差异记 limitations（未闭合 [ 按坏行、判定按会话缓存）
+
 - **headless --json：脚本化任务驱动（M23 工单 07，ADR-0025）**：`DuoMain --json [--session-id <id>] [装配.yml] <任务文本...>` 一次性跑任务——stdout 输出逐行 JSON 事件流（词汇：session/status/text/tool_call/tool_result/error/final，工单计"七类"以列举为准；text 仅在 assistant/message 提交点发射，final 帧承载无损答案豁免截断、必发为消费锚点；status 帧带实测 token 用量、缺样本省略），诊断只走 stderr；退出码即成败契约（completed→0 否则 1、SIGTERM→0、SIGINT→130、usage→2）；headless 流内禁交互——审批/提问自动拒绝并发显式 error 帧（审计落会话、final 必达不挂死）；`--session-id` 恢复既有会话续跑（事件流连续不重放）；装配 yml 自动禁用 cli/web 呈现位行（headless 自身即第三呈现位）；中间帧 8K/32K 截断降级链（超限 `truncated:true`，duo 帧字段恒为标量故无"降级标量"中间级——与 DSH 四段链的记档差异）
 
 - **后台任务可见化（M23 工单 06）**：CLI 提示符带后台状态段——有运行中任务时显示 `[后台 N 个运行中]`，全部完成显示 `[后台已完成 bg-N]`，无任务零噪声；Web 状态面新增「后台任务」区块（id/命令/状态/退出码，终态保留呈现）；任务按发起呈现位归属过滤（复用 presenterId）——CLI 与 Web 双开时互不串显（验收实测修正：CLI 触发的任务不再出现在 Web 新会话状态面，完成通知同样各归各位），无归属任务（子代理/直调）双面均可见

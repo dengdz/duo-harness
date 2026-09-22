@@ -54,8 +54,12 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
         }
         tools.register(ctx, new FsWriteTool(policy, readGate));
         tools.register(ctx, new FsEditTool(policy, readGate));
-        tools.register(ctx, new FsGlobTool(policy));
-        tools.register(ctx, new FsGrepTool(policy));
+        // 忽略判定器（M23 工单 08，ADR-0025 决策三）：glob/grep 与 @file 补全
+        // 共用同一判定器同口径（@file 经 FileReferenceService 自建同根实例，
+        // 语义等价）——口径分裂消灭
+        IgnorePolicy ignorePolicy = IgnorePolicy.load(policy.root());
+        tools.register(ctx, new FsGlobTool(policy, ignorePolicy));
+        tools.register(ctx, new FsGrepTool(policy, ignorePolicy));
         // 后台任务（M23 工单 04，ADR-0025 决策二）：注册表发布为服务（呈现位挂完成
         // 通知路由），bash 转后台 + task-output/task-stop 构造注入同一实例。
         // 输出三层预算（M23 工单 05）：config.output 段可配，缺席缺省

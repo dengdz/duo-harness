@@ -49,7 +49,8 @@ public final class FileReferenceService {
     }
 
     public FileReferenceService(java.nio.file.Path workspaceRoot, int maxEntries) {
-        this.index = new FileReferenceIndex(workspaceRoot, maxEntries);
+        this.index = new FileReferenceIndex(workspaceRoot, maxEntries,
+                dev.duo.harness.tools.fs.IgnorePolicy.load(workspaceRoot));
     }
 
     /** 单条补全候选（路径相对 workspace 根 + 是否目录）。 */

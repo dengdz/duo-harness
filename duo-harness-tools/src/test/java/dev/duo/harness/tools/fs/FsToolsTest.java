@@ -29,7 +29,7 @@ class FsToolsTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：FsToolsTest —— fs 文件工具五件：read 三帽窗口、"
-                + "write 原子+闸门、edit 四态失败、glob/grep 检索（28 用例） ===");
+                + "write 原子+闸门、edit 四态失败、glob/grep 检索（29 用例） ===");
     }
 
     @BeforeEach
@@ -309,6 +309,23 @@ class FsToolsTest {
         String result = tool.execute(exec(json(
                 "{\"pattern\":\"main/*.java\",\"path\":\"src\"}")));
         assertTrue(result.contains("App.java"), "pattern 相对 path 参数解析: " + result);
+    }
+
+    @Test
+    void gitignoreIgnoredTargetsVanishFromGlobAndGrep() throws IOException {
+        // 同口径集成断言（M23 工单 08）：.gitignore 忽略的目标在 glob 结果与
+        // grep 命中里同时消失——判定器为三消费点唯一口径
+        Files.writeString(ws.resolve(".gitignore"), "secrets.txt\n");
+        Files.writeString(ws.resolve("secrets.txt"), "token=abc\n");
+        Files.writeString(ws.resolve("visible.txt"), "token=ok\n");
+        FsGlobTool glob = new FsGlobTool(policy);
+        String globResult = glob.execute(exec(json("{\"pattern\":\"**/*.txt\"}")));
+        assertTrue(globResult.contains("visible.txt"), "可见文件在 glob: " + globResult);
+        assertFalse(globResult.contains("secrets.txt"), ".gitignore 目标从 glob 消失");
+        FsGrepTool grep = new FsGrepTool(policy);
+        String grepResult = grep.execute(exec(json("{\"pattern\":\"token\"}")));
+        assertTrue(grepResult.contains("visible.txt"), "可见文件在 grep: " + grepResult);
+        assertFalse(grepResult.contains("secrets.txt"), ".gitignore 目标从 grep 消失");
     }
 
     // ---- grep ----
