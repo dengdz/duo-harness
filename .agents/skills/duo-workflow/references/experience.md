@@ -125,3 +125,31 @@ python 的 `str.replace` old 不存在时不报错；转义层级（bash heredoc
 
 **影响范围**：
 所有 agent 执行的批量代码修改与 mvn 构建命令。
+
+## [2026-09-22] L1 grill 开工前必读 duo-workflow experience.md：不因加载非 duo 技能而豁免
+
+**问题描述**：
+M24 启动 grill 首轮重犯了 2026-09-21 已记的「逐题提问」错误（一轮抛 12 问被用户批评"这个没用呗"——旧经验没被用上）。逐题改为单题 AskUserQuestion 后 20 问走完无再纠正。
+
+**原因分析**：
+逐题经验记录在 duo-workflow 的 experience.md，但 grill 会话直接加载的是 mattpocock 的 grilling/grill-with-docs 技能——红线 8 字面是「执行任何 duo- 技能前先读该技能 experience.md」，L1 grill 没有加载任何 duo- 技能，触发面没接上；经验挂在流程名下而非技能名下，模型没把「L1 grill 属 duo-workflow 分流范畴」与「读它的经验」关联起来。
+
+**解决方案**：
+L1 设计访谈（/grill-me、/grill-with-docs）无论加载哪家 grill 技能，开工（首个问题抛出前）无条件先读 duo-workflow references/experience.md；这属于「流程范畴触发」而非「技能加载触发」，不依赖红线 8 的字面。
+
+**影响范围**：
+所有 grill 类会话（L1 需求打磨）与其它「加载外部技能但属 duo 流程范畴」的场景（如 /implement 用外部 implement 技能时同理先读 duo-workflow 经验）。
+
+## [2026-09-22] grill 收口前对照 backlog/代码现状做排他对账，防「事实在手、矛盾漏网」
+
+**问题描述**：
+M24 grill 把 /effort 四行 provider 映射照 ADR-0024 全收，但落 spec 时才发现「Anthropic 行映射」与「仓库仅一个 OpenAI 兼容适配器、Anthropic-messages 适配器已钉 1.0 后菜单」直接矛盾——探测事实早就在手（调研明确报了单适配器现状），grill 的 20 问却没把两者对到一起，用户只能在 spec 期追加裁定（补适配器、provider 显式声明）。
+
+**原因分析**：
+范围确认问的是「ADR 列了什么」，没有问「ADR 列的和 backlog/代码现状是否互斥」；探测事实由子代理汇报后只被当作背景，没有逐项与决策点交叉验证；映射类承诺（A 家 XX、B 家 YY）天然容易整体照抄而漏看某一行的落地前提。
+
+**解决方案**：
+grill 收口前的范围确认题固定加一步排他对账：把本期范围逐项对照 1.0 后菜单/backlog/limitations/代码现状清单，凡「某项的前提依赖另一个被后置的项」即当场抛矛盾题；to-spec 落笔前再复跑一遍（本次正是这道二手防线兜住的）。
+
+**影响范围**：
+所有 grill 类会话的范围确认环节与 to-spec 开笔前对账。

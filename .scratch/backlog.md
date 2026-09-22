@@ -64,7 +64,7 @@
 - workflow / ralph（脚本化多子 agent 编排）、agent-team（roster/任务 DAG，DSH experimental）
 - LSP（seam + stdio + 诊断工具）、PTY 持久终端六件套、持久 shell
 - 跨 harness 委派后端（把真实 Claude Code/Codex 当子 agent 运行；duo 后端接口位已留）
-- Anthropic-messages 协议适配（现仅 OpenAI 兼容）、prompt 更新 in-history 前缀缓存策略（reasoningEffort 分级已排期 M24——ADR-0024 修订）
+- prompt 更新 in-history 前缀缓存策略（reasoningEffort 分级已排期 M24——ADR-0024 修订）
 - settings 热重载 + schema 驱动设置页（即 M1 遗留限制 1 的完整形态）、credentials OAuth 授权流
 - @session 跨会话引用、schedule 会话内定时提醒、JSONL 压缩帧/代际迁移链、agents[] 声明式自启
 - MCP resources/prompts 桥接（DSH 也仅桥接 tools——做了即超越对照系）
@@ -73,4 +73,8 @@
 
 （已销账）**glob/grep .gitignore 语义**（M12#2）：来源 ADR-0024。→ 已于 M23-08 落地销账（ADR-0025 决策三，红线 4 拒捆绑 rg）：自研忽略判定器，glob/grep/@file 三消费点同口径（2026-09-22）
 （已排期）**Web 鉴权令牌 + bind** → M24 正式范围（ADR-0024，含标签级会话绑定最小版），本条销账于 M24 收口
+
+## M24 对账（2026-09-22，ADR-0026）
+
+（已排期）**Anthropic-messages 协议适配** → M24 正式范围（ADR-0026 决策七，spec 期对账裁定：/effort Anthropic 行 thinking+budget 需真适配器落地，原 1.0 后菜单提进），随实现销账于 M24
 - [ ] **参考项目工程化探测**（原探测批 B11）：DSH/ZCode 测试哲学/CI 门禁/打包分发（SEA/electron-builder）/更新通道的机制级探查。来源：ADR-0023 裁定砍出探测范围。→ 1.0 后菜单；DSH 测试哲学已见 docs/research/DSH/总览.md §3
