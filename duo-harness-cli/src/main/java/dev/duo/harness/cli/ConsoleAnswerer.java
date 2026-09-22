@@ -23,6 +23,8 @@ public final class ConsoleAnswerer implements Answerer {
 
     private final java.util.function.Supplier<String> lines;
     private final PrintStream out;
+    /** 权限规则服务（可空）：非 null 且候选成立时审批卡出现 a/s「总是允许」键（M24 工单 02）。 */
+    private final dev.duo.harness.tools.fs.PermissionRules rules;
 
     public ConsoleAnswerer(BufferedReader in, PrintStream out) {
         this(() -> {
@@ -31,13 +33,24 @@ public final class ConsoleAnswerer implements Answerer {
             } catch (java.io.IOException e) {
                 return null; // 流关闭 = EOF 同语义（fail-closed）
             }
-        }, out);
+        }, out, null);
     }
 
     /** 行来源注入版（M23 工单 01）：REPL 读者线程经应答闸门供给输入行。 */
     public ConsoleAnswerer(java.util.function.Supplier<String> lineSource, PrintStream out) {
+        this(lineSource, out, null);
+    }
+
+    /**
+     * 规则感知版（M24 工单 02，ADR-0026 决策一）：rules 非 null 且候选成立时审批卡
+     * 出现 a/s 键——a 生成项目级 allow 规则、s 生成会话级，n/空回车/其他输入仍拒绝。
+     * 高危根命令与无法提取前缀的调用不出现 a/s（{@link PermissionRules#alwaysAllowCandidate}）。
+     */
+    public ConsoleAnswerer(java.util.function.Supplier<String> lineSource, PrintStream out,
+                           dev.duo.harness.tools.fs.PermissionRules rules) {
         this.lines = java.util.Objects.requireNonNull(lineSource, "lineSource");
         this.out = out;
+        this.rules = rules;
     }
 
     /** 本轮审批到达序（M23 工单 03：逐个呈现「本轮第 i 项」，turn 边界归零）。 */
@@ -92,7 +105,7 @@ public final class ConsoleAnswerer implements Answerer {
         return InteractionAnswer.answered(resolveValues(line.strip(), options, false), SOURCE);
     }
 
-    /** 审批呈现与作答：y = 允许本次，其余/EOF = 拒绝。 */
+    /** 审批呈现与作答：y=允许本次；a=总是允许（项目）/s=仅本会话（候选成立时出现，生成规则）；其余/EOF=拒绝。 */
     private InteractionAnswer answerApproval(InteractionRequest request) {
         approvalSeq++;
         String ordinal = approvalSeq > 1 ? "（本轮第 " + approvalSeq + " 项审批）" : "";
@@ -100,16 +113,31 @@ public final class ConsoleAnswerer implements Answerer {
         if (!request.detail().isBlank()) {
             out.println("          参数: " + request.detail());
         }
-        out.print("  批准本次执行？[y=允许 / n=拒绝] ");
+        boolean alwaysOffered = rules != null
+                && dev.duo.harness.tools.fs.PermissionRules.alwaysAllowCandidate(request.subject(), request.args());
+        out.print("  批准本次执行？[y=允许"
+                + (alwaysOffered ? " / a=总是允许(项目) / s=仅本会话" : "")
+                + " / n=拒绝] ");
         out.flush();
         String line = readLine();
         if (line == null || line.isBlank()) {
             out.println("  （未作答，按拒绝处理）");
             return InteractionAnswer.failClosed();
         }
-        return "y".equalsIgnoreCase(line.strip())
-                ? InteractionAnswer.allow(SOURCE)
-                : InteractionAnswer.deny(SOURCE);
+        switch (line.strip().toLowerCase()) {
+            case "y":
+                return InteractionAnswer.allow(SOURCE);
+            case "a":
+                return alwaysOffered
+                        ? InteractionAnswer.allowAlways(SOURCE, InteractionAnswer.SCOPE_PROJECT)
+                        : InteractionAnswer.deny(SOURCE);
+            case "s":
+                return alwaysOffered
+                        ? InteractionAnswer.allowAlways(SOURCE, InteractionAnswer.SCOPE_SESSION)
+                        : InteractionAnswer.deny(SOURCE);
+            default:
+                return InteractionAnswer.deny(SOURCE);
+        }
     }
 
     /** 提问呈现与作答：有序号选项时输序号（多选逗号分隔），否则自由文本。 */

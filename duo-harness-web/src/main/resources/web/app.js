@@ -379,6 +379,7 @@ const render = (() => {
     const card = document.createElement('div');
     card.className = 'card interactive';
     card.dataset.toolName = event.toolName || '';
+    card.dataset.cardId = event.toolCallId || ''; // 卡片 id（M24 工单 02：按 id 精确回填）
     let questionText = '[待审批] 工具 ' + (event.toolName || '') + ' 请求执行';
     let planBody = null;
     if (isPlan) {
@@ -407,8 +408,10 @@ const render = (() => {
         '<button class="choice" data-action="plan-reject">打回，继续完善计划</button>';
     } else {
       choices.innerHTML =
-        '<button class="choice primary" data-action="answer" data-approved="true">批准本次执行</button>' +
-        '<button class="choice" data-action="answer" data-approved="false">拒绝</button>';
+        '<button class="choice primary" data-action="answer" data-decision="approve">批准本次执行</button>' +
+        '<button class="choice" data-action="answer" data-decision="always-project">总是允许（项目）</button>' +
+        '<button class="choice" data-action="answer" data-decision="always-session">仅本会话</button>' +
+        '<button class="choice" data-action="answer" data-decision="reject">拒绝</button>';
     }
     card.appendChild(choices);
     if (isPlan) {
@@ -797,9 +800,13 @@ const app = (() => {
     const action = btn.dataset.action;
     try {
       if (action === 'answer') {
-        const approved = btn.dataset.approved === 'true';
-        render.resolveCard(card, approved ? '✓ 已批准' : '✗ 已拒绝', approved);
-        await api.answer({ decision: approved ? 'approve' : 'reject' });
+        // M24 工单 02：按卡片 id 精确回填；always-* 由服务端生成 allow 规则——
+        // 高危命令服务端按拒绝处理（与 CLI 非候选语义对齐），卡片冻结为已作答
+        const decision = btn.dataset.decision || (btn.dataset.approved === 'true' ? 'approve' : 'reject');
+        const always = decision.startsWith('always-');
+        render.resolveCard(card, always ? '✓ 已作答（总是允许请求已提交）'
+            : (decision === 'reject' ? '✗ 已拒绝' : '✓ 已批准'), decision !== 'reject');
+        await api.answer({ id: card.dataset.cardId, decision });
       } else if (action === 'answer-value') {
         const value = btn.dataset.value || '';
         render.resolveCard(card, '✓ 已回答：' + value, true);
@@ -811,7 +818,8 @@ const app = (() => {
         render.resolveCard(card, '✓ 已回答：' + value, true);
         await api.answer({ answers: [value] });
       } else if (action === 'plan-approve') {
-        // ExitPlanModeTool 口径：values[0] 精确等于批准选项
+        // ExitPlanModeTool 口径：values[0] 精确等于批准选项（计划单飞，按最旧完成——
+        // 与提问卡同走无 id 旧形态）
         render.resolveCard(card, '✓ 已批准，开始执行', true);
         await api.answer({ answers: ['批准，开始执行'] });
       } else if (action === 'plan-reject') {

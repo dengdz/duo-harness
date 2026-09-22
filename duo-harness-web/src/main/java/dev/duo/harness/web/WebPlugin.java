@@ -169,8 +169,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);
         }
         // 审计桥包装（ADR-0008 决策 5）：approval/requested、approval/decided 事件落会话
-        // ——会话监听器推 SSE，页面据此渲染审批卡；会话经 face 延迟解析（/new 换绑后留新会话）
-        answers.register(ctx, new AuditingAnswerer(face::currentSession, webAnswerer));
+        // ——会话监听器推 SSE，页面据此渲染审批卡；会话经 face 延迟解析（/new 换绑后留新会话）。
+        // 「总是允许」规则生成包装（M24 工单 02）：规则服务在场时拦截 allowAlways 生成规则
+        // （项目级写 settings.json、会话级落当前会话事件），缺席原样透传
+        answers.register(ctx, new AuditingAnswerer(face::currentSession,
+                wrapRuleGenerating(ctx, webAnswerer)));
         // /compact（M19，ADR-0020 决策 6）：双面命令随 Web 装配注册（查重先到先得——
         // CLI 已注册则跳过），会话经 face 延迟解析取当前值
         PresenterAssembly.registerCompactCommand(ctx, commands, governance);
@@ -240,6 +243,37 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebToolsView {
 
         ToolsService tools();
+    }
+
+    /** 权限规则服务的视图接口（方法名即服务名 permissionRules，M24 工单 02）。 */
+    interface WebPermissionRulesView {
+
+        dev.duo.harness.tools.fs.PermissionRules permissionRules();
+    }
+
+    /**
+     * 「总是允许」规则生成包装（M24 工单 02，ADR-0026 决策一）：规则服务缺席原样
+     * 返回；在场时拦截 allowAlways 答案生成规则，会话级经 sink 落当前会话事件。
+     */
+    private dev.duo.harness.tools.Answerer wrapRuleGenerating(Context ctx,
+                                                              dev.duo.harness.tools.Answerer delegate) {
+        dev.duo.harness.tools.fs.PermissionRules rules;
+        try {
+            rules = ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)
+                    ? ctx.as(WebPermissionRulesView.class).permissionRules() : null;
+        } catch (Exception e) {
+            rules = null;
+        }
+        if (rules == null) {
+            return delegate;
+        }
+        return new dev.duo.harness.tools.fs.RuleGeneratingAnswerer(delegate, rules,
+                json -> {
+                    dev.duo.harness.session.Session current = face.currentSession();
+                    if (current != null) {
+                        current.append(dev.duo.harness.session.SessionEvent.permissionRules(json));
+                    }
+                });
     }
 
     /** prompts 服务的视图接口（方法名即服务名）。 */

@@ -187,3 +187,13 @@
   2. **拆分 API 后的组合方法即死代码**——deny/allow 两段拆出后，原组合方法 verdict() 零生产调用，靠 Standards 轴 Speculative Generality 抓到；拆分时同步删组合入口。
   3. **装配接线测试的夹具双隔离**——trust root（.git 存在性）与规则文件来源都要指向临时目录，否则 surefire 的模块 cwd（无 .git）与用户真实 settings.json 会把确定性测试变成环境相关测试。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（796 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/03-只读判定器与免审批接线.md`。
+
+### 2026-09-22 · M24 工单 02 审查（0.19.0 分支，HEAD e6f3cb6 工作树：审批卡四值与规则生成）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 e6f3cb6）→ 修复 → OCR（委托模式，13 文件全覆盖；6 排除由双轴覆盖）→ 修复 → 全链 package 收口。
+- **计数**：双轴 Standards 硬违规 1（事件表未同步）+ 轻微 1 + 基线 4 + Spec 阻断 2（Web 高危语义相悖、提问/计划 id 断链回归）；OCR 新增 0；两轮处置 9 项（修 6 / 记档 3）。
+- **模式化问题（本次新识别）**：
+  1. **「卡片 id 借 toolCallId 通道」只对审计事件成立**——ask_user/计划卡的渲染源是 tool/call 事件（toolCallId=LLM 调用 id），与 InteractionRequest.id 不同源；按 id 回填只适配渲染源与 id 同源的卡（approval/requested）。引入请求 id 时必须逐卡核对「渲染事件 → id 来源 → 回传」三点同源，否则回填静默 miss 挂到超时（比错卡更隐蔽的回归）。
+  2. **双呈现位的键位语义必须服务端权威对齐**——同一 a/s 语义 CLI 是「非候选拒绝」，Web 若「非候选放行本次」就是安全缺口；候选态前端不可知时，服务端包装层归一是唯一权威裁决点。
+  3. **扩展公共 record 字段时先 grep 全部规范构造器**——InteractionAnswer/InteractionRequest 加字段后，唯一遗漏点在测试夹具（不兼容类型编译期即暴露，无害）；生产行零遗漏。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（826 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/02-审批卡四值与规则生成.md`。

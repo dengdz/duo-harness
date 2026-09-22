@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 权限规则（M24，ADR-0026 决策一）：两级作用域的持久审批规则——项目级持久于项目根
@@ -92,6 +93,15 @@ public final class PermissionRules {
     /** 会话级规则（volatile 整表替换——事件投影恢复与命令面变更的运行时态）。 */
     private volatile List<Rule> sessionRules = List.of();
 
+    /**
+     * 高危根命令表（M24，ADR-0026 决策一：提权或不可逆破坏——「永不放行」）：
+     * ① 审批卡不出现「总是允许」键（生成拦，{@link #alwaysAllowCandidate}）；
+     * ② allow 规则（含手写）运行时也不生效，命中走 ask/档位（{@link #allowVerdict}
+     * 截获）。判定与只读判定器同口径——只认裸命令名，路径前缀不识别。
+     */
+    public static final Set<String> HIGH_RISK_ROOT_COMMANDS = Set.of(
+            "sudo", "su", "doas", "rm", "dd", "mkfs", "chmod", "chown", "shutdown", "reboot");
+
     private PermissionRules(Path settingsFile, List<Rule> projectRules) {
         this.settingsFile = settingsFile;
         this.projectRules = projectRules;
@@ -142,12 +152,19 @@ public final class PermissionRules {
 
     /**
      * allow 段裁决（ADR-0026 决策一：只查非只读命令——只读命令在裁决序上游已被
-     * 只读层截获，本段天然只达非只读面）：命中返回放行，未命中返回 empty。
+     * 只读层截获，本段天然只达非只读面；高危根命令运行时双拦——allow 规则对高危
+     * 命令不生效，命中走 ask/档位并 debug 日志说明，M24 工单 02）：命中返回放行，
+     * 未命中返回 empty。
      */
     public Optional<ApprovalDecision> allowVerdict(String toolName, JsonNode args) {
+        String command = ReadOnlyBashDetector.bashCommand(toolName, args);
+        if (command != null && isHighRiskRoot(command)) {
+            log.debug("高危根命令不受 allow 规则放行（运行时拦）: {}", command);
+            return Optional.empty();
+        }
         for (Rule rule : allRules()) {
             if (rule.decision() == Decision.ALLOW
-                    && matches(rule, toolName, ReadOnlyBashDetector.bashCommand(toolName, args))) {
+                    && matches(rule, toolName, command)) {
                 return Optional.of(ApprovalDecision.allow(SOURCE));
             }
         }
@@ -200,6 +217,67 @@ public final class PermissionRules {
         updated.remove(oneBasedIndex - 1);
         sessionRules = List.copyOf(updated);
         return updated;
+    }
+
+    /**
+     * 追加一条项目级 allow 规则并重写 {@code .duo/settings.json}（审批卡「总是允许
+     * （项目）」的生成入口）。写入失败抛 {@link UncheckedIOException}——调用方降级
+     * 提示不静默。
+     */
+    public synchronized void addProjectRule(Rule rule) {
+        List<Rule> updated = new ArrayList<>(projectRules);
+        updated.add(rule);
+        writeProjectRules(updated);
+        projectRules = List.copyOf(updated);
+    }
+
+    /**
+     * 追加一条会话级 allow 规则并返回更新后的全量快照 JSON（调用方落
+     * {@code permission/rules} 事件——latest-wins 投影、resume 恢复）。
+     */
+    public synchronized String addSessionRule(Rule rule) {
+        List<Rule> updated = new ArrayList<>(sessionRules);
+        updated.add(rule);
+        sessionRules = List.copyOf(updated);
+        return rulesToJson(updated);
+    }
+
+    /**
+     * 「总是允许」候选判定（审批卡是否出现 a/s 键）：候选 ≡ 可生成规则（allowRuleFor
+     * 非 null）——非 bash 工具恒候选（生成工具级 allow）；bash 需有 {@code command}
+     * 参数、首词为裸名且不在高危根命令表（{@link #HIGH_RISK_ROOT_COMMANDS} 生成拦）。
+     */
+    public static boolean alwaysAllowCandidate(String toolName, JsonNode args) {
+        return allowRuleFor(toolName, args, Scope.PROJECT) != null;
+    }
+
+    /**
+     * 由工具调用生成 allow 规则（审批卡「总是允许」的规则构造）：bash 取命令首词为
+     * 前缀（词边界匹配，用户裁定粒度=首词，grill Q-02-1）；非 bash 为工具级规则
+     * （无前缀）。高危/无法提取首词返回 null（调用方不生成）。
+     */
+    public static Rule allowRuleFor(String toolName, JsonNode args, Scope scope) {
+        String command = ReadOnlyBashDetector.bashCommand(toolName, args);
+        if (command == null) {
+            return "bash".equals(toolName) ? null : new Rule(toolName, null, Decision.ALLOW, scope);
+        }
+        String root = firstWord(command);
+        if (root.isEmpty() || root.indexOf('/') >= 0 || isHighRiskRoot(command)) {
+            return null;
+        }
+        return new Rule(toolName, root, Decision.ALLOW, scope);
+    }
+
+    /** 命令首词是否高危根命令（裸名口径，路径前缀不识别）。 */
+    private static boolean isHighRiskRoot(String command) {
+        return HIGH_RISK_ROOT_COMMANDS.contains(firstWord(command.strip()));
+    }
+
+    /** 命令首词（空白切分；空串安全）。 */
+    private static String firstWord(String command) {
+        String trimmed = command.strip();
+        int space = trimmed.indexOf(' ');
+        return space < 0 ? trimmed : trimmed.substring(0, space);
     }
 
     private List<Rule> allRules() {

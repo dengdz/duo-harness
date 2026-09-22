@@ -43,9 +43,10 @@ public final class InteractivePolicy implements ApprovalPolicyService {
             // 服务缺位 = 无人在场 = fail-closed（交互缺失永不等于默许）
             return ApprovalDecision.deny("交互服务不可用，无人应答（fail-closed）", SOURCE);
         }
-        // 发起呈现位随请求走：回答者路由发起方优先（M19，ADR-0020 决策 7）
+        // 发起呈现位随请求走：回答者路由发起方优先（M19，ADR-0020 决策 7）。
+        // 结构化 args 随请求走（M24 工单 02）：回答者据此做高危判定与「总是允许」规则生成
         InteractionAnswer answer = answers.ask(
-                InteractionRequest.approval(toolName, argsSummary(args), presenterId));
+                InteractionRequest.approval(toolName, args, argsSummary(args), presenterId));
         if (answer.approved()) {
             return ApprovalDecision.allow(SOURCE);
         }

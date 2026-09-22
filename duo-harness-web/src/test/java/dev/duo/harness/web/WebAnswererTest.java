@@ -195,6 +195,57 @@ class WebAnswererTest {
         nextAsker.join(3_000);
         assertTrue(next.get().approved(), "中断不污染后续 ask");
     }
+
+    @Test
+    void completeByIdRoutesToMatchingCard() throws Exception {
+        // 按 id 精确回填（M24 工单 02）：销 M23 按位置回填的错卡坑；always-* 携作用域
+        WebAnswerer webAnswerer = new WebAnswerer(5_000);
+        AtomicReference<InteractionAnswer> got = new AtomicReference<>();
+        Thread asker = Thread.ofVirtual().start(() ->
+                got.set(webAnswerer.answer(InteractionRequest.approval("bash", "{}"))));
+        long deadline = System.currentTimeMillis() + 3_000;
+        while (webAnswerer.currentPending() == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        String id = webAnswerer.currentPending().id();
+        assertTrue(id != null && !id.isBlank(), "请求身份自动生成");
+
+        assertFalse(webAnswerer.completeById("不存在的id", "approve", List.of()), "未知 id 幂等拒绝");
+        assertTrue(webAnswerer.completeById(id, "always-project", List.of()));
+        asker.join(3_000);
+        assertEquals(InteractionAnswer.SCOPE_PROJECT, got.get().alwaysScope(), "always-project 携作用域");
+        assertEquals("web", got.get().source());
+    }
+
+    @Test
+    void completeByIdAlwaysSessionAndAnswerForms() throws Exception {
+        WebAnswerer webAnswerer = new WebAnswerer(5_000);
+        AtomicReference<InteractionAnswer> approval = new AtomicReference<>();
+        Thread approvalAsker = Thread.ofVirtual().start(() ->
+                approval.set(webAnswerer.answer(InteractionRequest.approval("bash", "{}"))));
+        long deadline = System.currentTimeMillis() + 3_000;
+        while (webAnswerer.currentPending() == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        String approvalId = webAnswerer.currentPending().id();
+        assertTrue(webAnswerer.completeById(approvalId, "always-session", List.of()));
+        approvalAsker.join(3_000);
+        assertEquals(InteractionAnswer.SCOPE_SESSION, approval.get().alwaysScope());
+
+        // 提问/计划回答形态（answer + answers 非空）
+        AtomicReference<InteractionAnswer> question = new AtomicReference<>();
+        Thread questionAsker = Thread.ofVirtual().start(() ->
+                question.set(webAnswerer.answer(InteractionRequest.question("选一个", List.of("A", "B"), false))));
+        deadline = System.currentTimeMillis() + 3_000;
+        while (webAnswerer.currentPending() == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        String questionId = webAnswerer.currentPending().id();
+        assertTrue(webAnswerer.completeById(questionId, "answer", List.of("B")));
+        questionAsker.join(3_000);
+        assertTrue(question.get().approved());
+        assertEquals(List.of("B"), question.get().values());
+    }
 }
 
 /** answers 服务的视图接口（方法名即服务名 "answers"）。 */

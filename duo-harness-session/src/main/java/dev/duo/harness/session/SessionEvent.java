@@ -218,6 +218,14 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         return new SessionEvent(APPROVAL_REQUESTED, System.currentTimeMillis(), detail, null, toolName, null);
     }
 
+    /**
+     * 便捷工厂：审批请求（携卡片 id，M24 工单 02）——id 借 toolCallId 通道到前端，
+     * 审批卡据此按 id 回填（POST /api/answer），销按位置回填的错卡坑。
+     */
+    public static SessionEvent approvalRequested(String toolName, String detail, String cardId) {
+        return new SessionEvent(APPROVAL_REQUESTED, System.currentTimeMillis(), detail, cardId, toolName, null);
+    }
+
     /** 便捷工厂：运行错误（SSE 直推帧用；不 append 进会话）。 */
     public static SessionEvent errorEvent(String text) {
         return new SessionEvent(RUN_ERROR, System.currentTimeMillis(), text);

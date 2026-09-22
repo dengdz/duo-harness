@@ -227,10 +227,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
                 maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
                 requestVariants, visionEnabled, fileDelivery);
-        ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out);
+        ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out, resolvePermissionRules(ctx));
         this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
-                new AuditingAnswerer(holder::current, console));
+                new AuditingAnswerer(holder::current, wrapRuleGenerating(ctx, console, holder::current)));
         PlanHolder plan = new PlanHolder();
         PresenterAssembly.registerInteractionTools(ctx, tools, answers, ChatAgent.PRESENTER_CLI,
                 holder::current, () -> {
@@ -317,13 +317,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
      * 规则服务缺席（未挂 permission-rules 插件）降级提示。
      */
     private static String permissionRulesCommand(Context ctx, CommandContext context, String rest) {
-        dev.duo.harness.tools.fs.PermissionRules rules;
-        try {
-            rules = ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)
-                    ? ctx.as(CliPermissionRulesView.class).permissionRules() : null;
-        } catch (Exception e) {
-            rules = null;
-        }
+        dev.duo.harness.tools.fs.PermissionRules rules = resolvePermissionRules(ctx);
         if (rules == null) {
             return "permission-rules 服务未挂载，权限规则功能不可用（agent-demo.yml 增挂 "
                     + "PermissionRulesPlugin）。";
@@ -356,6 +350,30 @@ public final class CliPlugin implements Plugin<JsonNode> {
         } catch (IllegalArgumentException | java.io.UncheckedIOException e) {
             return "删除失败: " + e.getMessage();
         }
+    }
+
+    /** 权限规则服务可选解析：缺席（未挂 permission-rules 插件）或解析失败返回 null。 */
+    private static dev.duo.harness.tools.fs.PermissionRules resolvePermissionRules(Context ctx) {
+        try {
+            return ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)
+                    ? ctx.as(CliPermissionRulesView.class).permissionRules() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 「总是允许」规则生成包装（M24 工单 02，ADR-0026 决策一）：规则服务缺席原样
+     * 返回；在场时拦截 allowAlways 答案生成规则，会话级经 sink 落当前会话事件。
+     */
+    private static dev.duo.harness.tools.Answerer wrapRuleGenerating(Context ctx, dev.duo.harness.tools.Answerer delegate,
+                                               java.util.function.Supplier<Session> session) {
+        dev.duo.harness.tools.fs.PermissionRules rules = resolvePermissionRules(ctx);
+        if (rules == null) {
+            return delegate;
+        }
+        return new dev.duo.harness.tools.fs.RuleGeneratingAnswerer(delegate, rules,
+                json -> session.get().append(dev.duo.harness.session.SessionEvent.permissionRules(json)));
     }
 
     /** 两级规则清单渲染（P/S 编号与 rm 目标一一对应）。 */

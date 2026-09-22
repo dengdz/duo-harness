@@ -45,7 +45,8 @@ public final class AuditingAnswerer implements Answerer {
                 && !InteractionRequest.KIND_PLAN.equals(request.kind())) {
             return delegate.answer(request);
         }
-        session.get().append(SessionEvent.approvalRequested(request.subject(), request.detail()));
+        // 卡片 id 借 toolCallId 通道（M24 工单 02）：审批卡按 id 精确回填（POST /api/answer）
+        session.get().append(SessionEvent.approvalRequested(request.subject(), request.detail(), request.id()));
         InteractionAnswer answer = delegate.answer(request);
         if (answer != null) {
             String decision = (isApproved(request, answer) ? "allow" : "deny")

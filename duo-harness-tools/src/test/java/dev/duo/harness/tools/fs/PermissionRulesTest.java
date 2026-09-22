@@ -14,6 +14,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -202,5 +203,57 @@ class PermissionRulesTest {
         Files.createDirectories(plain);
         assertEquals(plain.toAbsolutePath(), PermissionRules.findProjectRoot(plain),
                 "无标记即起点自身");
+    }
+
+    @Test
+    void highRiskRootBlocksAllowRulesAtRuntime() {
+        // 高危双拦之运行时拦（M24 工单 02，ADR-0026 决策一）：手写 allow 规则对高危
+        // 命令不生效，命中走 ask/档位
+        PermissionRules rules = PermissionRules.load(tempDir);
+        rules.setSessionRules(List.of(rule("bash", "sudo", PermissionRules.Decision.ALLOW)));
+        assertTrue(rules.allowVerdict("bash", bashArgs("sudo apt install")).isEmpty(),
+                "高危根命令 allow 规则运行时不生效");
+        assertTrue(rules.denyVerdict("bash", bashArgs("sudo apt install")).isEmpty());
+        assertTrue(rules.allowVerdict("bash", bashArgs("npm install")).isEmpty(), "非高危不受影响");
+    }
+
+    @Test
+    void alwaysAllowCandidateRespectsHighRiskAndBareName() {
+        // 高危双拦之生成拦：高危/路径前缀命令不候选；非 bash 恒候选
+        assertFalse(PermissionRules.alwaysAllowCandidate("bash", bashArgs("sudo apt install")));
+        assertFalse(PermissionRules.alwaysAllowCandidate("bash", bashArgs("/usr/bin/sudo ls")),
+                "路径前缀不识别（不候选）");
+        assertTrue(PermissionRules.alwaysAllowCandidate("bash", bashArgs("npm install")));
+        assertTrue(PermissionRules.alwaysAllowCandidate("web_fetch", JsonNodeFactory.instance.objectNode()),
+                "非 bash 工具恒候选");
+        assertFalse(PermissionRules.alwaysAllowCandidate("bash", JsonNodeFactory.instance.objectNode()),
+                "bash 无 command 参数不候选");
+    }
+
+    @Test
+    void allowRuleForUsesFirstWordGranularity() {
+        // 前缀粒度=首词（用户裁定，grill Q-02-1）：npm run test --watch → npm
+        PermissionRules.Rule bash = PermissionRules.allowRuleFor(
+                "bash", bashArgs("npm run test --watch"), PermissionRules.Scope.PROJECT);
+        assertEquals("npm", bash.prefix());
+        assertEquals(PermissionRules.Scope.PROJECT, bash.scope());
+        assertNull(PermissionRules.allowRuleFor(
+                "bash", bashArgs("sudo rm"), PermissionRules.Scope.PROJECT), "高危不生成");
+        PermissionRules.Rule toolLevel = PermissionRules.allowRuleFor(
+                "web_fetch", JsonNodeFactory.instance.objectNode(), PermissionRules.Scope.SESSION);
+        assertNull(toolLevel.prefix(), "非 bash 为工具级规则");
+        assertEquals(PermissionRules.Scope.SESSION, toolLevel.scope());
+    }
+
+    @Test
+    void addProjectAndSessionRulesPersist() throws Exception {
+        PermissionRules rules = PermissionRules.load(tempDir);
+        rules.addProjectRule(rule("bash", "docker", PermissionRules.Decision.ALLOW));
+        assertEquals(1, rules.projectRules().size());
+        assertTrue(Files.readString(tempDir.resolve(".duo").resolve("settings.json")).contains("docker"),
+                "项目级追加重写 settings.json");
+        String snapshot = rules.addSessionRule(rule("bash", "kubectl", PermissionRules.Decision.ALLOW));
+        assertTrue(snapshot.contains("kubectl"));
+        assertEquals(1, rules.sessionRules().size());
     }
 }

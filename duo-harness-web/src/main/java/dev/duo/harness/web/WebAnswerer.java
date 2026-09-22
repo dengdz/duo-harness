@@ -32,8 +32,8 @@ public final class WebAnswerer implements Answerer {
     /** 回答者来源标识（审计署名）。 */
     public static final String SOURCE = "web";
 
-    /** 待答状态：请求 + 完成器（端点写入答案、断连写入 fail-closed）。 */
-    record Pending(InteractionRequest request, CompletableFuture<InteractionAnswer> future) { }
+    /** 待答状态：请求（id = 卡片回填关联键）+ 完成器（端点写入答案、断连写入 fail-closed）。 */
+    record Pending(String id, InteractionRequest request, CompletableFuture<InteractionAnswer> future) { }
 
     /** FIFO 待答队列（ConcurrentLinkedQueue：ask/complete/interrupt 三方并发）。 */
     private final ConcurrentLinkedQueue<Pending> queue = new ConcurrentLinkedQueue<>();
@@ -53,7 +53,7 @@ public final class WebAnswerer implements Answerer {
     @Override
     public InteractionAnswer answer(InteractionRequest request) {
         CompletableFuture<InteractionAnswer> future = new CompletableFuture<>();
-        Pending waiting = new Pending(request, future);
+        Pending waiting = new Pending(request.id(), request, future);
         queue.add(waiting);
         try {
             return future.get(answerTimeoutMs, TimeUnit.MILLISECONDS);
@@ -79,11 +79,30 @@ public final class WebAnswerer implements Answerer {
     }
 
     /**
-     * 用户作答（POST /api/answer 调用）：完成<b>最旧</b>的悬空请求（串行架构下即
-     * 当前唯一——排队为防御性语义）。
+     * 用户作答（POST /api/answer 调用）：按卡片 id 精确完成对应悬空请求（M24 工单 02
+     * ——销 M23 记档的「按位置回填」坑：总放行错卡会生成规则+放行双重后果）。
      *
-     * @param approved 审批语义（提问恒 true）
-     * @param values   回答值（提问的选项/自由文本；审批为空）
+     * @param id       卡片 id（{@link InteractionRequest#id()}，经 SSE 事件到前端）
+     * @param decision approve / reject / always-project / always-session / answer
+     * @param values   回答值（提问/计划回答；审批为空）
+     * @return true = 完成成功；false = id 不存在（幂等拒绝——已答/已失效）
+     */
+    boolean completeById(String id, String decision, List<String> values) {
+        for (java.util.Iterator<Pending> it = queue.iterator(); it.hasNext(); ) {
+            Pending waiting = it.next();
+            if (waiting.id().equals(id)) {
+                it.remove();
+                return waiting.future().complete(answerFor(decision, values));
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 无 id 的旧形态作答（兼容缓存页）：完成<b>最旧</b>的悬空请求。
+     *
+     * @param approved 审批语义（提问/计划恒 true）
+     * @param values   回答值
      * @return true = 完成成功；false = 无待答请求（幂等拒绝）
      */
     boolean complete(boolean approved, List<String> values) {
@@ -91,7 +110,18 @@ public final class WebAnswerer implements Answerer {
         if (waiting == null) {
             return false;
         }
-        return waiting.future().complete(new InteractionAnswer(approved, values, SOURCE));
+        return waiting.future().complete(new InteractionAnswer(approved, values, SOURCE, null));
+    }
+
+    /** 决策词 → 答案（always-* 携作用域，answer = 提问/计划回答，reject 与未知值一律拒绝）。 */
+    private static InteractionAnswer answerFor(String decision, List<String> values) {
+        return switch (decision) {
+            case "approve" -> InteractionAnswer.allow(SOURCE);
+            case "always-project" -> InteractionAnswer.allowAlways(SOURCE, InteractionAnswer.SCOPE_PROJECT);
+            case "always-session" -> InteractionAnswer.allowAlways(SOURCE, InteractionAnswer.SCOPE_SESSION);
+            case "answer" -> InteractionAnswer.answered(values, SOURCE);
+            default -> InteractionAnswer.deny(SOURCE);
+        };
     }
 
     /**

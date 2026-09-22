@@ -992,8 +992,11 @@ public final class WebFace {
     }
 
     /**
-     * HITL 回答端点（M16 工单 07 结构化协议）：审批 {@code {"decision":"approve"|"reject"}}；
-     * 提问与计划 {@code {"answers":["..."]}}——两形态互斥，缺失或取值非法一律 400。
+     * HITL 回答端点（M16 工单 07 结构化协议；M24 工单 02 升级按卡片 id 回填）：
+     * 携 {@code id} 时 {@code {"id":"...","decision":"approve"|"reject"|"always-project"|
+     * "always-session"|"answer","answers":["..."]}}（answer 形态须非空 answers）——
+     * 精确完成对应卡片（销 M23 按位置回填坑）；无 id 的旧形态 {@code {"decision":...}} /
+     * {@code {"answers":...}} 兼容完成最旧一项（缓存页兜底）。缺失或取值非法一律 400。
      * 不做字符串嗅探：自由文本答案里的"拒绝"二字是普通回答，不改变判定语义。
      */
     private void handleAnswer(HttpExchange exchange) throws IOException {
@@ -1016,21 +1019,32 @@ public final class WebFace {
                 respondEmpty(exchange, 400); // 两形态互斥：同时出现按协议错误拒绝
                 return;
             }
-            if (node.hasNonNull("decision")) {
-                String decision = node.get("decision").asText("");
+            List<String> values = new java.util.ArrayList<>();
+            if (node.hasNonNull("answers") && node.get("answers").isArray()) {
+                node.get("answers").forEach(n -> values.add(n.asText()));
+            }
+            String decision = node.hasNonNull("decision") ? node.get("decision").asText("") : "answer";
+            if (node.hasNonNull("id") && !node.get("id").asText("").isBlank()) {
+                // 按卡片 id 精确回填（M24 工单 02）；未知决策词协议错误（fail-closed 拒绝语义不吞坏值）
+                if (!"approve".equals(decision) && !"reject".equals(decision)
+                        && !"always-project".equals(decision) && !"always-session".equals(decision)
+                        && !"answer".equals(decision)) {
+                    respondEmpty(exchange, 400);
+                    return;
+                }
+                if ("answer".equals(decision) && values.isEmpty()) {
+                    respondEmpty(exchange, 400);
+                    return;
+                }
+                completed = webAnswerer.completeById(node.get("id").asText(), decision, values);
+            } else if (node.hasNonNull("decision")) {
                 if (!"approve".equals(decision) && !"reject".equals(decision)) {
                     respondEmpty(exchange, 400);
                     return;
                 }
                 completed = webAnswerer.complete("approve".equals(decision), List.of());
-            } else if (node.hasNonNull("answers") && node.get("answers").isArray()) {
-                List<String> answers = new java.util.ArrayList<>();
-                node.get("answers").forEach(n -> answers.add(n.asText()));
-                if (answers.isEmpty()) {
-                    respondEmpty(exchange, 400);
-                    return;
-                }
-                completed = webAnswerer.complete(true, answers);
+            } else if (!values.isEmpty()) {
+                completed = webAnswerer.complete(true, values);
             } else {
                 respondEmpty(exchange, 400);
                 return;
