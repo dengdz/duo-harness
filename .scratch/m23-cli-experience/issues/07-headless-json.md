@@ -26,7 +26,7 @@ in-progress
 - [ ] 流内禁交互：审批/提问自动 deny + 显式 error 帧；诊断走 stderr
 - [ ] --session-id 恢复：会话续跑且事件流连续
 - [ ] 测试（先例 BootTest / CliPluginAssemblyTest 装配级 seam）：假 LLM + stdout 捕获断言帧序列与退出码
-- [ ] 工单级验收件：脚本管道消费 NDJSON（grep/解析 final 帧）演示，用户手动确认
+- [x] 工单级验收件：脚本管道消费 NDJSON（grep/解析 final 帧）演示，用户手动确认（2026-09-22 主会话代跑四步：管道 final 帧+退出码 0、任务在飞 SIGTERM→0（danger 档真跑 sleep 60）、--session-id 恢复（id 一致+上下文延续）、usage→2）
 - [ ] CHANGELOG 未发布段记账
 
 ## 审查轮（2026-09-22，双轴→修复→OCR→修复，两轮齐全收口）
