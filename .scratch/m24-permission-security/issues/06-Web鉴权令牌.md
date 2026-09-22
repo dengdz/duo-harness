@@ -11,7 +11,7 @@ Web 启动生成随机 token（安全随机数）、控制台打印带 token 的
 无（可立即开工）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] token 生成与带 token URL 打印
@@ -19,7 +19,7 @@ in-progress
 - [x] 前端 localStorage 持有与自动携带
 - [x] yml 显式关闭开关 + 启动横幅警示
 - [x] 测试（先例 WebFaceTest / BootTest）
-- [ ] 工单级验收件：无 token 403 / 带 token 放行 / 关闭横幅演示，用户手动确认
+- [x] 工单级验收件：无 token 403 / 带 token 放行 / 关闭横幅演示，用户手动确认
 - [x] CHANGELOG 记账（0.19.0 段）
 
 ## Comments
@@ -27,6 +27,8 @@ in-progress
 - **首载自断阻断记档（三轴 Spec 轴抓出）**：link/script 子资源不继承父页查询参数——鉴权开启时 index.html 的 /web/* 子资源 URL 由服务端在响应时注入 token（正则改写，只发生在已过闸的响应上，token 不落模板文件）。修复过程中自测还抓到 quoteReplacement 把 $1 组引用转义成字面量的二次 bug（测试先行锁定）。
 - **行为语义记档**：① 服务端重启换 token 后，旧标签页 localStorage 残留旧 token 会持续 403——自愈路径 = 从启动日志复制新 URL 重开（旧标签不自愈，记档不修）；② Web 卡片无法预知候选态的问题不存在于本单，token 校验对所有请求无差异 403，无信息泄露（空响应体）。
 - **记档不修**：横幅明文 token 进终端日志/录制属设计取舍（URL 即入口，ADR 要可点）；app.js fetch 包装仅支持字符串 URL + 纯对象 headers（Headers 实例不展开——约定已注释固化，当前全库纯对象）；queryParam 不做 URL 解码（token 纯 hex 不受影响）；parseAuth 无独立单测（薄解析层，由装配测试与验收覆盖）。
+- **地址栏取舍记档（行级轴 #7 的反向裁决）**：行级轴建议「存 localStorage 后清地址栏防复制泄漏」——实测推演发现清地址栏会让 F5 刷新的文档请求无 token 整页 403（localStorage 只覆盖 /api 子请求，不覆盖文档导航），刷新可用性优先，**token 保留地址栏**；泄漏面 = 本机浏览器历史（个人工具可接受），验收要点含「收藏带 token 的 URL」。
+- 2026-09-23：**用户手动验收通过**：无 token 裸地址与 /api/status、/api/events 均 403；带 token URL 首载页面完整（子资源注入生效）且对话流式正常（anthropic 网关下 Web 路径顺带验证）；F5 刷新正常（地址栏取舍回退后专验）；curl 头通道 200 / 查询通道 200 / 错 token 403；auth: none 关闭横幅警示正常。全场景过，转 done。
 - 模块/文档同 diff：插件配置参考 web 行补 auth 字段、术语表「入口栅栏」词条两级改三级、CHANGELOG 0.19.0 段记账。
 
 ## 审查报告（第 1 轮·三轴）：工单 06 全 diff（基点 f33381f 工作树，3 改 + 1 新增测试文件）

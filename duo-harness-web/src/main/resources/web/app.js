@@ -11,19 +11,19 @@ const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 const errText = (err) => (err instanceof Error ? err.message : String(err));
 
 // ----- §0.1 鉴权令牌（M24 工单 06，ADR-0026 决策五）-----
-// URL 携 token 首载即存 localStorage（存后即抹地址栏，防复制/分享泄漏——子资源
-// token 由服务端注入 index.html，不依赖地址栏保留）；全部 /api 请求统一经包装补
-// X-Duo-Token 头，SSE（EventSource 不支持自定义头）以 ?token= 查询串携带。
+// URL 携 token 首载存 localStorage；全部 /api 请求统一经包装补 X-Duo-Token 头，
+// SSE（EventSource 不支持自定义头）以 ?token= 查询串携带。
+// 取舍记档：token 保留在地址栏（抹除会导致 F5 刷新时文档请求无 token 整页 403）——
+// 泄漏面仅本机浏览器历史，个人工具可接受；刷新/收藏请使用带 token 的完整 URL。
 // 约定：api 层所有 fetch 用字符串 URL + 纯对象 headers（Headers 实例不被包装展开）。
 // localStorage 在隐私模式/禁用存储时会 throw——降级为内存态（当次会话有效）。
 const duoToken = (() => {
-  let fromUrl = new URLSearchParams(location.search).get('token') || '';
+  const fromUrl = new URLSearchParams(location.search).get('token') || '';
   let stored = '';
   try {
     if (fromUrl) localStorage.setItem('duoToken', fromUrl);
     stored = localStorage.getItem('duoToken') || '';
   } catch (e) { /* 存储不可用：仅本次会话内存态 */ }
-  if (fromUrl) history.replaceState(null, '', location.pathname);
   return fromUrl || stored;
 })();
 const _duoFetch = window.fetch.bind(window);
