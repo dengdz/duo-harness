@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.mcp.McpToolNames;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolExecution;
 import dev.duo.harness.tools.ToolsService;
@@ -182,12 +183,14 @@ final class McpToolSync {
         List<ToolDefinition> defs = new ArrayList<>(remoteTools.size());
         Set<String> names = new HashSet<>();
         for (McpSchema.Tool tool : remoteTools) {
-            ToolDefinition def = convert(tool);
-            if (!names.add(def.name())) {
-                throw new PluginException("MCP 服务器 [" + serverName + "] 存在命名清洗后重名的工具: "
-                        + def.name());
+            // 哈希基于原始名（清洗同形的异名工具哈希必不同）；此处循环仅为 32 位
+            // 截断的理论碰撞兜底（概率 ~1e-5 量级 @500 工具），正常永不进入
+            String publicName = McpToolNames.publicName(serverName, tool.name());
+            int sequence = 1;
+            while (!names.add(publicName)) {
+                publicName = McpToolNames.publicName(serverName, tool.name() + "_" + ++sequence);
             }
-            defs.add(def);
+            defs.add(convert(tool, publicName));
         }
         return defs;
     }
@@ -199,8 +202,7 @@ final class McpToolSync {
      * 违约由工具域点名）；未声明则宽松透传。调用映射优先 structuredContent
      * （outputSchema 校验的对象），无则回退 text content。</p>
      */
-    private ToolDefinition convert(McpSchema.Tool tool) {
-        String publicName = publicToolName(serverName, tool.name());
+    private ToolDefinition convert(McpSchema.Tool tool, String publicName) {
         String description = (tool.description() == null ? "" : tool.description())
                 + "（MCP: " + serverName + "）";
         JsonNode parameters = mapper.valueToTree(tool.inputSchema());
@@ -263,9 +265,8 @@ final class McpToolSync {
         return sb.toString();
     }
 
-    /** 命名清洗：非法字符替换为下划线；清洗冲突由本类的转换阶段点名。 */
+    /** 命名（M24 工单 05）：委托契约包 {@link McpToolNames}——规范化 + 一律哈希后缀防坍缩。 */
     static String publicToolName(String serverName, String rawToolName) {
-        return "mcp__" + serverName + "__"
-                + rawToolName.replaceAll("[^A-Za-z0-9_-]", "_");
+        return McpToolNames.publicName(serverName, rawToolName);
     }
 }

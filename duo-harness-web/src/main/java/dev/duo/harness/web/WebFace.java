@@ -500,6 +500,12 @@ public final class WebFace {
         return authToken;
     }
 
+    /** 连接器状态板的视图接口（服务名 connectorStatus，M24 工单 05）。 */
+    interface ConnectorStatusView {
+
+        dev.duo.harness.tools.ConnectorStatusBoard connectorStatus();
+    }
+
     /**
      * 入口栅栏（M16 工单 02，术语"入口栅栏"）：三级校验——
      * ① 全请求 Host 头必须在白名单内（127.0.0.1 / localhost / [::1] 带本服务端口）：
@@ -1354,6 +1360,14 @@ public final class WebFace {
             var toolsNode = root.putArray("tools");
             for (var definition : tools.list()) {
                 toolsNode.addObject().put("name", definition.name()).put("description", definition.description());
+            }
+            // 连接器状态（M24 工单 05）：MCP 等外部连接器的生命周期标注（GAVE_UP = 不可用）
+            if (ctx.hasService(dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME)) {
+                var connectors = root.putArray("connector");
+                for (var entry : ctx.as(ConnectorStatusView.class).connectorStatus().snapshot()) {
+                    connectors.addObject().put("server", entry.server())
+                            .put("state", entry.state()).put("detail", entry.detail());
+                }
             }
             dev.duo.harness.agent.governance.ContextGovernance current = governance;
             if (current != null) {

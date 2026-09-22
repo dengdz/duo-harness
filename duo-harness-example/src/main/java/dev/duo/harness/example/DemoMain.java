@@ -12,6 +12,7 @@ import dev.duo.harness.core.api.events.PluginStatus;
 import dev.duo.harness.example.tools.EchoToolPlugin;
 import dev.duo.harness.example.tools.ToolsView;
 import dev.duo.harness.mcp.McpClientPlugin;
+import dev.duo.harness.mcp.McpToolNames;
 import dev.duo.harness.tools.ToolNotFoundException;
 import dev.duo.harness.tools.ToolResult;
 import dev.duo.harness.tools.ToolsService;
@@ -153,17 +154,17 @@ public final class DemoMain {
 
         // 4. 远端工具读真实文件
         out.println("[M2] read_file(notes.txt)——经三段管线调用远端 filesystem server:");
-        printResult(out, tools.execute("mcp__files__read_file",
+        printResult(out, tools.execute(McpToolNames.publicName("files", "read_file"),
                 JsonNodeFactory.instance.objectNode().put("path", "notes.txt")));
 
         // 5. guard 治理：涉密文件拒绝、普通文件放行
         out.println("[M2] read_file(secret.txt)——guard 治理（涉密拦截）:");
-        printResult(out, tools.execute("mcp__files__read_file",
+        printResult(out, tools.execute(McpToolNames.publicName("files", "read_file"),
                 JsonNodeFactory.instance.objectNode().put("path", "secret.txt")));
 
         // 6. 审批拒绝：write_file 被声明 ask，always-deny 拒绝
         out.println("[M2] write_file——写操作被声明需审批，always-deny 策略拒绝:");
-        printResult(out, tools.execute("mcp__files__write_file",
+        printResult(out, tools.execute(McpToolNames.publicName("files", "write_file"),
                 JsonNodeFactory.instance.objectNode()
                         .put("path", "injected.txt").put("content", "不应写入成功")));
 
@@ -171,7 +172,7 @@ public final class DemoMain {
         out.println("[M2] dispose MCP 连接:");
         files.dispose();
         try {
-            tools.execute("mcp__files__read_file",
+            tools.execute(McpToolNames.publicName("files", "read_file"),
                     JsonNodeFactory.instance.objectNode().put("path", "notes.txt"));
             out.println("  -> [异常] 工具仍在册（不应发生）");
         } catch (ToolNotFoundException e) {

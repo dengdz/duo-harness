@@ -145,7 +145,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
                 dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
                 dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME,
-                dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME);
+                dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME,
+                dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME);
     }
 
     @Override
@@ -275,6 +276,20 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 } else {
                     // busy：挂 next-turn 收口合并消费。已知边界（审查记档）：与 turn 收口
                     // 竞态窗口内注入的通知延至下次交互消费——不丢（必达=延迟语义）
+                    agentHolder.agent.injectNextTurn(notice);
+                }
+            });
+        }
+        // MCP 重连耗尽通知（M24 工单 05）：连接器状态板订阅——通知经收件箱注入（模型+用户可见）；
+        // 状态板服务缺席（未挂 mcp 行）零感；mcp 行须先于 cli 行装配（订阅在 apply 时判定，
+        // optionalInject 声明的时序契约）
+        if (ctx.hasService(dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME)) {
+            dev.duo.harness.tools.ConnectorStatusBoard board =
+                    ctx.as(ConnectorStatusView.class).connectorStatus();
+            board.onGaveUp(notice -> {
+                if (agentBusy.compareAndSet(false, true)) {
+                    startTurn(notice, agentHolder, agentBusy, interruptArmed); // 空闲：开新轮消费
+                } else {
                     agentHolder.agent.injectNextTurn(notice);
                 }
             });
@@ -1107,6 +1122,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliPermissionRulesView {
 
         dev.duo.harness.tools.fs.PermissionRules permissionRules();
+    }
+
+    /** 连接器状态板的视图接口（服务名 connectorStatus，M24 工单 05）。 */
+    interface ConnectorStatusView {
+
+        dev.duo.harness.tools.ConnectorStatusBoard connectorStatus();
     }
 
     /** 后台任务注册表的视图接口（服务名 backgroundTasks，M23 工单 04）。 */

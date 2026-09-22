@@ -1376,6 +1376,21 @@ const app = (() => {
         row.cells[0].textContent = p.name;
         row.cells[1].textContent = p.state;
       }
+      // 连接器状态（M24 工单 05）：MCP 等外部连接器生命周期标注（GAVE_UP 标红）
+      const connLine = $('#connectorStatus');
+      const connectors = data.connector;
+      if (!connectors || !connectors.length) {
+        connLine.textContent = '—';
+      } else {
+        connLine.innerHTML = '';
+        for (const c of connectors) {
+          const item = document.createElement('div');
+          item.className = 'bg-task mono';
+          item.textContent = c.server + '：' + c.state + (c.detail ? '（' + c.detail + '）' : '');
+          if (c.state === 'GAVE_UP') item.style.color = 'var(--danger)';
+          connLine.appendChild(item);
+        }
+      }
       const tools = $('#tools tbody');
       tools.innerHTML = '';
       for (const t of data.tools) {

@@ -6,6 +6,8 @@
 
 ### Added
 
+- **MCP 命名哈希与耗尽终态（M24 工单 05，ADR-0026 决策四）**：MCP 远端工具名一律规范化 + 原始名短哈希后缀（`mcp__<server>__<tool>__<hash8>`）——清洗坍缩的异名工具共存不抛错，名字跨重启/跨服务器组合稳定；重连预算耗尽后通知注入收件箱（模型与用户可见）+ Web 状态面新增「连接器」区块标注各服务器连接状态
+
 - **Web 鉴权令牌（M24 工单 06，ADR-0026 决策五）**：Web 面默认开启鉴权——启动生成随机令牌（SecureRandom 192 位）并在控制台打印带 token 的 URL，浏览器首载存 localStorage、后续 HTTP 头 + SSE 查询串携带，校验失败（含静态资源）一律 403 fail-closed；`web.auth: none` 可显式关闭，关闭时启动横幅警示；token 进程生命周期一次一发无过期。子资源 URL 由服务端注入 token（link/script 不继承父页查询参数）
 
 - **provider 声明与 Anthropic-messages 适配器（M24 工单 08，ADR-0026 决策七）**：`~/.duo/config.yml` 的 `llm:` 段新增 `provider` 四值声明（openai-compat 缺省 / anthropic / deepseek / glm）——决定适配器选型、鉴权头形态与思考等级映射策略，provider 不再由 baseUrl 隐式表达；新增 Anthropic-messages 协议适配器（SSE 流式、system 单列、tool_use/tool_result 块映射、`x-api-key` + `anthropic-version` 鉴权头，max_tokens 缺省 8192）；不声明零改兼容现状，非法值启动即 FAILED 点名

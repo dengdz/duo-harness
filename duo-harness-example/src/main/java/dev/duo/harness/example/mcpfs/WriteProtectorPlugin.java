@@ -43,9 +43,10 @@ public final class WriteProtectorPlugin implements Plugin<Void> {
     @Override
     public Disposable apply(Context ctx, Void config) {
         ToolsService tools = ctx.as(WriteProtectorView.class).tools();
+        // 前缀匹配（M24 命名哈希后工具名带短哈希后缀，精确等于不再成立）
         Disposable ask = ctx.on(ToolsService.PRE_EXECUTE,
                 (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
-                    if ((TOOL_PREFIX + "write_file").equals(exec.toolName())) {
+                    if (exec.toolName().startsWith(TOOL_PREFIX + "write_file")) {
                         exec.requestApproval();
                     }
                     return next.invoke(exec);

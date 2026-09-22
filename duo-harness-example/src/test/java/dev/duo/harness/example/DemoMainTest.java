@@ -1,5 +1,6 @@
 package dev.duo.harness.example;
 
+import dev.duo.harness.mcp.McpToolNames;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -63,7 +64,7 @@ class DemoMainTest {
         // 审批拒绝写操作（工具被声明 ask + always-deny）
         assertTrue(output.contains("执行被拒绝: 被审批策略拒绝（策略: always-deny）"), output);
         // 拔连接后工具消失
-        assertTrue(output.contains("[消失] 工具 \"mcp__files__read_file\" 未注册"), output);
+        assertTrue(output.contains("[消失] 工具 \"" + McpToolNames.publicName("files", "read_file") + "\" 未注册"), output);
         // 连接状态叙述完整
         assertTrue(output.contains("McpClientPlugin: LOADING -> ACTIVE"), output);
         assertTrue(output.contains("McpClientPlugin: UNLOADING -> DISPOSED"), output);

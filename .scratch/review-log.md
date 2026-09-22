@@ -218,3 +218,14 @@
   2. **正则替换的 quoteReplacement 会连组引用 $1 一起转义**——需要保留组引用时只对动态片段做 quoteReplacement（本次被自写测试当场抓出）。
   3. **浏览器存储 API 顶层调用必须 try/catch**——隐私模式/禁用存储直接 throw 白屏；凡 localStorage/sessionStorage 包装一律降级内存态。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（858 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/06-Web鉴权令牌.md`。
+
+### 2026-09-23 · M24 工单 05 审查（0.19.0 分支，三轴制第三轮：MCP 命名哈希与耗尽终态）
+
+- **范围与轮次**：三轴并行（Standards / Spec / 行级规则三子代理，基点 bcadc61 工作树）→ 修复 → 全链 package 收口（修复为小改 + 测试锁定，未触发复跑）。
+- **计数**：Standards 硬违规 3（CHANGELOG、模块划分、工具目录）+ 基线 4；Spec 缺失 3 + 正确性 5 项对照通过；行级 high 1（哈希输入违约）+ medium 3 + low 3；处置：修 10 / 记档 5。
+- **模式化问题（本次新识别）**：
+  1. **「防坍缩哈希」的哈希输入必须是原始名而非规范化名**——规范化本身有损，对清洗后名字做哈希等于没防坍缩（a.b 与 a$b 同哈希同名）；javadoc 承诺与实现不一致被行级轴对照抓出。教训：涉及「唯一性/防碰撞」承诺的哈希，输入必须包含承载唯一性的原始字段。
+  2. **哈希改名是全仓引用面改造**——工具名被 demo 主流程、guard 前缀、测试字面量引用；改名类工单的验收前置 = 全仓 grep 旧名模式，字面量全部换算为命名函数调用（DemoMain/DemoMainTest/WriteProtectorPlugin 同批迁移）。
+  3. **聚合状态板的「幽灵条目」与「provide 竞态」成对出现**——多行装配共享一块板时，行停止要 remove 条目、服务发布要幂等兜底；两者都源于「板的生命周期 > 单行生命周期」。
+- **三轴制第三轮实证**：行级轴抓到 high（哈希输入违约——正是本轴「对照承诺逐行核实」的强项）；Standards 轴的文档面 3 项全中。四轴（Java 规范轴）自工单 09 起加入。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（858 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/05-MCP命名哈希与耗尽终态.md`。
