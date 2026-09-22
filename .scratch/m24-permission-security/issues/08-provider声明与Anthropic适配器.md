@@ -11,17 +11,19 @@ yml 增 `llm.provider` 四值显式声明：openai-compat（缺省，兼容现�
 无（可立即开工）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] `llm.provider` 解析与缺省兼容（LlmConfigTest 扩展）
 - [x] Anthropic-messages 适配器：SSE + tool_use 双向映射 + 鉴权头（新测试面，先例 OpenAiCompatAdapterTest）
 - [x] 装配选型接线（先例 BootTest）
-- [ ] 工单级验收件：provider=anthropic 真端点跑通对话 + 工具调用，用户手动确认
+- [x] 工单级验收件：provider=anthropic 真端点跑通对话 + 工具调用（2026-09-23 用户委托代跑通过，DeepSeek Anthropic 网关）
 - [x] CHANGELOG 记账（0.19.0 段）
 
 ## Comments
-- 2026-09-23：实现与三轴审查完成（报告见下），全量 BUILD SUCCESS（848 用例 0 失败，2 既有 skip）。**待用户手动验收后转 done。**
+- 2026-09-23：实现与三轴审查完成（报告见下），全量 BUILD SUCCESS（848 用例 0 失败，2 既有 skip）。
+- 2026-09-23：**验收通过（用户委托代跑，headless --json 真端点）**：发现 DeepSeek 官方原生支持 Anthropic 协议（base_url=https://api.deepseek.com/anthropic，x-api-key 完全支持、anthropic-version 忽略）——无需 Anthropic key，用户现有 DeepSeek key 直接可用。实测两场景：①直答「介绍你自己」→ SSE text_delta 流式 + final + usage 3900 tokens 真实回传；②工具闭环「读 pom.xml」→ tool_use(read) 发起 → tool_result 回传 → 模型正确答出 groupId=dev.duo。适配器 baseUrl 拼 /v1/messages 与 DeepSeek 网关路径完全兼容。配置已代写（provider=anthropic / model=deepseek-flash），原配置备份于 ~/.duo/config.yml.bak。
+- 备忘：DeepSeek 网关对 claude 模型名有映射（claude-opus-*→deepseek-v4-pro、claude-sonnet/haiku-*→deepseek-flash），也可直传 DeepSeek 模型名；thinking 字段网关「支持但忽略 budget_tokens」——工单 10 的 Anthropic thinking 映射在 DeepSeek 网关上会降级为普通思考，真 thinking+budget 需真 Anthropic 端点。
 - **已知限制记档**：① max_tokens 协议必填，缺省 8192 常量（可配置化随工单 10 思考等级）；② 图片仅 inline data URI 形态（files 投递为 DeepSeek 专有，Anthropic 面跳过）；③ 连续 USER（非 TOOL）历史不产生（内部历史形态保证），适配器未做防御合并；④ 思考参数（thinking+budget）随工单 10 接入，本单仅结构就位。
 - **记档不修（审查处置）**：两适配器骨架（stream/streamTurn/idle/error）约 85 行同构——工单 10 改思考映射时一并提取公共件；errorFrom 先 new 再 getMessage 的绕行写法与魔法数字 10s 与 OpenAI 面同构；装配选型分支（withRetry 单行三元）无独立测试（轻缺口，冒烟由装配级与验收覆盖）。
 - 模块划分.md 的 llm 行与 internal 包边界描述同 diff 更新（双协议适配器）。
