@@ -11,11 +11,14 @@ public final class LlmAdapters {
     }
 
     /**
-     * 缺省执行链：OpenAI 兼容适配器 + 重试装饰（重试参数来自 {@code llm.retry} 段，
-     * 缺省值与 {@link RetryingAdapter} 默认一致——未配置该段时行为与裸装饰器相同）。
+     * 按 provider 声明选型执行链（M24 工单 08，ADR-0026 决策七）：anthropic →
+     * Anthropic-messages 适配器；openai-compat / deepseek / glm 走 OpenAI 兼容面
+     * （deepseek/glm 仅思考等级映射策略不同，协议同面）。重试装饰同构。
      */
-    public static LlmAdapter openAiCompatWithRetry(LlmConfig config) {
-        return new RetryingAdapter(new dev.duo.harness.llm.internal.OpenAiCompatAdapter(config),
-                config.retryMaxAttempts(), config.retryInitialBackoffMs());
+    public static LlmAdapter withRetry(LlmConfig config) {
+        LlmAdapter raw = LlmConfig.PROVIDER_ANTHROPIC.equals(config.provider())
+                ? new dev.duo.harness.llm.internal.AnthropicMessagesAdapter(config)
+                : new dev.duo.harness.llm.internal.OpenAiCompatAdapter(config);
+        return new RetryingAdapter(raw, config.retryMaxAttempts(), config.retryInitialBackoffMs());
     }
 }

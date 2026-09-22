@@ -28,16 +28,32 @@ import java.util.Map;
  * @param vision      视觉开关（true = 接受图片输入）
  * @param imageDelivery 图片投递形态：inline（base64 data URI，缺省）| files（DeepSeek 形态
  *                      Files API 上传换 file_id，仅视觉部署可及）
+ * @param provider    provider 声明（M24 工单 08，ADR-0026 决策七）：openai-compat（缺省）|
+ *                    anthropic | deepseek | glm——决定适配器选型、鉴权头形态与思考等级
+ *                    映射策略；不再由 baseUrl 隐式表达
  */
 public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
                         int retryMaxAttempts, long retryInitialBackoffMs,
-                        long streamIdleTimeoutMs, boolean vision, String imageDelivery) {
+                        long streamIdleTimeoutMs, boolean vision, String imageDelivery,
+                        String provider) {
 
     /** imageDelivery inline（缺省）。 */
     public static final String DELIVERY_INLINE = "inline";
 
     /** imageDelivery files（DeepSeek 形态 Files API）。 */
     public static final String DELIVERY_FILES = "files";
+
+    /** provider 声明：OpenAI 兼容面（缺省——DeepSeek/GLM 等同协议端点通用）。 */
+    public static final String PROVIDER_OPENAI_COMPAT = "openai-compat";
+
+    /** provider 声明：Anthropic messages 协议（x-api-key + anthropic-version）。 */
+    public static final String PROVIDER_ANTHROPIC = "anthropic";
+
+    /** provider 声明：DeepSeek（走 OpenAI 兼容面，思考等级映射策略不同）。 */
+    public static final String PROVIDER_DEEPSEEK = "deepseek";
+
+    /** provider 声明：GLM（走 OpenAI 兼容面，思考等级映射策略不同）。 */
+    public static final String PROVIDER_GLM = "glm";
 
     /** systemPrompt 未配置时的缺省指令。 */
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
@@ -51,10 +67,11 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /** 流式空闲超时缺省值（90s：思考模型的长间隔不误伤，半开连接不至于久等）。 */
     public static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
-    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s），vision 关闭、inline 投递。 */
+    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s），vision 关闭、inline 投递、openai-compat。 */
     public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
         this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS,
-                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, false, DELIVERY_INLINE);
+                DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, false,
+                DELIVERY_INLINE, PROVIDER_OPENAI_COMPAT);
     }
 
     /** 兼容构造：vision 显式、投递 inline。 */
@@ -62,15 +79,21 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
                      int retryMaxAttempts, long retryInitialBackoffMs,
                      long streamIdleTimeoutMs, boolean vision) {
         this(baseUrl, apiKey, model, systemPrompt, retryMaxAttempts,
-                retryInitialBackoffMs, streamIdleTimeoutMs, vision, DELIVERY_INLINE);
+                retryInitialBackoffMs, streamIdleTimeoutMs, vision, DELIVERY_INLINE,
+                PROVIDER_OPENAI_COMPAT);
     }
 
-    /** 投递形态归一（校验在 load 处 fail-loud）。 */
+    /** 投递形态与 provider 归一（校验在 load 处 fail-loud）。 */
     public LlmConfig {
         if (imageDelivery == null || imageDelivery.isBlank()) {
             imageDelivery = DELIVERY_INLINE;
         } else {
             imageDelivery = imageDelivery.strip().toLowerCase(java.util.Locale.ROOT);
+        }
+        if (provider == null || provider.isBlank()) {
+            provider = PROVIDER_OPENAI_COMPAT;
+        } else {
+            provider = provider.strip().toLowerCase(java.util.Locale.ROOT);
         }
     }
 
@@ -119,7 +142,29 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
                 parseRetryMaxAttempts(llm), parseRetryInitialBackoffMs(llm),
                 parseStreamIdleTimeoutMs(llm),
                 llm != null && llm.path("vision").asBoolean(false),
-                parseImageDelivery(llm));
+                parseImageDelivery(llm),
+                parseProvider(llm));
+    }
+
+    /**
+     * 解析可选 provider（缺省 openai-compat）：非四值的声明启动即 FAILED 点名
+     * （M24 工单 08，ADR-0026 决策七——拼写错误不该静默落回兼容面）。
+     */
+    private static String parseProvider(JsonNode llm) {
+        if (llm == null || !llm.hasNonNull("provider")) {
+            return PROVIDER_OPENAI_COMPAT;
+        }
+        String normalized = llm.path("provider").asText(PROVIDER_OPENAI_COMPAT).strip()
+                .toLowerCase(java.util.Locale.ROOT);
+        if (normalized.isEmpty()) {
+            return PROVIDER_OPENAI_COMPAT; // 空白视为未配置（与 imageDelivery 同口径）
+        }
+        if (normalized.equals(PROVIDER_OPENAI_COMPAT) || normalized.equals(PROVIDER_ANTHROPIC)
+                || normalized.equals(PROVIDER_DEEPSEEK) || normalized.equals(PROVIDER_GLM)) {
+            return normalized;
+        }
+        throw new dev.duo.harness.core.api.PluginException("llm.provider 非法: \"" + normalized
+                + "\"（可选 openai-compat | anthropic | deepseek | glm）");
     }
 
     /**

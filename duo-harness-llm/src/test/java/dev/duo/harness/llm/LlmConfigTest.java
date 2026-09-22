@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -89,6 +90,49 @@ class LlmConfigTest {
         LlmConfig config1 = LlmConfig.load(config, Map.of("DUO_LLM_API_KEY", "  "));
 
         assertEquals("sk-file", config1.apiKey(), "空白 env 值不应覆盖文件");
+    }
+
+    @Test
+    void providerDefaultsToOpenAiCompat() throws Exception {
+        Path config = tempConfig("https://api.deepseek.com", "sk", "deepseek-chat");
+        assertEquals(LlmConfig.PROVIDER_OPENAI_COMPAT, LlmConfig.load(config, Map.of()).provider(),
+                "未声明 provider 缺省 openai-compat（兼容现状零改）");
+    }
+
+    @Test
+    void providerParsesAllFourValues() throws Exception {
+        for (String value : List.of("anthropic", "deepseek", "glm", "openai-compat")) {
+            ObjectNode llm = JsonNodeFactory.instance.objectNode()
+                    .put("baseUrl", "https://x").put("apiKey", "k").put("model", "m")
+                    .put("provider", value);
+            Path config = write(llm);
+            assertEquals(value, LlmConfig.load(config, Map.of()).provider(), "合法值照常解析: " + value);
+        }
+    }
+
+    @Test
+    void unknownProviderFailsLoud() throws Exception {
+        ObjectNode llm = JsonNodeFactory.instance.objectNode()
+                .put("baseUrl", "https://x").put("apiKey", "k").put("model", "m")
+                .put("provider", "openai"); // 拼写错误不静默落回兼容面
+        Path config = write(llm);
+        var exception = assertThrows(PluginException.class, () -> LlmConfig.load(config, Map.of()));
+        assertTrue(exception.getMessage().contains("llm.provider 非法"), exception.getMessage());
+    }
+
+    @Test
+    void blankProviderTreatedAsUnconfigured() throws Exception {
+        // 空白串是"未配置"不是拼写错误——与 imageDelivery 空白归缺省同口径（行级轴 L6）
+        ObjectNode llm = JsonNodeFactory.instance.objectNode()
+                .put("baseUrl", "https://x").put("apiKey", "k").put("model", "m")
+                .put("provider", "   ");
+        Path config = write(llm);
+        assertEquals(LlmConfig.PROVIDER_OPENAI_COMPAT, LlmConfig.load(config, Map.of()).provider());
+    }
+
+    private Path write(ObjectNode llm) throws Exception {
+        ObjectNode root = JsonNodeFactory.instance.objectNode().set("llm", llm);
+        return Files.writeString(tempDir.resolve("config.yml"), root.toString());
     }
 
     private Path tempConfig(String baseUrl, String apiKey, String model) throws Exception {

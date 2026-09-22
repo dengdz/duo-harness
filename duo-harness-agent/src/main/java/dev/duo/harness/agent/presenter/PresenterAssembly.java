@@ -44,11 +44,12 @@ public final class PresenterAssembly {
     }
 
     /**
-     * LLM 执行链：OpenAI 兼容适配器 + 按配置参数的重试装饰——组装细节在 llm 契约包
-     * 工厂（{@link LlmAdapters#openAiCompatWithRetry}），internal 实现不外泄。
+     * LLM 执行链：按 provider 声明选型适配器（anthropic → Anthropic-messages，
+     * 其余走 OpenAI 兼容面）+ 按配置参数的重试装饰——组装细节在 llm 契约包
+     * 工厂（{@link LlmAdapters#withRetry}），internal 实现不外泄。
      */
     public static LlmAdapter llmAdapter(LlmConfig config) {
-        return LlmAdapters.openAiCompatWithRetry(config);
+        return LlmAdapters.withRetry(config);
     }
 
     /** 上下文治理（M9 四件套）：summary 生成复用同一 adapter 的直答形态（缺省阈值）。 */

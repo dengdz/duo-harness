@@ -197,3 +197,13 @@
   2. **双呈现位的键位语义必须服务端权威对齐**——同一 a/s 语义 CLI 是「非候选拒绝」，Web 若「非候选放行本次」就是安全缺口；候选态前端不可知时，服务端包装层归一是唯一权威裁决点。
   3. **扩展公共 record 字段时先 grep 全部规范构造器**——InteractionAnswer/InteractionRequest 加字段后，唯一遗漏点在测试夹具（不兼容类型编译期即暴露，无害）；生产行零遗漏。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（826 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/02-审批卡四值与规则生成.md`。
+
+### 2026-09-23 · M24 工单 08 审查（0.19.0 分支，三轴制首跑：provider 声明与 Anthropic 适配器）
+
+- **范围与轮次**：三轴并行（Standards / Spec / 行级规则三子代理，基点 5971308 工作树）→ 修复 → 全链 package 收口（修复为小改，测试锁定，未触发复跑）。
+- **计数**：Standards 硬违规 2（CHANGELOG 缺账、模块划分.md 两处失真）+ 基线 2；Spec 阻断 0 + 轻缺口 1；行级规则轴 medium 1（SSE error 帧静默吞）+ low 5；处置：修 6 / 记档 4。
+- **三轴制首跑实证**：行级规则轴（新上下文子代理）产出 medium 1 + low 5——对比委托模式时代 OCR 轮连续 0~2 Low，「独立子代理扛行级」的改造立即见效；三轴并行总耗时与原两轮制相当，报告少一份。
+- **模式化问题（本次新识别）**：
+  1. **新增协议适配器时，「SSE 流内 error 帧」是最易漏的出口**——OpenAI 兼容面同构缺口仍在（记档），协议级错误经流内事件下发时若只认正常帧，半截 turn 会被静默返回；新适配器 checklist 加「流内 error 帧 → 异常上报」一项。
+  2. **双协议适配器的骨架重复到阈值即提取**——85 行同构暂可接受，但工单 10 改思考映射触碰同一段时必须先提取公共件再改，避免双处漂移。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（848 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/08-provider声明与Anthropic适配器.md`。
