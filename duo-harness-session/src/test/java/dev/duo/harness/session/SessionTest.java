@@ -790,6 +790,27 @@ class SessionTest {
     }
 
     @Test
+    void permissionRulesProjectionLatestWinsAndSurvivesUserMessage() throws IOException {
+        // 会话级权限规则投影（M24 工单 01，ADR-0026 决策一）：latest-wins 快照、
+        // JSONL 重放一致；与 todo 投影不同——user/message 不清空（规则随会话生命周期，
+        // 不随新轮失效）；新会话无规则事件返回 null（按空规则处理）
+        Session session = Session.create(sessionsDir());
+        assertNull(session.permissionRules(), "新会话无规则事件");
+        session.append(SessionEvent.permissionRules(
+                "[{\"tool\":\"bash\",\"prefix\":\"docker logs\",\"decision\":\"allow\"}]"));
+        session.append(SessionEvent.userMessage("新的一轮"));
+        assertEquals("[{\"tool\":\"bash\",\"prefix\":\"docker logs\",\"decision\":\"allow\"}]",
+                session.permissionRules(), "user/message 不清空规则（区别于 todo 投影）");
+        session.append(SessionEvent.permissionRules("[]"));
+        assertEquals("[]", session.permissionRules(), "latest-wins 取最新快照");
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals("[]", reloaded.permissionRules(), "重放投影一致");
+        reloaded.close();
+    }
+
+    @Test
     void permissionModeOfDoesNotReleaseHeldLock() throws IOException {
         // OCR #15 回归：本进程持锁期间经 permissionModeOf 读同文件——只读 fd 有意不关
         // （POSIX 陷阱：关闭任意 fd 释放进程全部锁）。探测方式：新通道 tryLock 必须

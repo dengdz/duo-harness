@@ -26,6 +26,9 @@ import java.util.Set;
  */
 public final class WorkspaceApprovalPlugin implements Plugin<Void> {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(WorkspaceApprovalPlugin.class);
+
     @Override
     public Set<String> inject() {
         return Set.of(InteractionService.SERVICE_NAME, WorkspacePolicy.SERVICE_NAME);
@@ -44,13 +47,36 @@ public final class WorkspaceApprovalPlugin implements Plugin<Void> {
 
     @Override
     public Disposable apply(Context ctx, Void config) {
+        PermissionRules rules = resolveRules(ctx);
+        ApprovalPolicyService inner = rules == null
+                ? new InteractivePolicy(ctx) : new PermissionRulePolicy(rules, new InteractivePolicy(ctx));
         ApprovalPolicyService policy = new WorkspaceGatePolicy(
-                new InteractivePolicy(ctx), ctx.as(WorkspaceView.class).workspace());
+                inner, ctx.as(WorkspaceView.class).workspace());
         Disposable published = ctx.provide(ApprovalPolicyService.SERVICE_NAME, policy);
         Disposable gate = ctx.on(ToolsService.PRE_EXECUTE, ApprovalGate.gateFor(policy));
         return () -> {
             gate.dispose();
             published.dispose();
         };
+    }
+
+    /**
+     * 规则服务可选解析：缺席（未挂 permission-rules 插件）或解析失败返回 null——
+     * 规则是增益能力（M24，ADR-0026 决策一），审批链零感回退为无规则行为。
+     */
+    private static PermissionRules resolveRules(Context ctx) {
+        try {
+            return ctx.hasService(PermissionRules.SERVICE_NAME)
+                    ? ctx.as(PermissionRulesView.class).permissionRules() : null;
+        } catch (Exception e) {
+            log.warn("权限规则服务解析失败，审批链按无规则运行（视为缺席）", e);
+            return null;
+        }
+    }
+
+    /** 权限规则服务视图（方法名即服务名）。 */
+    interface PermissionRulesView {
+
+        PermissionRules permissionRules();
     }
 }

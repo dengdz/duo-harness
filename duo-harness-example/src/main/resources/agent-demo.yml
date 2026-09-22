@@ -78,6 +78,13 @@ plugins:
   - id: approval
     name: dev.duo.harness.tools.fs.WorkspaceApprovalPlugin
 
+  # 权限规则（M24，ADR-0026 决策一）：项目根 .duo/settings.json 的 permissions 段 +
+  # 会话级规则（随会话事件流持久、resume 恢复）——审批链规则前置裁决（deny 手写
+  # 恒优先 / allow 审批卡生成）与 /permission rules 命令面共用；不挂载即无规则
+  # 能力，装配零感回退
+  - id: permission-rules
+    name: dev.duo.harness.tools.fs.PermissionRulesPlugin
+
   # 重复调用提醒：同一工具相同参数连续重复达阈值（3/5/8）时在结果尾部附加提醒
   # （内核约定：声明 config 类型即须提供 config 块——块内字段可省，省略即默认阈值）
   - id: repeat-reminder

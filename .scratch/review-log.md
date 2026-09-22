@@ -168,3 +168,12 @@
   5. **大 diff 一次 OCR 合组会超时**——10 个同包新文件合为一组 ~40 万 token 必超时；按 --exclude 拆三批（每批 3-4 文件）即可全覆盖。
 - **优化建议**：UA 版本字面量随发布漂移已去版本化（duo-harness）；发布收口清单无需再列。
 - **收口**：`./mvnw test` 全仓 BUILD SUCCESS；tools 174 / web 54。
+
+### 2026-09-22 · M24 工单 01 审查（0.19.0 分支，HEAD 93c1e23 工作树：权限规则引擎地基）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 93c1e23）→ 修复 → OCR（委托模式，10 代码文件全覆盖；7 排除文件由双轴覆盖）→ 修复 → 全链 package 收口。
+- **计数**：双轴 Standards 硬违规 1（CHANGELOG 缺账）+ 基线 judgement call 4 + Spec 缺失 2 / 正确性对照 8 项全过；OCR 新增 0 修、2 Low 记档；两轮处置 8 项（修 6 / 记档不修 2 中的美观项与微分配项）。
+- **模式化问题（重现与强化）**：
+  1. **M23 记档的「服务命名惯例」重现**——新服务名首版用连字符 `permission-rules`，视图接口（方法名即服务名）解析失败，恢复用例红；修正为 camelCase `permissionRules`。该经验条目升级为：**新服务发布前把 SERVICE_NAME 与视图方法名并排核对，两处逐字一致**（与 experience 2026-09-22 条互相引用）。
+  2. **「过渡态注释指向工单记档」必须双处真落**——代码 javadoc 声称「过渡态记档于工单」但工单侧当时没有该记档（Spec 轴抓到），注释与工单的对账要像测试断言一样双向成立。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（774 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/01-权限规则引擎地基.md`。

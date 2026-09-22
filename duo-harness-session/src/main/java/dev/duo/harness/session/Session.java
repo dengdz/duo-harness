@@ -736,6 +736,22 @@ public final class Session {
     }
 
     /**
+     * 会话级权限规则投影（M24，ADR-0026 决策一）：最新一次 {@code permission/rules}
+     * 事件的规则数组 JSON（latest-wins，permissionMode 同款倒查）；无规则事件返回
+     * null——调用方按空规则处理。规则随会话生命周期：resume 恢复该会话规则、
+     * 换绑新会话天然无事件即空（显式换绑不带走上一会话规则）。
+     */
+    public String permissionRules() {
+        List<SessionEvent> snapshot = events();
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            if (SessionEvent.PERMISSION_RULES.equals(snapshot.get(i).type())) {
+                return snapshot.get(i).text();
+            }
+        }
+        return null;
+    }
+
+    /**
      * todo 清单投影（ADR-0018）：最新一次 {@code todo/write} 的清单 JSON（latest-wins）。
      * 其后出现新的 user/message 即清空（新轮开始——上一轮清单的使命结束，返回 null）；
      * 终版 assistant/message 之后保留（用户读完答案还能看到完成的清单）。

@@ -180,6 +180,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置（BUG-20260919-03
         // ——双开下另一呈现位可能刚恢复过档位）；换绑恢复在 onSessionChanged 回调里执行
         PresenterAssembly.restorePermissionMode(ctx, session, false);
+        // 会话级权限规则恢复（M24，ADR-0026 决策一）：续接该会话的规则快照
+        PresenterAssembly.restorePermissionRules(ctx, session);
         // HITL 交互工具补全（共享装配器，查重先到先得）：ask_user 与计划呈交随 Web 装配
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
@@ -204,6 +206,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);
+            // 会话级规则随会话生命周期（ADR-0026 决策一）：新会话无规则事件即清空
+            PresenterAssembly.restorePermissionRules(ctx, fresh);
             // 换绑后的会话同样挂 tool/result 监听（旧会话随 close 清空监听器，不泄漏）
             if (fileRefs != null) {
                 fresh.addListener((index, event) -> {

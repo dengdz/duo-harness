@@ -113,6 +113,14 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     public static final String PERMISSION_MODE = "permission/mode";
 
     /**
+     * 会话级权限规则变更（M24，ADR-0026 决策一；text = 规则数组 JSON——变更后全量
+     * 快照）。审批卡「仅本会话」生成与 /permission rules rm（会话侧）落盘；latest-wins
+     * 经 {@code Session.permissionRules()} 读取——resume 恢复会话级规则（规则随会话
+     * 生命周期，ADR-0026 澄清「内存」为非项目级持久）。
+     */
+    public static final String PERMISSION_RULES = "permission/rules";
+
+    /**
      * 上下文压缩点（M19，ADR-0020 决策 6；text = 远端历史的总结全文，toolName = 触发方式
      * {@code "manual"}（/compact 命令）或 {@code "auto"}（预算触发））。一处语义两处触发
      * ——"上下文为何变小"在日志可审计。投影 latest-wins：最后压缩点之前的一切以总结
@@ -272,5 +280,13 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：权限档切换（档位 configName；latest-wins 投影）。 */
     public static SessionEvent permissionMode(String configName) {
         return new SessionEvent(PERMISSION_MODE, System.currentTimeMillis(), configName);
+    }
+
+    /**
+     * 便捷工厂：会话级权限规则变更（M24，ADR-0026 决策一；text = 规则数组 JSON——
+     * 变更后全量快照，latest-wins 投影）。
+     */
+    public static SessionEvent permissionRules(String rulesJson) {
+        return new SessionEvent(PERMISSION_RULES, System.currentTimeMillis(), rulesJson);
     }
 }

@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.19.0（未发布）
+
+### Added
+
+- **权限规则引擎地基（M24 工单 01，ADR-0026 决策一）**：两级作用域的持久审批规则——项目级持久于项目根 `.duo/settings.json` 的 `permissions` 段（首个项目级设置文件，重写保留文件内其他键），会话级随会话事件流持久（`permission/rules` 事件 + resume 投影恢复）；`Bash(prefix:*)` 词边界前缀匹配（`ls:*` 不误吞 `lsof`）；裁决序落审批链最外层——deny 手写恒优先（查全部命令）、命中短路不再弹审批卡；`/permission rules` 命令面（list 两级清单 / rm 删除，项目级重写文件、会话级落事件快照）；新挂 `permission-rules` 插件行启用，不挂载装配零感回退
+
 ## 0.18.0（2026-09-22）
 
 ### Added

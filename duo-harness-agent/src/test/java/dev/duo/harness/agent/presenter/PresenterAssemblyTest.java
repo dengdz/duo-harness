@@ -221,6 +221,62 @@ class PresenterAssemblyTest {
     }
 
     @Test
+    void permissionRulesRestoreFollowsSessionProjection() throws Exception {
+        // 会话级规则恢复（M24 工单 01，ADR-0026 决策一）：续接读会话投影恢复规则、
+        // 换绑新会话（无规则事件）即清空、坏 JSON 按空处理不抛——服务缺席路径由
+        // hasService 分支覆盖（纯 ToolsPlugin 装配零感跳过同 restorePermissionMode）
+        Context root = Context.root();
+        try {
+            root.plugin(new ToolsPlugin(), null).awaitStartup();
+            // 内联插件发布权限规则服务（项目根指 @TempDir，隔离真实仓库文件）
+            java.util.concurrent.atomic.AtomicReference<dev.duo.harness.tools.fs.PermissionRules> ref =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            root.plugin(new dev.duo.harness.core.api.Plugin<Void>() {
+                @Override
+                public java.util.Set<String> inject() {
+                    return java.util.Set.of();
+                }
+
+                @Override
+                public Class<Void> configType() {
+                    return null;
+                }
+
+                @Override
+                public dev.duo.harness.core.api.Disposable apply(Context ctx, Void config) {
+                    var rules = dev.duo.harness.tools.fs.PermissionRules.load(
+                            Path.of(tempDir.toAbsolutePath().toString(), "proj"));
+                    ref.set(rules);
+                    return ctx.provide(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME, rules);
+                }
+            }, null).awaitStartup();
+
+            Session resumed = Session.create(Path.of(tempDir.toAbsolutePath().toString(), "s1"));
+            resumed.append(SessionEvent.permissionRules(
+                    dev.duo.harness.tools.fs.PermissionRules.rulesToJson(List.of(
+                            new dev.duo.harness.tools.fs.PermissionRules.Rule("bash", "docker logs",
+                                    dev.duo.harness.tools.fs.PermissionRules.Decision.ALLOW,
+                                    dev.duo.harness.tools.fs.PermissionRules.Scope.SESSION)))));
+            PresenterAssembly.restorePermissionRules(root, resumed);
+            assertEquals(1, ref.get().sessionRules().size(), "续接恢复会话规则投影");
+            resumed.close();
+
+            // 换绑新会话：无规则事件 → 运行时态清空（规则随会话生命周期）
+            Session rebound = Session.create(Path.of(tempDir.toAbsolutePath().toString(), "s2"));
+            PresenterAssembly.restorePermissionRules(root, rebound);
+            assertTrue(ref.get().sessionRules().isEmpty(), "新会话无规则事件即清空");
+
+            // 坏 JSON（手改/向前兼容）：按空规则处理，不抛异常
+            rebound.append(SessionEvent.permissionRules("garbage{"));
+            assertDoesNotThrow(() -> PresenterAssembly.restorePermissionRules(root, rebound));
+            assertTrue(ref.get().sessionRules().isEmpty(), "坏 JSON 按空规则");
+            rebound.close();
+        } finally {
+            root.dispose();
+        }
+    }
+
+    @Test
     void llmAdapterPropagatesConfigLoadFailure() {
         // LLM 配置缺失/不合法时装配即失败点名——呈现位据此 FAILED（沿 WebPlugin 既有语义）
         assertThrows(PluginException.class,

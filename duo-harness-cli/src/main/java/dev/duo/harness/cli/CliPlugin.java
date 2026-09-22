@@ -285,6 +285,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
         PresenterAssembly.restorePermissionMode(
                 ctx, session, false);
+        // 会话级权限规则恢复（M24，ADR-0026 决策一）：续接该会话的规则快照
+        PresenterAssembly.restorePermissionRules(ctx, session);
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
         plan.active = PlanMode.isActive(session);
@@ -305,6 +307,77 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private Path sessionsDir() {
         return sessionsDirOverride != null
                 ? sessionsDirOverride : DuoHome.resolve().resolveDir("agent-sessions");
+    }
+
+    /**
+     * /permission rules 子命令（M24，ADR-0026 决策一）：list（缺省）两级规则清单、
+     * rm &lt;P#|S#&gt; 删除——项目级重写 .duo/settings.json（写入失败降级提示不静默）、
+     * 会话级更新运行时态并落 permission/rules 事件快照（latest-wins 投影、resume 恢复）。
+     * 规则服务缺席（未挂 permission-rules 插件）降级提示。
+     */
+    private static String permissionRulesCommand(Context ctx, CommandContext context, String rest) {
+        dev.duo.harness.tools.fs.PermissionRules rules;
+        try {
+            rules = ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)
+                    ? ctx.as(CliPermissionRulesView.class).permissionRules() : null;
+        } catch (Exception e) {
+            rules = null;
+        }
+        if (rules == null) {
+            return "permission-rules 服务未挂载，权限规则功能不可用（agent-demo.yml 增挂 "
+                    + "PermissionRulesPlugin）。";
+        }
+        if (rest.isEmpty() || rest.equals("list")) {
+            return renderRules(rules);
+        }
+        if (!rest.startsWith("rm")) {
+            return "未知 rules 子命令: " + rest + "（可用: list / rm <P#|S#>）";
+        }
+        String target = rest.substring(2).strip().toUpperCase();
+        if (target.length() < 2 || (target.charAt(0) != 'P' && target.charAt(0) != 'S')) {
+            return "用法: /permission rules rm <P#|S#>（P=项目级 S=会话级）";
+        }
+        int index;
+        try {
+            index = Integer.parseInt(target.substring(1));
+        } catch (NumberFormatException e) {
+            return "规则编号须为数字: " + target;
+        }
+        try {
+            if (target.charAt(0) == 'P') {
+                rules.removeProjectRule(index);
+                return "已删除项目级规则 P" + index + "（.duo/settings.json 已重写）。";
+            }
+            var updated = rules.removeSessionRule(index);
+            context.session().append(dev.duo.harness.session.SessionEvent.permissionRules(
+                    dev.duo.harness.tools.fs.PermissionRules.rulesToJson(updated)));
+            return "已删除会话级规则 S" + index + "。";
+        } catch (IllegalArgumentException | java.io.UncheckedIOException e) {
+            return "删除失败: " + e.getMessage();
+        }
+    }
+
+    /** 两级规则清单渲染（P/S 编号与 rm 目标一一对应）。 */
+    private static String renderRules(dev.duo.harness.tools.fs.PermissionRules rules) {
+        StringBuilder sb = new StringBuilder("项目级（.duo/settings.json）：");
+        appendRules(sb, 'P', rules.projectRules());
+        sb.append("\n会话级：");
+        appendRules(sb, 'S', rules.sessionRules());
+        return sb.toString();
+    }
+
+    private static void appendRules(StringBuilder sb, char letter,
+                                    java.util.List<dev.duo.harness.tools.fs.PermissionRules.Rule> rules) {
+        if (rules.isEmpty()) {
+            sb.append("（无）");
+            return;
+        }
+        for (int i = 0; i < rules.size(); i++) {
+            var rule = rules.get(i);
+            sb.append(String.format("%n  %c%d  %-5s  %-9s  %s", letter, i + 1,
+                    rule.decision().name().toLowerCase(), rule.tool(),
+                    rule.prefix() == null ? "(工具级)" : rule.prefix() + "*"));
+        }
     }
 
     /**
@@ -416,25 +489,36 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 // 用户显式开新话题：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
                 PresenterAssembly.restorePermissionMode(
                         ctx, holder.session, true);
+                // 会话级规则随会话生命周期（ADR-0026 决策一）：新会话无规则事件即清空
+                PresenterAssembly.restorePermissionRules(ctx, holder.session);
                 plan.active = false;
                 disposeGuidance(plan);
                 return "新会话 " + holder.session.id() + "。";
             }));
         // /permission 双面可用（ANY）：handler 只依赖 fs 插件的全局 workspace 服务
         // （无呈现位归属，切档即全局生效）——M19 用户故事 1（浏览器直接切档）；
-        // 其余三命令闭包本呈现位状态（holder/plan/agent），维持 CLI 面
+        // 其余三命令闭包本呈现位状态（holder/plan/agent），维持 CLI 面。
+        // rules 子命令（M24，ADR-0026 决策一）：两级规则清单与删除（rm 项目级重写
+        // settings.json、rm 会话级落 permission/rules 事件快照）
         commands.register(ctx, new CommandDefinition("permission",
-                "查看或切换权限预设：/permission [read-only|workspace-write|danger-full-access]",
+                "查看或切换权限预设：/permission [read-only|workspace-write|danger-full-access]"
+                        + "；/permission rules [list|rm <P#|S#>]",
                 CommandScope.ANY, true, context -> {
                 if (workspacePolicy == null) {
                     return "workspace 服务未挂载（未装配 fs 工具插件），/permission 不可用。";
                 }
-                if (context.args().isEmpty()) {
+                String input = context.args().strip();
+                if (input.equals("rules") || input.startsWith("rules ")) {
+                    return permissionRulesCommand(ctx, context,
+                            input.length() > "rules".length() ? input.substring("rules".length()).strip() : "");
+                }
+                if (input.isEmpty()) {
                     return "当前预设: " + workspacePolicy.mode().configName()
-                            + "（可选: read-only / workspace-write / danger-full-access）";
+                            + "（可选: read-only / workspace-write / danger-full-access；"
+                            + "/permission rules 管理权限规则）";
                 }
                 try {
-                    workspacePolicy.setMode(WorkspacePolicy.Mode.parse(context.args()));
+                    workspacePolicy.setMode(WorkspacePolicy.Mode.parse(input));
                     // 档位跟对话走（M19，ADR-0020 决策 10）：切档落会话事件——重开恢复
                     context.session().append(
                             dev.duo.harness.session.SessionEvent.permissionMode(
@@ -998,6 +1082,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliWorkspaceView {
 
         WorkspacePolicy workspace();
+    }
+
+    /** 权限规则服务的视图接口（服务名 permissionRules，M24 工单 01）。 */
+    interface CliPermissionRulesView {
+
+        dev.duo.harness.tools.fs.PermissionRules permissionRules();
     }
 
     /** 后台任务注册表的视图接口（服务名 backgroundTasks，M23 工单 04）。 */

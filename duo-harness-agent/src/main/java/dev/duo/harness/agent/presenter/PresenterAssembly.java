@@ -367,6 +367,35 @@ public final class PresenterAssembly {
     }
 
     /**
+     * 会话级权限规则恢复（M24，ADR-0026 决策一）：读会话 {@code permission/rules}
+     * 投影写回全局规则服务（latest-wins，变更后全量快照）。规则随会话生命周期——
+     * 续接恢复该会话规则、换绑新会话投影为空即清空，无记录语义一致、不区分
+     * 续接/换绑。服务缺席（未挂 permission-rules 插件）零感跳过；坏 JSON 按
+     * 空规则处理（解析侧记 warn）。
+     */
+    public static void restorePermissionRules(Context ctx, Session session) {
+        dev.duo.harness.tools.fs.PermissionRules rules;
+        try {
+            rules = ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)
+                    ? ctx.as(PermissionRulesView.class).permissionRules() : null;
+        } catch (Exception e) {
+            LOG.warn("会话级权限规则恢复跳过：服务解析失败（视为缺席）", e);
+            return;
+        }
+        if (rules == null) {
+            return;
+        }
+        rules.setSessionRules(dev.duo.harness.tools.fs.PermissionRules.parseRulesJson(
+                session.permissionRules(), dev.duo.harness.tools.fs.PermissionRules.Scope.SESSION));
+    }
+
+    /** 权限规则服务视图（方法名即服务名）。 */
+    interface PermissionRulesView {
+
+        dev.duo.harness.tools.fs.PermissionRules permissionRules();
+    }
+
+    /**
      * /title 注册（M19，ADR-0020 决策 11，查重先到先得）：改名命令——双面 ANY +
      * busySafe=true（纯事件写）；再 append {@code session/title} 即改名（latest-wins
      * 投影现成，侧栏即时生效）。标题随对话自动演进不做（一次生成 + 可改名已覆盖）。
