@@ -190,7 +190,7 @@ public final class WebFace {
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
                     WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
                     AttachmentStore attachments, java.util.function.BooleanSupplier visionGate,
-                    SessionQueryService sessionQuery) {
+                    SessionQueryService sessionQuery, String authToken) {
         this.pageSize = pageSize;
         this.server = server;
         this.ctx = ctx;
@@ -201,6 +201,7 @@ public final class WebFace {
         this.session = session;
         this.webAnswerer = webAnswerer;
         this.sessionsDir = sessionsDir;
+        this.authToken = authToken;
         // 入口栅栏白名单按实际绑定端口生成（端口 0 = 系统分配，测试用）
         String port = Integer.toString(server.getAddress().getPort());
         this.allowedHosts = java.util.Set.of(
@@ -262,6 +263,22 @@ public final class WebFace {
                                 AttachmentStore attachments, java.util.function.BooleanSupplier visionGate,
                                 SessionQueryService sessionQuery)
             throws IOException {
+        return start(port, ctx, tools, session, agent, governance, webAnswerer, sessionsDir,
+                pageSize, attachments, visionGate, sessionQuery, null);
+    }
+
+    /**
+     * 启动（M24 工单 06 鉴权版）：{@code authToken} 非 null 时开启鉴权令牌——全端点
+     * （含静态资源）校验 {@code X-Duo-Token} 头或 {@code ?token=} 查询参数，失败一律
+     * 403（fail-closed）；null = 鉴权关闭（测试与嵌入用途；产品装配 WebPlugin 恒传
+     * 启动生成的随机令牌，yml 可显式关闭并横幅警示）。
+     */
+    public static WebFace start(int port, Context ctx, ToolsService tools, Session session,
+                                ChatAgent agent, dev.duo.harness.agent.governance.ContextGovernance governance,
+                                WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
+                                AttachmentStore attachments, java.util.function.BooleanSupplier visionGate,
+                                SessionQueryService sessionQuery, String authToken)
+            throws IOException {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(tools, "tools");
         Objects.requireNonNull(session, "session");
@@ -273,7 +290,7 @@ public final class WebFace {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize,
-                attachments, visionGate, sessionQuery);
+                attachments, visionGate, sessionQuery, authToken);
         face.governance = governance;
         face.bindSession(session);
         face.agent = agent;
@@ -475,9 +492,16 @@ public final class WebFace {
     private final java.util.Set<String> allowedHosts;
     /** 入口栅栏 Origin 白名单（同源形态：http + 回环地址 + 本服务端口）。 */
     private final java.util.Set<String> allowedOrigins;
+    /** 鉴权令牌（M24 工单 06；null = 鉴权关闭——测试与嵌入用途，产品装配恒传）。 */
+    private final String authToken;
+
+    /** 鉴权令牌访问器（WebPlugin 打印带 token 的 URL 用；关闭时 null）。 */
+    public String authToken() {
+        return authToken;
+    }
 
     /**
-     * 入口栅栏（M16 工单 02，术语"入口栅栏"）：两级校验——
+     * 入口栅栏（M16 工单 02，术语"入口栅栏"）：三级校验——
      * ① 全请求 Host 头必须在白名单内（127.0.0.1 / localhost / [::1] 带本服务端口）：
      *    DNS rebinding 攻击把恶意域名解析到 127.0.0.1，浏览器自动带的 Host 头是
      *    攻击域名而非回环地址，白名单直接封死；缺失也拒（fail-closed）。
@@ -485,6 +509,9 @@ public final class WebFace {
      *    不同源 → 403——浏览器发起的跨站 POST 必带 Origin，拦它即拦 CSRF；
      *    GET/SSE 无副作用不校验 Origin，Host 校验已兜底。无配置开关：白名单随
      *    绑定地址派生，未来 bind 配置化时一并放宽。
+     * ③ 鉴权令牌（M24 工单 06，ADR-0026 决策五；authToken 非 null 时启用）：请求须
+     *    携 {@code X-Duo-Token} 头或 {@code ?token=} 查询参数（SSE 通道），常量时间
+     *    比对，失败一律 403——静态资源同样受检（首载经带 token 的 URL）。
      */
     private boolean entryGate(HttpExchange exchange) throws IOException {
         String host = exchange.getRequestHeaders().getFirst("Host");
@@ -500,12 +527,40 @@ public final class WebFace {
                 return false;
             }
         }
+        if (authToken != null && !tokenMatches(exchange)) {
+            respondEmpty(exchange, 403);
+            return false;
+        }
         return true;
     }
 
-    /** 静态单页（/）。 */
+    /** 鉴权令牌校验：X-Duo-Token 头或 ?token= 查询参数，常量时间比对防时序侧信道。 */
+    private boolean tokenMatches(HttpExchange exchange) {
+        String candidate = exchange.getRequestHeaders().getFirst("X-Duo-Token");
+        if (candidate == null || candidate.isBlank()) {
+            candidate = queryParam(exchange, "token");
+        }
+        if (candidate == null || candidate.isBlank()) {
+            return false;
+        }
+        return java.security.MessageDigest.isEqual(
+                candidate.strip().getBytes(StandardCharsets.UTF_8),
+                authToken.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 静态单页（/）：鉴权开启时为子资源 URL 注入 token——link/script 标签不继承
+     * 父页查询参数，不注入则首载自断（三轴审查 Spec 轴阻断项）；注入只发生在已过
+     * 闸的响应上，token 不落模板文件。
+     */
     private void handleIndexPage(HttpExchange exchange) throws IOException {
-        respondNoCache(exchange, 200, "text/html; charset=utf-8", readClasspage());
+        String html = new String(readClasspage(), StandardCharsets.UTF_8);
+        if (authToken != null) {
+            // 组引用 $1 保持正则语义；token 部分经 quoteReplacement 防特殊字符（hex 实际无 $/\）
+            html = html.replaceAll("(/web/[A-Za-z0-9._-]+)",
+                    "$1?token=" + java.util.regex.Matcher.quoteReplacement(authToken));
+        }
+        respondNoCache(exchange, 200, "text/html; charset=utf-8", html.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

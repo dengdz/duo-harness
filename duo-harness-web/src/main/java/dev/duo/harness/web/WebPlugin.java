@@ -82,6 +82,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
     public Disposable apply(Context ctx, JsonNode config) {
         int port = config != null && config.hasNonNull("port")
                 ? config.get("port").asInt(DEFAULT_PORT) : DEFAULT_PORT;
+        // 鉴权令牌（M24 工单 06，ADR-0026 决策五）：缺省生成随机令牌（fail-closed），
+        // web.auth: none 显式关闭（启动横幅警示）；非法值 FAILED 点名
+        String authMode = parseAuth(config);
+        String authToken = "token".equals(authMode) ? generateToken() : null;
         ToolsService tools = ctx.as(WebToolsView.class).tools();
         PromptRegistry prompts = ctx.as(WebPromptsView.class).prompts();
         InteractionService answers = ctx.as(WebAnswersView.class).answers();
@@ -159,7 +163,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         try {
             face = WebFace.start(port, ctx, tools, session, agent, governance, webAnswerer,
                     DuoHome.resolve().resolveDir("agent-sessions"), pageSize,
-                    attachments, () -> llm.vision(), sessionQuery);
+                    attachments, () -> llm.vision(), sessionQuery, authToken);
             // 后台任务完成通知路由（M23 工单 04）：fs 行在场时挂载——注册表缺席零感
             if (ctx.hasService(dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME)) {
                 face.setBackgroundTaskRegistry(ctx.as(WebBackgroundTasksView.class).backgroundTasks());
@@ -235,7 +239,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 }
             });
         }
-        System.out.println("Web 面已启动: http://127.0.0.1:" + face.port());
+        if (authToken != null) {
+            System.out.println("Web 面已启动（鉴权开启）: http://127.0.0.1:" + face.port()
+                    + "/?token=" + authToken);
+        } else {
+            System.out.println("Web 面已启动（鉴权已关闭——本机任何进程可直接访问；服务仅绑 127.0.0.1）: http://127.0.0.1:" + face.port());
+        }
         return face::stop;
     }
 
@@ -243,6 +252,27 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebToolsView {
 
         ToolsService tools();
+    }
+
+    /**
+     * 解析 web 插件 config 的可选鉴权模式（{@code config.auth}，M24 工单 06）：
+     * token（缺省，随机令牌鉴权）| none（显式关闭，横幅警示）；非法值 FAILED 点名。
+     */
+    private static String parseAuth(JsonNode config) {
+        String value = config == null || !config.hasNonNull("auth")
+                ? "token" : config.get("auth").asText("token").strip();
+        String normalized = value.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.equals("token") || normalized.equals("none")) {
+            return normalized;
+        }
+        throw new PluginException("web.auth 非法: \"" + value + "\"（可选 token | none）");
+    }
+
+    /** 启动生成随机令牌（SecureRandom 24 字节 → 48 位 hex；进程生命周期一次一发，无过期）。 */
+    private static String generateToken() {
+        byte[] bytes = new byte[24];
+        new java.security.SecureRandom().nextBytes(bytes);
+        return java.util.HexFormat.of().formatHex(bytes);
     }
 
     /** 权限规则服务的视图接口（方法名即服务名 permissionRules，M24 工单 02）。 */

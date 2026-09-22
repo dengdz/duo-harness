@@ -207,3 +207,14 @@
   1. **新增协议适配器时，「SSE 流内 error 帧」是最易漏的出口**——OpenAI 兼容面同构缺口仍在（记档），协议级错误经流内事件下发时若只认正常帧，半截 turn 会被静默返回；新适配器 checklist 加「流内 error 帧 → 异常上报」一项。
   2. **双协议适配器的骨架重复到阈值即提取**——85 行同构暂可接受，但工单 10 改思考映射触碰同一段时必须先提取公共件再改，避免双处漂移。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（848 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/08-provider声明与Anthropic适配器.md`。
+
+### 2026-09-23 · M24 工单 06 审查（0.19.0 分支，三轴制第二轮：Web 鉴权令牌）
+
+- **范围与轮次**：三轴并行（Standards / Spec / 行级规则三子代理，基点 f33381f 工作树）→ 修复 → 全链 package 收口（修复含阻断级新代码——新增回归测试锁定后按 SKILL 第 4 步免复跑）。
+- **计数**：Standards 硬违规 2（CHANGELOG、web 行 config 清单）+ Spec 阻断 1（静态子资源 403 首载自断）+ 行级 medium 3 / low 3；处置：修 7 / 记档 4。
+- **三轴制第二轮实证**：行级轴再产 medium 3（localStorage 白屏、地址栏 token 泄漏、横幅措辞偏保守）——独立性改造后连续两轮有实质产出（对比委托 OCR 时代连续零产出），改造有效性初步坐实。Spec 轴的「静态子资源自断」是用户会当场撞上的可用性阻断——三轴并行在实现收口前抓到，避免了一次验收返工。
+- **模式化问题（本次新识别）**：
+  1. **「token/凭据经 URL 通道」必须闭环到子资源**——鉴权只挂 API/HTML 层时，link/script/img 子资源请求是天然漏验点（浏览器不继承父页查询参数）；服务端注入或 Cookie 才是完备形态，实现时以「首载流程走通」为验收判据而非端点逐个 403。
+  2. **正则替换的 quoteReplacement 会连组引用 $1 一起转义**——需要保留组引用时只对动态片段做 quoteReplacement（本次被自写测试当场抓出）。
+  3. **浏览器存储 API 顶层调用必须 try/catch**——隐私模式/禁用存储直接 throw 白屏；凡 localStorage/sessionStorage 包装一律降级内存态。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（858 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/06-Web鉴权令牌.md`。
