@@ -112,6 +112,8 @@ javadoc/块注释内描述双星模式时用措辞替代（「双星前缀」「
 **影响范围**：
 所有新服务发布（tools/fs/agent/web 各域）。
 
+**重现与强化（2026-09-22，M24 工单 01）**：本条重现——新服务 `permission-rules` 连字符命名致视图接口解析失败、恢复用例红（修复为 camelCase `permissionRules`）。强化为机械核对项：**新服务发布时 SERVICE_NAME 常量与消费方视图接口方法名并排摆放、逐字一致后才编译**； duo-code-review 的 Standards 轴与 OCR 轮都应核对这一对。
+
 ## [2026-09-22] 脚本化批量修改代码：replace 后必须断言生效
 
 **问题描述**：
@@ -153,3 +155,31 @@ grill 收口前的范围确认题固定加一步排他对账：把本期范围�
 
 **影响范围**：
 所有 grill 类会话的范围确认环节与 to-spec 开笔前对账。
+
+## [2026-09-22] 文档折行命令必须整块复制：exec:java 缺 mainClass 跑成 Demo 演示
+
+**问题描述**：
+给用户的启动命令只复制了 运行Demo.md 命令块的首行（`mvn -pl duo-harness-example -am package exec:java -DskipTests`），用户跑起来的是 pom 缺省 mainClass 的 DemoMain（M1/M2 演示，跑完即退），进不到 CLI。
+
+**原因分析**：
+文档命令块是多行折行（`\` 续行），CLI 入口在续行 `-Dexec.mainClass=dev.duo.harness.example.DuoMain`；example 模块 pom 的 exec 缺省 mainClass 是演示入口。「首行 + 跳过测试」拼出来的是合法命令、能跑但跑错程序——比报错更隐蔽。
+
+**解决方案**：
+从文档复制命令以 ``` 代码块为单位整块复制，逐行核对续行；凡 exec:java 类命令先确认 -Dexec.mainClass 与目标入口一致（DemoMain=演示、DuoMain=CLI/Web 装配）。
+
+**影响范围**：
+所有从 docs 复制的多行命令（运行Demo.md、发布/验收手册）。
+
+## [2026-09-22] 可选服务消费必须 optionalInject 声明：hasService 真 ≠ 可读，根上下文测试测不出声明闸门
+
+**问题描述**：
+工单 01 三个消费方（CliPlugin/WebPlugin/WorkspaceApprovalPlugin）用 hasService + 视图接口读新服务 permissionRules，未声明 optionalInject——内核"错误前移"拒读（PluginException: 服务未在依赖声明中），被 try-catch 吞成"视为缺席"，规则面静默未装配，用户实测 sudo 照常弹卡才发现。
+
+**原因分析**：
+内核契约是"视图解析受依赖声明约束"（inject/optionalInject），hasService 只回答存在性、不解锁读取；恢复单测用的 Context.root() 是根上下文——根没有插件身份、声明闸门不生效，所以测试绿而生产哑火。
+
+**解决方案**：
+消费服务的插件一律把服务名加进 inject()（必需）或 optionalInject()（可选）；涉及服务解析的新代码，测试要走插件上下文装配（或接受"声明正确性由用户启动冒烟兜底"并显式记档）。启动日志出现「服务解析失败（视为缺席）」warn 即是声明缺失的信号，当场查声明而非放过。
+
+**影响范围**：
+所有新增服务消费方（含工具域/呈现位/治理面的可选服务）。

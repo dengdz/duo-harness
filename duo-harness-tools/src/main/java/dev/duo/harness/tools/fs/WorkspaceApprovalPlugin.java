@@ -34,6 +34,16 @@ public final class WorkspaceApprovalPlugin implements Plugin<Void> {
         return Set.of(InteractionService.SERVICE_NAME, WorkspacePolicy.SERVICE_NAME);
     }
 
+    /**
+     * 权限规则可选依赖（M24，ADR-0026 决策一）：permission-rules 插件缺席时审批链
+     * 零感回退为无规则行为；在场时包一层规则前置裁决。视图解析受内核"声明闸门"
+     * 约束——未声明 optionalInject 的服务即使 hasService 为真也会被拒读。
+     */
+    @Override
+    public Set<String> optionalInject() {
+        return Set.of(PermissionRules.SERVICE_NAME);
+    }
+
     @Override
     public Class<Void> configType() {
         return null;

@@ -69,7 +69,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
                 dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
                 dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME,
-                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME);
+                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME,
+                dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME);
     }
 
     @Override

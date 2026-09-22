@@ -144,7 +144,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     public Set<String> optionalInject() {
         return Set.of(WorkspacePolicy.SERVICE_NAME,
                 dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
-                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME);
+                dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME,
+                dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME);
     }
 
     @Override
