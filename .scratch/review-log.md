@@ -34,6 +34,7 @@
 - **模式化问题（本次新识别，供后续重点核对）**：
   1. **WatchService 双固定坑（验收实测升级）**——key 复位必须 try/finally 全路径覆盖（异常轮不复位即该根静默失聪）；**目录删除时 Poller 直接 cancel key 且不投递事件不唤醒 take，防重集合（Set）残留失效 key 后重建目录永久失聪**——防重表用 Map<Path,WatchKey> 注册前校验 isValid，失效摘除重注册；「删除重建后热加载失效」回归用例必须覆盖。
   2. **长生命周期阻塞循环禁用虚拟线程**——PollingWatchService.take() 内部 synchronized 段在并发高载下 pin carrier 致虚拟线程饿死（watch 全量并发下系统性失聪实证）；改平台守护线程后全量稳定。生产隐患非仅测试问题。
+  2b. **macOS PollingWatchService 多目录吞 MODIFY**——单目录 repro 正常、多目录注册下 MODIFY 稳定丢失（CREATE/DELETE 正常）；不能依赖事件完整性，watch 循环加心跳窗口（poll 超时也重扫，无变更零成本短路）把可靠性从「事件必达」降级为「事件加速 + 心跳保证」。诊断探针必须用合法目标形态（probe.md ≠ SKILL.md 造成过「未生效」假象）。
   3. **裸 -pl 假绿（mvn -am 教训第 4 犯加重）**——裸 -pl 依赖解析失败 0.1s 退出，连跑"全绿"实为未跑；mvn 命令必须带 -am 且跑完核对 "Tests run" 行真实出现。
   4. **环境时序敏感断言与感知解耦**——OS 事件感知时序是环境属性（macOS 轮询粒度负载下波动秒级到三十秒级），测试断言「机制正确」用强制收敛承载，「感知必达」留给人工验收兜底；但 watch 线程饿死这类生产隐患必须根治而非解耦。
 - **收口**：全量 test BUILD SUCCESS（agent 182）；两轮齐全（双轴 ✓ + OCR ✓）；CHANGELOG/limitations/工单记账。

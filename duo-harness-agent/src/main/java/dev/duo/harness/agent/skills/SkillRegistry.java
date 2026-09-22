@@ -257,11 +257,17 @@ public final class SkillRegistry {
         while (!stopped.get()) {
             WatchKey key = null;
             try {
-                key = watcher.take();
-                Thread.sleep(200); // 去抖：编辑器常一次性写多事件，窗口内合并为一次重扫
-                WatchKey queued;
-                while ((queued = watcher.poll()) != null) {
-                    drain(queued, watched); // 排干积压并复位——key 不复位即永久停报（WatchService 契约）
+                // 心跳窗口 2s：事件到达即时处理；无事件的超时轮同样重扫——macOS
+                // PollingWatchService 在多目录注册下实测会吞 MODIFY 事件（单目录
+                // 正常），心跳兜底保证修改感知最多延迟一个窗口（refreshFrom 对
+                // 无变更快速短路，心跳轮零成本）
+                key = watcher.poll(2, java.util.concurrent.TimeUnit.SECONDS);
+                if (key != null) {
+                    Thread.sleep(200); // 去抖：编辑器常一次性写多事件，窗口内合并为一次重扫
+                    WatchKey queued;
+                    while ((queued = watcher.poll()) != null) {
+                        drain(queued, watched); // 排干积压并复位——key 不复位即永久停报（WatchService 契约）
+                    }
                 }
                 boolean catalogChanged = refreshFrom(roots, disabled);
                 if (catalogChanged) {
