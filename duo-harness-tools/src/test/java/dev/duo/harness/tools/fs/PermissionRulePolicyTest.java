@@ -6,9 +6,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.duo.harness.tools.ApprovalDecision;
 import dev.duo.harness.tools.ApprovalPolicyService;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,18 +19,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 规则前置裁决策略用例（M24 工单 01，ADR-0026 决策一）：命中短路（deny/allow 不
- * 打扰内层）、未命中委托内层且 presenterId 原样转发（亲和路由不回退）。
+ * 规则与只读前置裁决策略用例（M24 工单 01/03，ADR-0026 决策一/二）：命中短路
+ * （deny/allow/只读各段不扰内层）、裁决序（deny 恒优先压过只读）、未命中委托
+ * 内层且 presenterId 原样转发（亲和路由不回退）。
  */
 class PermissionRulePolicyTest {
 
     @TempDir
     Path tempDir;
 
+    @BeforeEach
+    void seedGitTrustRoot() throws Exception {
+        // git 四件套只读放行依赖信任根（.git 存在性）——夹具预置
+        Files.createDirectories(tempDir.resolve(".git"));
+    }
+
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：PermissionRulePolicyTest —— 规则前置裁决：命中短路、未命中委托"
-                + "与标记透传（3 用例） ===");
+        System.out.println("\n=== 套件：PermissionRulePolicyTest —— 规则与只读前置裁决：命中短路、"
+                + "deny 压过只读的裁决序、未命中透传（5 用例） ===");
     }
 
     private static ObjectNode bashArgs(String command) {
@@ -57,14 +66,18 @@ class PermissionRulePolicyTest {
         }
     }
 
+    private PermissionRulePolicy policy(PermissionRules rules, List<InnerCall> calls) {
+        return new PermissionRulePolicy(rules, new ReadOnlyBashDetector(tempDir),
+                new RecordingInner(calls, ApprovalDecision.deny("内层裁决", "test-inner")));
+    }
+
     @Test
     void denyRuleShortCircuitsWithoutConsultingInner() {
         List<InnerCall> calls = new ArrayList<>();
         PermissionRules rules = PermissionRules.load(tempDir);
         rules.setSessionRules(List.of(new PermissionRules.Rule("bash", "sudo",
                 PermissionRules.Decision.DENY, PermissionRules.Scope.SESSION)));
-        PermissionRulePolicy policy = new PermissionRulePolicy(rules,
-                new RecordingInner(calls, ApprovalDecision.allow("test-inner")));
+        PermissionRulePolicy policy = policy(rules, calls);
 
         ApprovalDecision decision = policy.decide("bash", bashArgs("sudo apt install"), "cli");
         assertEquals(ApprovalDecision.Outcome.DENY, decision.outcome());
@@ -78,20 +91,48 @@ class PermissionRulePolicyTest {
         PermissionRules rules = PermissionRules.load(tempDir);
         rules.setSessionRules(List.of(new PermissionRules.Rule("bash", "npm run test",
                 PermissionRules.Decision.ALLOW, PermissionRules.Scope.SESSION)));
-        PermissionRulePolicy policy = new PermissionRulePolicy(rules,
-                new RecordingInner(calls, ApprovalDecision.deny("内层裁决", "test-inner")));
+        PermissionRulePolicy policy = policy(rules, calls);
 
         ApprovalDecision decision = policy.decide("bash", bashArgs("npm run test"), null);
         assertEquals(ApprovalDecision.Outcome.ALLOW, decision.outcome());
+        assertEquals(PermissionRules.SOURCE, decision.policySource());
         assertTrue(calls.isEmpty(), "规则放行短路——内层不被打扰");
+    }
+
+    @Test
+    void denyRuleBeatsReadonlyExemption() {
+        // 裁决序核心（ADR-0026 决策一/二交叉）：deny 查全部命令——只读命令 ls 命中
+        // deny 规则时必须拒绝，不得被只读免审翻回（单调否决同构）
+        List<InnerCall> calls = new ArrayList<>();
+        PermissionRules rules = PermissionRules.load(tempDir);
+        rules.setSessionRules(List.of(new PermissionRules.Rule("bash", "ls",
+                PermissionRules.Decision.DENY, PermissionRules.Scope.SESSION)));
+        PermissionRulePolicy policy = policy(rules, calls);
+
+        ApprovalDecision decision = policy.decide("bash", bashArgs("ls /tmp"), "cli");
+        assertEquals(ApprovalDecision.Outcome.DENY, decision.outcome());
+        assertEquals(PermissionRules.SOURCE, decision.policySource());
+        assertTrue(calls.isEmpty());
+    }
+
+    @Test
+    void readonlyHitAllowedWithReadonlySignature() {
+        // 只读免审（规则未命中时）：署名 read-only 而非 permission-rules
+        List<InnerCall> calls = new ArrayList<>();
+        PermissionRules rules = PermissionRules.load(tempDir);
+        PermissionRulePolicy policy = policy(rules, calls);
+
+        ApprovalDecision decision = policy.decide("bash", bashArgs("git status"), "cli");
+        assertEquals(ApprovalDecision.Outcome.ALLOW, decision.outcome());
+        assertEquals(ReadOnlyBashPolicy.SOURCE, decision.policySource());
+        assertTrue(calls.isEmpty());
     }
 
     @Test
     void missDelegatesToInnerWithPresenterIdPassedThrough() {
         List<InnerCall> calls = new ArrayList<>();
         PermissionRules rules = PermissionRules.load(tempDir);
-        PermissionRulePolicy policy = new PermissionRulePolicy(rules,
-                new RecordingInner(calls, ApprovalDecision.deny("内层裁决", "test-inner")));
+        PermissionRulePolicy policy = policy(rules, calls);
 
         ApprovalDecision decision = policy.decide("bash", bashArgs("make target"), "web");
         assertEquals("test-inner", decision.policySource(), "未命中透传内层裁决");

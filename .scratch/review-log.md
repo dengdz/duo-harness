@@ -177,3 +177,13 @@
   1. **M23 记档的「服务命名惯例」重现**——新服务名首版用连字符 `permission-rules`，视图接口（方法名即服务名）解析失败，恢复用例红；修正为 camelCase `permissionRules`。该经验条目升级为：**新服务发布前把 SERVICE_NAME 与视图方法名并排核对，两处逐字一致**（与 experience 2026-09-22 条互相引用）。
   2. **「过渡态注释指向工单记档」必须双处真落**——代码 javadoc 声称「过渡态记档于工单」但工单侧当时没有该记档（Spec 轴抓到），注释与工单的对账要像测试断言一样双向成立。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（774 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/01-权限规则引擎地基.md`。
+
+### 2026-09-22 · M24 工单 03 审查（0.19.0 分支，HEAD 1976acb 工作树：只读判定器与免审批接线）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 1976acb）→ 修复 → OCR（委托模式，6 代码文件全覆盖；7 排除文件由双轴覆盖）→ 修复 → 全链 package 收口。
+- **计数**：双轴 Standards 硬违规 1（approval 行文档误导）+ 基线 judgement call 5 + Spec 阻断 1（路径归一逃逸口）+ 缺失 3；OCR 新增 0；两轮处置 12 项（修 11 / 待用户验收 1）。
+- **模式化问题（本次新识别）**：
+  1. **「命令词归一化」在免审白名单场景是逃逸口**——basename 剥路径让 `/tmp/evil/ls` 命中 `ls` 白名单即免审；安全白名单只认裸命令名，路径前缀一律疑罪从有（与权限规则的前缀匹配形成对照：规则匹配认词边界、白名单匹配拒路径）。
+  2. **拆分 API 后的组合方法即死代码**——deny/allow 两段拆出后，原组合方法 verdict() 零生产调用，靠 Standards 轴 Speculative Generality 抓到；拆分时同步删组合入口。
+  3. **装配接线测试的夹具双隔离**——trust root（.git 存在性）与规则文件来源都要指向临时目录，否则 surefire 的模块 cwd（无 .git）与用户真实 settings.json 会把确定性测试变成环境相关测试。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（796 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/03-只读判定器与免审批接线.md`。

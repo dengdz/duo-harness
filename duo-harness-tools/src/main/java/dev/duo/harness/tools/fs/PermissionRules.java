@@ -127,23 +127,27 @@ public final class PermissionRules {
     }
 
     /**
-     * 规则裁决：deny 恒优先（两轮扫描——先全量 deny 后 allow），命中即短路，
-     * 未命中返回 empty 交内层审批链。当前对所有命中生效；allow 只查非只读命令的
-     * 收窄在只读判定器（工单 03）接入判定面后达成。
-     *
-     * @param toolName 工具名
-     * @param args     调用参数（bash 取 {@code command} 字段做前缀匹配）
+     * deny 段裁决（ADR-0026 决策一：查全部命令，恒优先）：命中返回拒绝（署名规则
+     * 来源），未命中返回 empty。
      */
-    public Optional<ApprovalDecision> verdict(String toolName, JsonNode args) {
-        List<Rule> snapshot = allRules();
-        String command = bashCommand(toolName, args);
-        for (Rule rule : snapshot) {
-            if (rule.decision() == Decision.DENY && matches(rule, toolName, command)) {
+    public Optional<ApprovalDecision> denyVerdict(String toolName, JsonNode args) {
+        for (Rule rule : allRules()) {
+            if (rule.decision() == Decision.DENY
+                    && matches(rule, toolName, ReadOnlyBashDetector.bashCommand(toolName, args))) {
                 return Optional.of(ApprovalDecision.deny("权限规则拒绝: " + rule.describe(), SOURCE));
             }
         }
-        for (Rule rule : snapshot) {
-            if (rule.decision() == Decision.ALLOW && matches(rule, toolName, command)) {
+        return Optional.empty();
+    }
+
+    /**
+     * allow 段裁决（ADR-0026 决策一：只查非只读命令——只读命令在裁决序上游已被
+     * 只读层截获，本段天然只达非只读面）：命中返回放行，未命中返回 empty。
+     */
+    public Optional<ApprovalDecision> allowVerdict(String toolName, JsonNode args) {
+        for (Rule rule : allRules()) {
+            if (rule.decision() == Decision.ALLOW
+                    && matches(rule, toolName, ReadOnlyBashDetector.bashCommand(toolName, args))) {
                 return Optional.of(ApprovalDecision.allow(SOURCE));
             }
         }
@@ -209,14 +213,6 @@ public final class PermissionRules {
             return false;
         }
         return rule.prefix() == null || (bashCommand != null && prefixMatches(rule.prefix(), bashCommand));
-    }
-
-    /** bash 调用命令提取：非 bash 工具或无 command 参数返回 null（前缀规则不命中）。 */
-    private static String bashCommand(String toolName, JsonNode args) {
-        if (!"bash".equals(toolName) || args == null || !args.hasNonNull("command")) {
-            return null;
-        }
-        return args.get("command").asText("");
     }
 
     /** 读项目规则文件：缺席/缺段/坏 JSON/条目非法一律降级（warn + 已解析部分/空）。 */

@@ -57,15 +57,19 @@ public final class WorkspaceApprovalPlugin implements Plugin<Void> {
 
     @Override
     public Disposable apply(Context ctx, Void config) {
+        WorkspacePolicy workspace = ctx.as(WorkspaceView.class).workspace();
         PermissionRules rules = resolveRules(ctx);
-        ApprovalPolicyService inner = rules == null
-                ? new InteractivePolicy(ctx) : new PermissionRulePolicy(rules, new InteractivePolicy(ctx));
-        ApprovalPolicyService policy = new WorkspaceGatePolicy(
-                inner, ctx.as(WorkspaceView.class).workspace());
+        // 裁决序装配（M24，ADR-0026 决策一/二）：deny 规则 → 只读放行 → allow 规则
+        // → 档位 → 交互。规则缺席时只读免审独立生效（ReadOnlyBashPolicy 直包档位闸门）
+        ReadOnlyBashDetector detector = new ReadOnlyBashDetector(workspace.root());
+        WorkspaceGatePolicy gate = new WorkspaceGatePolicy(new InteractivePolicy(ctx), workspace);
+        ApprovalPolicyService policy = rules == null
+                ? new ReadOnlyBashPolicy(detector, gate)
+                : new PermissionRulePolicy(rules, detector, gate);
         Disposable published = ctx.provide(ApprovalPolicyService.SERVICE_NAME, policy);
-        Disposable gate = ctx.on(ToolsService.PRE_EXECUTE, ApprovalGate.gateFor(policy));
+        Disposable gateListener = ctx.on(ToolsService.PRE_EXECUTE, ApprovalGate.gateFor(policy));
         return () -> {
-            gate.dispose();
+            gateListener.dispose();
             published.dispose();
         };
     }

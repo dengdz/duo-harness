@@ -56,23 +56,26 @@ class PermissionRulesTest {
     }
 
     @Test
-    void denyBeatsAllowWhenBothMatch() {
-        // deny 恒优先（查全部命令，guard 单调否决同构）：allow/deny 同时命中必 deny
+    void denySegmentWinsWhenBothSegmentsMatch() {
+        // deny 段恒优先（查全部命令，guard 单调否决同构）：deny/allow 同时命中各段都有解，
+        // 裁决序由策略层先取 deny 段（PermissionRulePolicyTest 锁定顺序）
         PermissionRules rules = PermissionRules.load(tempDir);
         rules.setSessionRules(List.of(
                 rule("bash", "docker logs", PermissionRules.Decision.ALLOW),
                 rule("bash", "docker", PermissionRules.Decision.DENY)));
-        Optional<ApprovalDecision> verdict = rules.verdict("bash", bashArgs("docker logs -f web"));
-        assertTrue(verdict.isPresent());
-        assertEquals(ApprovalDecision.Outcome.DENY, verdict.get().outcome());
-        assertEquals(PermissionRules.SOURCE, verdict.get().policySource());
+        Optional<ApprovalDecision> deny = rules.denyVerdict("bash", bashArgs("docker logs -f web"));
+        assertTrue(deny.isPresent());
+        assertEquals(ApprovalDecision.Outcome.DENY, deny.get().outcome());
+        assertEquals(PermissionRules.SOURCE, deny.get().policySource());
+        assertTrue(rules.allowVerdict("bash", bashArgs("docker logs -f web")).isPresent(),
+                "allow 段独立可用（策略层先取 deny 段）");
     }
 
     @Test
-    void allowRuleShortCircuitsWithSignature() {
+    void allowSegmentShortCircuitsWithSignature() {
         PermissionRules rules = PermissionRules.load(tempDir);
         rules.setSessionRules(List.of(rule("bash", "npm run test", PermissionRules.Decision.ALLOW)));
-        Optional<ApprovalDecision> verdict = rules.verdict("bash", bashArgs("npm run test --watch"));
+        Optional<ApprovalDecision> verdict = rules.allowVerdict("bash", bashArgs("npm run test --watch"));
         assertTrue(verdict.isPresent());
         assertEquals(ApprovalDecision.Outcome.ALLOW, verdict.get().outcome());
         assertEquals(PermissionRules.SOURCE, verdict.get().policySource());
@@ -83,7 +86,7 @@ class PermissionRulesTest {
     void denyReasonCarriesRuleDescription() {
         PermissionRules rules = PermissionRules.load(tempDir);
         rules.setSessionRules(List.of(rule("bash", "sudo", PermissionRules.Decision.DENY)));
-        Optional<ApprovalDecision> verdict = rules.verdict("bash", bashArgs("sudo apt install"));
+        Optional<ApprovalDecision> verdict = rules.denyVerdict("bash", bashArgs("sudo apt install"));
         assertTrue(verdict.isPresent());
         assertTrue(verdict.get().reason().contains("权限规则拒绝"), verdict.get().reason());
         assertTrue(verdict.get().reason().contains("deny bash sudo*"), verdict.get().reason());
@@ -97,10 +100,10 @@ class PermissionRulesTest {
                 new PermissionRules.Rule("web_fetch", null, PermissionRules.Decision.DENY,
                         PermissionRules.Scope.SESSION),
                 rule("bash", "npm run test", PermissionRules.Decision.ALLOW)));
-        assertTrue(rules.verdict("web_fetch", bashArgs("https://example.com")).isPresent(),
+        assertTrue(rules.denyVerdict("web_fetch", bashArgs("https://example.com")).isPresent(),
                 "工具级规则对任意参数命中");
-        assertTrue(rules.verdict("bash", bashArgs("npm run test")).isPresent(), "bash 命中自身规则");
-        assertTrue(rules.verdict("read", bashArgs("sudo rm -rf /")).isEmpty(),
+        assertTrue(rules.allowVerdict("bash", bashArgs("npm run test")).isPresent(), "bash 命中自身规则");
+        assertTrue(rules.allowVerdict("read", bashArgs("sudo rm -rf /")).isEmpty(),
                 "bash 前缀规则不命中其他工具（read 无规则）");
     }
 
@@ -108,15 +111,17 @@ class PermissionRulesTest {
     void bashPrefixRuleIgnoresMissingCommandArg() {
         PermissionRules rules = PermissionRules.load(tempDir);
         rules.setSessionRules(List.of(rule("bash", "ls", PermissionRules.Decision.ALLOW)));
-        assertTrue(rules.verdict("bash", JsonNodeFactory.instance.objectNode()).isEmpty(),
+        assertTrue(rules.allowVerdict("bash", JsonNodeFactory.instance.objectNode()).isEmpty(),
                 "无 command 参数的前缀规则不命中（fail-closed）");
+        assertTrue(rules.denyVerdict("bash", JsonNodeFactory.instance.objectNode()).isEmpty());
     }
 
     @Test
     void loadMissingFileMeansNoRules() {
         PermissionRules rules = PermissionRules.load(tempDir.resolve("absent"));
         assertTrue(rules.projectRules().isEmpty());
-        assertTrue(rules.verdict("bash", bashArgs("anything")).isEmpty());
+        assertTrue(rules.allowVerdict("bash", bashArgs("anything")).isEmpty());
+        assertTrue(rules.denyVerdict("bash", bashArgs("anything")).isEmpty());
     }
 
     @Test
@@ -131,9 +136,10 @@ class PermissionRulesTest {
                 """);
         PermissionRules rules = PermissionRules.load(tempDir);
         assertEquals(2, rules.projectRules().size());
-        assertTrue(rules.verdict("bash", bashArgs("sudo ls")).isPresent());
-        assertTrue(rules.verdict("web_fetch", bashArgs("https://example.com")).isPresent());
-        assertTrue(rules.verdict("bash", bashArgs("curl example.com")).isEmpty(), "未命中交内层链");
+        assertTrue(rules.denyVerdict("bash", bashArgs("sudo ls")).isPresent());
+        assertTrue(rules.allowVerdict("web_fetch", bashArgs("https://example.com")).isPresent());
+        assertTrue(rules.allowVerdict("bash", bashArgs("curl example.com")).isEmpty(), "未命中交内层链");
+        assertTrue(rules.denyVerdict("bash", bashArgs("curl example.com")).isEmpty(), "未命中交内层链");
     }
 
     @Test

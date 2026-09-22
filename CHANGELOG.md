@@ -6,6 +6,8 @@
 
 ### Added
 
+- **只读 bash 免审批（M24 工单 03，ADR-0026 决策二）**：38 个 allowAnyArg 只读命令（cat/ls/grep/head/tail/lsof 等，逐条核对无写旗标，探测建议「约 30」的落地清单）+ git 四件套 status/log/diff/show 自动免审批放行——只读探索不再弹审批卡；git 必叠 cwd `.git` 存在性信任分类（防 `git -C` 逃逸）；命令词只认裸名（`/bin/ls`、`./cat` 等路径前缀不认，防同名二进制借道）；管道、命令替换、重定向、变量展开等复合结构 fail-closed 照常审批；deny 规则恒优先压过只读放行（`deny bash ls*` 仍拦得住 ls）
+
 - **权限规则引擎地基（M24 工单 01，ADR-0026 决策一）**：两级作用域的持久审批规则——项目级持久于项目根 `.duo/settings.json` 的 `permissions` 段（首个项目级设置文件，重写保留文件内其他键），会话级随会话事件流持久（`permission/rules` 事件 + resume 投影恢复）；`Bash(prefix:*)` 词边界前缀匹配（`ls:*` 不误吞 `lsof`）；裁决序落审批链最外层——deny 手写恒优先（查全部命令）、命中短路不再弹审批卡；`/permission rules` 命令面（list 两级清单 / rm 删除，项目级重写文件、会话级落事件快照）；新挂 `permission-rules` 插件行启用，不挂载装配零感回退
 
 ## 0.18.0（2026-09-22）
