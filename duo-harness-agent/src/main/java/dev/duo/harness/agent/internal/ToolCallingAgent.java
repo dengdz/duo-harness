@@ -57,6 +57,14 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 最大迭代轮数（每轮 = 一次 LLM 调用往返；防异常任务无限循环烧 token）。 */
     public static final int MAX_ITERATIONS = 10;
 
+    /**
+     * 迭代预算提醒（M23 工单 10，ADR-0025）：剩 2 轮的那次请求组装时以 USER 角色
+     * 附加 system-reminder 段——不落会话日志、不改变迭代上限值与达限行为；
+     * 剩 2 轮只出现一次（remaining 恰为 2 的那一轮），不重复刷屏。
+     */
+    private static final String ITERATION_REMINDER =
+            "<system-reminder>迭代预算提示：剩余 2 轮（含本轮），请收敛并交付结论（避免被迭代上限截断）。</system-reminder>";
+
     /** 单轮并行池缺省同时在飞上限（ADR-0018；DSH 同款缺省，配置为 1 即完全串行）。 */
     public static final int DEFAULT_MAX_PARALLEL_TOOL_CALLS = 10;
 
@@ -205,9 +213,13 @@ public final class ToolCallingAgent implements ChatAgent {
                     return interruptedReply(finalReply, invocations);
                 }
                 drainInbox();
+                // 迭代预算感知（M23 工单 10）：remaining 含本轮，恰剩 2 轮的那次
+                // 请求附加提醒——模型主动收敛而不是被硬掐
+                int remaining = maxIterations - iteration + 1;
+                String reminder = remaining == 2 ? ITERATION_REMINDER : null;
                 LlmTurn turn;
                 try {
-                    turn = llm.streamTurn(buildRequest(), text -> {
+                    turn = llm.streamTurn(buildRequest(reminder), text -> {
                         listener.onChunk(text);
                         finalReply.append(text);
                     });
@@ -484,8 +496,13 @@ public final class ToolCallingAgent implements ChatAgent {
         }
     }
 
-    /** 请求构造：组装 system 提示 + 会话投影历史（过治理管线）+ 工具清单（Function Calling）。 */
-    private ChatRequest buildRequest() {
+    /**
+     * 组装本轮请求；{@code reminder} 非空时在消息尾部附加提醒。追加位于治理投影
+     * **之后**——治理 compaction 若吞掉提醒会使功能失效，治理后追加是必达的
+     * 唯一位置（预算影响约 40 token，次轮 provider 实测用量自然吸收）。
+     * 提醒仅进请求视图，不落会话日志。
+     */
+    private ChatRequest buildRequest(String reminder) {
         List<ToolSpec> specs = tools.list().stream()
                 .map(def -> new ToolSpec(def.name(), def.description(),
                         def.parameters() == null ? "{}" : def.parameters().toString()))
@@ -494,8 +511,12 @@ public final class ToolCallingAgent implements ChatAgent {
         if (governance != null) {
             projected = governance.govern(projected, session);
         }
-        return new ChatRequest(prompts.compose(),
-                Messages.toChatMessages(projected, requestVariants, vision, fileDelivery), specs);
+        List<ChatMessage> chatMessages = new ArrayList<>(
+                Messages.toChatMessages(projected, requestVariants, vision, fileDelivery));
+        if (reminder != null && !reminder.isBlank()) {
+            chatMessages.add(ChatMessage.user(reminder));
+        }
+        return new ChatRequest(prompts.compose(), chatMessages, specs);
     }
 
     /** 参数 JSON 文本 → JsonNode（适配 ToolsService.execute 入参形态）。 */

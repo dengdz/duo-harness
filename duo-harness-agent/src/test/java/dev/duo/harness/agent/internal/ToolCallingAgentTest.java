@@ -39,7 +39,7 @@ class ToolCallingAgentTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：ToolCallingAgentTest —— 工具循环：Function Calling 闭环、历史投影、usage 落事件、迭代上限（10 用例） ===");
+        System.out.println("\n=== 套件：ToolCallingAgentTest —— 工具循环：Function Calling 闭环、历史投影、usage 落事件、迭代上限（13 用例） ===");
     }
 
     @TempDir
@@ -409,5 +409,155 @@ class ToolCallingAgentTest {
 
         assertEquals(dev.duo.harness.llm.LlmConfig.DEFAULT_SYSTEM_PROMPT, captured.get(0).systemPrompt(),
                 "注册表与用户配置全空时落内置缺省");
+    }
+
+    // ---- 迭代预算感知（M23 工单 10，ADR-0025）----
+
+    /** echo 工具的 ToolsService 装配（reasoningFromToolRound 同款）。 */
+    private dev.duo.harness.tools.ToolsService echoTools() {
+        dev.duo.harness.core.api.Context toolsRoot = dev.duo.harness.core.api.Context.root();
+        toolsRoot.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+        dev.duo.harness.tools.ToolsService impl = toolsRoot.as(ToolsView.class).tools();
+        impl.register(toolsRoot, echoDef());
+        return impl;
+    }
+
+    @Test
+    void iterationReminderAppendedOnceAtTwoRemaining() throws IOException {
+        dev.duo.harness.tools.ToolsService tools = echoTools();
+        Session session = newSession();
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter loopTwiceThenAnswer = loopTwiceThenAnswer(captured);
+        ToolCallingAgent agent = new ToolCallingAgent(loopTwiceThenAnswer, tools, session,
+                "你是助手", 3);
+        var reply = agent.send("跑起来", dev.duo.harness.agent.AgentListener.NONE);
+
+        assertTrue(reply.completed(), "正常收敛");
+        assertEquals(3, captured.size(), "3 轮请求");
+        String reminderKey = "迭代预算提示";
+        assertFalse(flatten(captured.get(0)).contains(reminderKey), "第 1 轮（剩 3）无提醒");
+        assertTrue(flatten(captured.get(1)).contains(reminderKey), "第 2 轮（剩 2）有提醒");
+        assertEquals(1,
+                flatten(captured.get(1)).split(reminderKey, -1).length - 1, "提醒恰好一次");
+        assertFalse(flatten(captured.get(2)).contains(reminderKey), "第 3 轮（剩 1）无提醒");
+        // 提醒形态：USER 角色的 system-reminder 段，位于消息尾部
+        var last = captured.get(1).messages().get(captured.get(1).messages().size() - 1);
+        assertEquals(dev.duo.harness.llm.ChatMessage.Role.USER, last.role(), "提醒为 USER 角色");
+        assertTrue(last.content().startsWith("<system-reminder>"), "system-reminder 包裹");
+    }
+
+    @Test
+    void reminderNeverLandsOnSessionLog() throws IOException {
+        dev.duo.harness.tools.ToolsService tools = echoTools();
+        Session session = newSession();
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter loopTwiceThenAnswer = loopTwiceThenAnswer(captured);
+        ToolCallingAgent agent = new ToolCallingAgent(loopTwiceThenAnswer, tools, session,
+                "你是助手", 3);
+        agent.send("跑起来", dev.duo.harness.agent.AgentListener.NONE);
+
+        String logText = session.events().stream()
+                .map(e -> e.type() + ":" + e.text()).reduce("", (a, b) -> a + b + "\n");
+        assertFalse(logText.contains("迭代预算提示"), "提醒不落会话日志（不落用户消息）: " + logText);
+    }
+
+    @Test
+    void iterationCapBehaviorUnchangedWithReminderPresent() throws IOException {
+        dev.duo.harness.tools.ToolsService tools = echoTools();
+        Session session = newSession();
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter alwaysTool = new LlmAdapter() {
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                captured.add(request);
+                return new LlmTurn("", List.of(
+                        new dev.duo.harness.llm.ToolCallRequest("call_" + captured.size(),
+                                "echo", "{}")));
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("agent 循环走 streamTurn");
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(alwaysTool, tools, session, "你是助手", 2);
+        var reply = agent.send("死循环", dev.duo.harness.agent.AgentListener.NONE);
+
+        assertFalse(reply.completed(), "达限仍 completed=false（M17 可见化依赖不变）");
+        assertTrue(reply.finalText().contains("已达最大迭代轮数（2）"), "达限文案不变: " + reply.finalText());
+        assertTrue(flatten(captured.get(0)).contains("迭代预算提示"),
+                "maxIterations=2 时第 1 轮（剩 2）即提醒");
+    }
+
+    /** 两轮工具调用后收敛的适配器（提醒用例共用；captured 逐轮记录请求）。 */
+    private LlmAdapter loopTwiceThenAnswer(List<ChatRequest> captured) {
+        return new LlmAdapter() {
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                captured.add(request);
+                if (captured.size() <= 2) {
+                    return new LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_" + captured.size(),
+                                    "echo", "{}")));
+                }
+                textSink.accept("收敛结论");
+                return new LlmTurn("收敛结论", List.of());
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("agent 循环走 streamTurn");
+            }
+        };
+    }
+
+    /** 请求全部消息文本拼接（提醒出现性断言用）。 */
+    private static String flatten(ChatRequest request) {
+        StringBuilder sb = new StringBuilder(request.systemPrompt() == null ? "" : request.systemPrompt());
+        for (var m : request.messages()) {
+            sb.append('\n').append(m.content() == null ? "" : m.content());
+        }
+        return sb.toString();
+    }
+
+    @Test
+    void reminderSurvivesGovernanceAndSingleRoundBudget() throws IOException {
+        // 治理启用（compaction 可折叠历史）下提醒仍必达——治理后追加是唯一位置；
+        // maxIterations=1 无提醒轮（单轮预算无收敛机会，remaining 恒 1）
+        dev.duo.harness.tools.ToolsService tools = echoTools();
+        Session session = newSession();
+        List<ChatRequest> captured = new ArrayList<>();
+        LlmAdapter loopTwiceThenAnswer = loopTwiceThenAnswer(captured);
+        var governance = dev.duo.harness.agent.presenter.PresenterAssembly.governance(
+                dev.duo.harness.agent.presenter.PresenterAssembly.llmAdapter(
+                        dev.duo.harness.llm.LlmConfig.load()));
+        ToolCallingAgent agent = new ToolCallingAgent(loopTwiceThenAnswer, tools, session,
+                new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 3, governance);
+        var reply = agent.send("跑起来", dev.duo.harness.agent.AgentListener.NONE);
+        assertTrue(reply.completed(), "治理启用下正常收敛");
+        assertTrue(flatten(captured.get(1)).contains("迭代预算提示"), "治理投影后提醒仍附加");
+
+        Session solo = newSession();
+        List<ChatRequest> soloCaptured = new ArrayList<>();
+        LlmAdapter loopForever = new LlmAdapter() {
+            @Override
+            public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                soloCaptured.add(request);
+                return new LlmTurn("", List.of(
+                        new dev.duo.harness.llm.ToolCallRequest("call_" + soloCaptured.size(),
+                                "echo", "{}")));
+            }
+
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new UnsupportedOperationException("agent 循环走 streamTurn");
+            }
+        };
+        ToolCallingAgent soloAgent = new ToolCallingAgent(loopForever, tools, solo,
+                "你是助手", 1);
+        var soloReply = soloAgent.send("单轮", dev.duo.harness.agent.AgentListener.NONE);
+        assertFalse(soloReply.completed(), "单轮预算达限");
+        assertFalse(flatten(soloCaptured.get(0)).contains("迭代预算提示"),
+                "maxIterations=1 无提醒轮（无收敛机会）");
     }
 }
