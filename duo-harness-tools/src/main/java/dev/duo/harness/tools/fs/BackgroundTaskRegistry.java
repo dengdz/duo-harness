@@ -43,10 +43,16 @@ public final class BackgroundTaskRegistry {
     /**
      * 启动后台任务：接管进程（双流读 + 完成监视线程）并注册——调用方只管把
      * {@code ProcessBuilder.start()} 的产物交进来。完成时逐个通知监听器（first-wins）。
+     * 归属呈现位缺省 null（双面均可见）。
      */
     public BackgroundTask start(Process process, String command) {
-        BackgroundTask task = new BackgroundTask("bg-" + seq.incrementAndGet(), command, process,
-                outputConfig, spillDir);
+        return start(process, command, null);
+    }
+
+    /** 指定归属呈现位的启动（M23 工单 06 验收修正：呈现位按归属过滤，互不串显）。 */
+    public BackgroundTask start(Process process, String command, String owner) {
+        BackgroundTask task = new BackgroundTask("bg-" + seq.incrementAndGet(), command, owner,
+                process, outputConfig, spillDir);
         tasks.add(task);
         Thread.ofVirtual().name("bg-watch-" + task.taskId()).start(() -> {
             task.awaitExit();

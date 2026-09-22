@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -108,6 +109,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private volatile ConsoleAnswerer consoleAnswerer;
     /** turn 收口/停止标志（M23 工单 04：通知路由的 idle 开轮需要跨方法可达）。 */
     private final AtomicBoolean endRequested = new AtomicBoolean(false);
+    /** 后台任务注册表（M23 工单 04/06；null = fs 工具未装——提示行无后台段）。 */
+    private volatile dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks;
 
     /** 生产构造：System.in/out + 配置装配。 */
     public CliPlugin() {
@@ -258,7 +261,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // 注册表缺席（fs 工具未装）即无通知，零感
         if (ctx.hasService(dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME)) {
             var registry = ctx.as(BackgroundTasksView.class).backgroundTasks();
+            this.backgroundTasks = registry;
             registry.addListener(task -> {
+                // 归属过滤（M23 工单 06 验收修正）：CLI 只消费本位发起（或无归属）的任务，
+                // Web 侧任务完成不在终端开轮/注入
+                if (task.owner() != null && !dev.duo.harness.agent.ChatAgent.PRESENTER_CLI.equals(task.owner())) {
+                    return;
+                }
                 String notice = task.notice();
                 if (agentBusy.compareAndSet(false, true)) {
                     startTurn(notice, agentHolder, agentBusy, interruptArmed); // 空闲：开新轮消费
@@ -480,7 +489,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                           AtomicBoolean interruptArmed) {
         try {
             while (!stopped.get() && !endRequested.get()) {
-                out.print("你> ");
+                out.print(backgroundHint() + "你> ");
                 out.flush();
                 String line = in.readLine();
                 if (line == null) {
@@ -739,6 +748,41 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 pending.set(false);
             }
         }
+    }
+
+    /**
+     * 后台提示段（M23 工单 06 可见化）：有运行中/已终态后台任务时，提示符前缀带
+     * 计数与最近完成——无任务返回空串（零噪声）。
+     */
+    private String backgroundHint() {
+        return backgroundHint(backgroundTasks);
+    }
+
+    /** 纯函数形态（可直测，M23 工单 06）：hint 渲染只依赖注册表快照。CLI 只看本位
+     * 发起（或无归属）的任务——Web 侧任务不占终端提示符（M23 工单 06 验收修正）。 */
+    static String backgroundHint(dev.duo.harness.tools.fs.BackgroundTaskRegistry registry) {
+        var mine = ownedTasks(registry, dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        if (mine.isEmpty()) {
+            return "";
+        }
+        long running = mine.stream()
+                .filter(t -> t.state() == dev.duo.harness.tools.fs.BackgroundTask.State.RUNNING).count();
+        if (running > 0) {
+            return "[后台 " + running + " 个运行中] ";
+        }
+        var latest = mine.get(mine.size() - 1);
+        return "[后台已完成 " + latest.taskId() + "] ";
+    }
+
+    /** 归属过滤（呈现位复用 presenterId，M19）：本位发起或无归属（null，双面可见）。 */
+    static List<dev.duo.harness.tools.fs.BackgroundTask> ownedTasks(
+            dev.duo.harness.tools.fs.BackgroundTaskRegistry registry, String presenterId) {
+        if (registry == null) {
+            return List.of();
+        }
+        return registry.all().stream()
+                .filter(t -> t.owner() == null || t.owner().equals(presenterId))
+                .toList();
     }
 
     /** 读者线程等执行中的 turn 收尾（EOF 不腰斩在飞任务；stop 打断即返回）。 */

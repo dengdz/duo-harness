@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -46,7 +47,7 @@ class CliPluginTest {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：事件驱动 REPL（busy 插队/应答闸门/EOF 不腰斩）、"
                 + "命令注册表入口（/exit 审计、/new 换绑、未知清单、/plan 进出与续接、/permission 档位、/compact 压缩点）、"
                 + "/stop 协作式中断与续接、/exit idle 锁释放、占用提示、工具叙述行通用形态、子任务过程行、"
-                + "/compact 压缩、/permission 持久化、/title 改名、审批等待中 /stop 余项 deny、后台完成通知双路径、中断不杀后台（23 用例） ===");
+                + "/compact 压缩、/permission 持久化、/title 改名、审批等待中 /stop 余项 deny、后台完成通知双路径、中断不杀后台、后台任务提示行（25 用例） ===");
     }
 
     interface ToolsView {
@@ -986,6 +987,58 @@ class CliPluginTest {
         }
     }
 
+
+    @Test
+    void backgroundTaskE2EReceiptAndNotificationConsumed() throws Exception {
+        // 后台任务 E2E（M23 工单 04/06）：转后台受理（y 审批放行）→ bg-1 秒完成（echo）
+        // → 完成通知在「已转后台」轮在飞期到达 → busy 挂 next-turn → 该轮收口
+        // [排队消息生效] 合并消费（REPL 活跃期内的完整链路）。
+        // 已知边界：REPL 结束（/exit/EOF→goIdle）后到达的通知不呈现（呈现位已拆，
+        // 会话已关——与「进程退出全灭」同族的合理边界）
+        Path dir = tempDir.resolve("bg-hint");
+        java.util.concurrent.atomic.AtomicInteger turn = new java.util.concurrent.atomic.AtomicInteger();
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            @Override public void stream(dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public dev.duo.harness.llm.LlmTurn streamTurn(
+                    dev.duo.harness.llm.ChatRequest request,
+                    java.util.function.Consumer<String> textSink) {
+                if (turn.incrementAndGet() == 1) {
+                    return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "bash",
+                                    "{\"command\":\"echo bg-notice\",\"run_in_background\":true}")));
+                }
+                try { Thread.sleep(800); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                textSink.accept("已转后台");
+                return new dev.duo.harness.llm.LlmTurn("已转后台", List.of());
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("转后台跑一条带延迟的命令"),
+                InputLine.paced("y", "[待审批]")), llm);
+        try {
+            // 等 bg-1 完成 → 通知轮自动消费（EOF 已到但通知轮能跑：endRequested=false）
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (!fx.output().contains("[排队消息生效]")
+                    && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+            }
+            assertTrue(fx.output().contains("[排队消息生效]"), "通知轮消费: " + fx.output());
+            fx.awaitIdle();
+            // 通知文本作为 user/message 落会话日志（不打印 stdout）
+            Session latest = Session.latest(dir);
+            assertTrue(latest.events().stream().anyMatch(e ->
+                            "user/message".equals(e.type())
+                                    && e.text().contains("[后台任务完成] bg-1")),
+                    "通知文本落会话日志");
+            latest.close();
+        } finally {
+            fx.dispose();
+        }
+    }
+
     @Test
     void occupiedLatestSessionPrintsHintAndOpensNew() throws Exception {
         // 占用语义（M10-03 延续）：最新会话被他处持有 → 明确提示 + 改开新会话（绝不静默共享日志）
@@ -1210,5 +1263,30 @@ class CliPluginTest {
             }
         }
         throw new AssertionError("子代理未在时限内完成");
+    }
+
+    @Test
+    void backgroundHintRendersRunningAndDone() throws Exception {
+        // 提示行渲染纯函数直测（M23 工单 06）：运行中显示计数、全部完成显示最近完成、
+        // 无任务零噪声——渲染只依赖注册表快照（与 E2E 时序解耦，消除 flaky）
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        assertEquals("", dev.duo.harness.cli.CliPlugin.backgroundHint(registry), "无任务零噪声");
+
+        // 阻塞任务运行中 → 计数提示
+        var process = new ProcessBuilder("bash", "-c", "sleep 30").start();
+        registry.start(process, "sleep 30");
+        String hint = dev.duo.harness.cli.CliPlugin.backgroundHint(registry);
+        assertTrue(hint.contains("[后台 1 个运行中]"), "运行中计数: " + hint);
+
+        // 归属过滤（M23 工单 06 验收修正）：web 发起的任务不占 CLI 提示符——
+        // 无归属（null）与 cli 发起的可见
+        var webProcess = new ProcessBuilder("bash", "-c", "sleep 30").start();
+        registry.start(webProcess, "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_WEB);
+        var cliProcess = new ProcessBuilder("bash", "-c", "sleep 30").start();
+        registry.start(cliProcess, "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        String filtered = dev.duo.harness.cli.CliPlugin.backgroundHint(registry);
+        assertTrue(filtered.contains("[后台 2 个运行中]"),
+                "cli+无归属计数、web 任务被滤除: " + filtered);
+        registry.shutdownAll(); // 清理：杀任务进程
     }
 }

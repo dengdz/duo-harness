@@ -97,7 +97,7 @@ public final class FsBashTool implements ToolDefinition {
     }
 
     /** 后台分支：启动即注册返回 taskId——进程独立存活，输出由注册表双流读持续积累。 */
-    private String executeInBackground(String command) {
+    private String executeInBackground(String command, String presenterId) {
         if (registry == null) {
             return error("后台任务注册表未装配（fs 工具插件未携带注册表），无法 run_in_background");
         }
@@ -107,7 +107,7 @@ public final class FsBashTool implements ToolDefinition {
         } catch (IOException e) {
             throw new RuntimeException("bash 无法启动后台进程: " + e.getMessage(), e);
         }
-        BackgroundTask task = registry.start(process, command);
+        BackgroundTask task = registry.start(process, command, presenterId);
         return "[后台任务] " + task.taskId() + " 已启动：" + command
                 + "\n（后台不受 timeoutMs 约束；用 task-output 读输出/等待完成，task-stop 终止。"
                 + "完成时会收到通知。）";
@@ -119,7 +119,7 @@ public final class FsBashTool implements ToolDefinition {
         if (command.isBlank()) return error("参数 command 不能为空");
 
         if (args.path("run_in_background").asBoolean(false)) {
-            return executeInBackground(command);
+            return executeInBackground(command, exec.presenterId());
         }
         long timeoutMs = timeoutFor(args);
 

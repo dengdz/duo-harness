@@ -50,7 +50,7 @@ class WebFaceTest {
                 + "状态 JSON（含上下文占用）、SSE 回放（尾部快照头帧/边界起点/增量游标/越界兜底/帧序号）、"
                 + "历史分页端点（窗口/翻转/边界拒绝/连续性）、"
                 + "占用标注（occupied 字段）、安全（id 白名单/请求体上限/错误脱敏/入口栅栏 Host 与 Origin）、会话锁冲突与幂等切换、fail-closed 宽限、"
-                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）、后台完成通知双路径（40 用例） ===");
+                + "子任务回放端点（含标题字段）、回答端点结构化协议（decision 审批两态/自由文本不误判/非法体 400 无兼容层）、后台完成通知双路径、后台任务可见化（41 用例） ===");
     }
 
     interface ToolsView {
@@ -425,6 +425,83 @@ class WebFaceTest {
         }
         assertEquals(1, queued.size(), "busy 通知挂 next-turn");
         assertTrue(queued.get(0).contains("busy-notice"), "通知文本完整: " + queued);
+    }
+
+
+    @Test
+    void statusJsonCarriesBackgroundTasksAndConvergesAfterCompletion() throws Exception {
+        // 后台任务可见化（M23 工单 06）：注册表在场时 /api/status 携带任务数组
+        // （id/命令/状态/退出码）；任务完成/被 stop 后状态收敛（无幽灵 RUNNING）
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        ChatAgent stub = (userText, listener) -> new AgentReply("答", List.of(), true);
+        start(Session.create(tempDir.resolve("bg-status")), stub);
+        face.setBackgroundTaskRegistry(registry);
+
+        // 无任务：无字段或空数组（前端占位 —）
+        String empty = get("/api/status");
+        assertFalse(empty.contains("bg-"), "无任务不出现任务条目: "
+                + empty.substring(0, Math.min(120, empty.length())));
+
+        // 运行中：RUNNING 状态可见
+        var task = registry.start(new ProcessBuilder("bash", "-c", "sleep 5").start(), "sleep 5");
+        String running = get("/api/status");
+        assertTrue(running.contains("\"taskId\":\"" + task.taskId() + "\""),
+                "运行中任务可见: " + running);
+        assertTrue(running.contains("RUNNING"), "运行中状态: " + running);
+
+        // 终态收敛：task-stop 后状态转 KILLED（无幽灵 RUNNING）
+        new dev.duo.harness.tools.fs.TaskStopTool(registry).execute(
+                new ToolExecution("task-stop",
+                        com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                                .objectNode().put("taskId", task.taskId())));
+        long deadline = System.currentTimeMillis() + 5_000;
+        String done = "";
+        boolean killed = false;
+        while (System.currentTimeMillis() < deadline) {
+            done = get("/api/status");
+            if (done.contains("KILLED")) { killed = true; break; }
+            Thread.sleep(20);
+        }
+        assertTrue(killed, "终态收敛（无幽灵 RUNNING）: " + done);
+    }
+
+    @Test
+    void statusJsonFiltersTasksByWebOwnership() throws Exception {
+        // 归属过滤（M23 工单 06 验收修正）：状态面只列 web 发起（或无归属）的任务——
+        // CLI 侧任务不串显到浏览器新会话
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        ChatAgent stub = (userText, listener) -> new AgentReply("答", List.of(), true);
+        start(Session.create(tempDir.resolve("bg-owner")), stub);
+        face.setBackgroundTaskRegistry(registry);
+
+        var webTask = registry.start(new ProcessBuilder("bash", "-c", "sleep 30").start(),
+                "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_WEB);
+        var cliTask = registry.start(new ProcessBuilder("bash", "-c", "sleep 30").start(),
+                "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        String status = get("/api/status");
+        assertTrue(status.contains("\"taskId\":\"" + webTask.taskId() + "\""),
+                "web 任务可见: " + status);
+        assertFalse(status.contains("\"taskId\":\"" + cliTask.taskId() + "\""),
+                "cli 任务不串显: " + status);
+        registry.shutdownAll();
+    }
+
+    @Test
+    void completionNoticeIgnoresCliOwnedTasks() throws Exception {
+        // 归属过滤（M23 工单 06 验收修正）：CLI 侧任务完成不在 Web 开通知轮/注入
+        List<String> sent = new CopyOnWriteArrayList<>();
+        ChatAgent stub = (userText, listener) -> {
+            sent.add(userText);
+            return new AgentReply("答", List.of(), true);
+        };
+        start(Session.create(tempDir.resolve("bg-owner-notice")), stub);
+        var registry = new dev.duo.harness.tools.fs.BackgroundTaskRegistry();
+        face.setBackgroundTaskRegistry(registry);
+
+        registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo cli-side",
+                dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        Thread.sleep(500); // 任务早已终态：无归属过滤放行的通知即无轮开启
+        assertTrue(sent.isEmpty(), "cli 任务完成不触发 Web 通知轮: " + sent);
     }
 
     @Test

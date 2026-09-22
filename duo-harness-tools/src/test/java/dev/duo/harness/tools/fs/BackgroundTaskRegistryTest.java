@@ -117,4 +117,17 @@ class BackgroundTaskRegistryTest {
         assertTrue(noticed.await(5, TimeUnit.SECONDS), "settle 后通知到达");
         assertEquals(1, count.get());
     }
+
+    @Test
+    @Timeout(15)
+    void startCarriesOwnerThroughToTask() throws Exception {
+        // 归属呈现位（M23 工单 06 验收修正）：三参 start 记录归属，两参重载缺省 null
+        // （双面均可见）——呈现位按「本位或 null」过滤的数据基础
+        BackgroundTaskRegistry registry = new BackgroundTaskRegistry();
+        BackgroundTask owned = registry.start(startSleep(30), "sleep 30", "web");
+        BackgroundTask legacy = registry.start(startSleep(30), "sleep 30");
+        assertEquals("web", owned.owner(), "三参 start 归属可读");
+        assertTrue(legacy.owner() == null, "两参 start 归属缺省 null");
+        registry.shutdownAll();
+    }
 }

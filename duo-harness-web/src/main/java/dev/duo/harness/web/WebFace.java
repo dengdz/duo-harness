@@ -115,6 +115,11 @@ public final class WebFace {
             // 完成通知路由（M23 工单 04，ADR-0025 决策二）：与 CLI 同款双路径——
             // 空闲直接开新 turn 消费（虚拟线程），busy 挂收件箱 next-turn 收口合并
             registry.addListener(task -> {
+                // 归属过滤（M23 工单 06 验收修正）：Web 只消费本位发起（或无归属）的
+                // 任务——CLI 侧任务完成不在浏览器开轮/注入
+                if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
+                    return;
+                }
                 ChatAgent current = agent;
                 if (current == null) return;
                 String notice = task.notice();
@@ -1289,6 +1294,24 @@ public final class WebFace {
                         .put("thresholdTokens", occupancy.thresholdTokens())
                         .put("windowTokens", occupancy.windowTokens())
                         .put("fromProvider", occupancy.fromProvider());
+            }
+            // 后台任务区块（M23 工单 06）：注册表在场时列出本位发起（或无归属）的任务
+            // （id/命令/状态/退出码），终态保留呈现（收敛可见）——CLI 侧任务不串显
+            // （M23 工单 06 验收修正），注册表缺席零字段
+            if (backgroundTasks != null) {
+                var tasksNode = root.putArray("backgroundTasks");
+                for (var task : backgroundTasks.all()) {
+                    if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
+                        continue;
+                    }
+                    var node = tasksNode.addObject()
+                            .put("taskId", task.taskId())
+                            .put("command", task.command())
+                            .put("state", task.state().name());
+                    if (task.isCompleted()) {
+                        node.put("exitCode", task.exitCode());
+                    }
+                }
             }
             return root.toString();
         } catch (Exception e) {

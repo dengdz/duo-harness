@@ -16,6 +16,10 @@ public final class BackgroundTask {
 
     private final String taskId;
     private final String command;
+    /** 发起呈现位归属（M23 工单 06 验收修正）：{@code "cli"} / {@code "web"}；
+     * null = 无呈现位发起（子代理/直调）——呈现位按「本位或 null」过滤，null 双面
+     * 可见（可见性优先，防任务静默失踪）。 */
+    private final String owner;
     private final Process process;
     private final BashOutputConfig config;
     private final FsBashTool.StreamCapture stdout;
@@ -24,10 +28,11 @@ public final class BackgroundTask {
     private volatile State state = State.RUNNING;
     private volatile int exitCode = -1;
 
-    BackgroundTask(String taskId, String command, Process process, BashOutputConfig config,
-                   java.nio.file.Path spillDir) {
+    BackgroundTask(String taskId, String command, String owner, Process process,
+                   BashOutputConfig config, java.nio.file.Path spillDir) {
         this.taskId = taskId;
         this.command = command;
+        this.owner = owner == null || owner.isBlank() ? null : owner;
         this.process = process;
         this.config = config == null ? BashOutputConfig.DEFAULTS : config;
         this.stdout = new FsBashTool.StreamCapture(this.config.inlineTailChars(),
@@ -125,6 +130,8 @@ public final class BackgroundTask {
 
     public String taskId() { return taskId; }
     public String command() { return command; }
+    /** 发起呈现位（cli / web；null = 子代理等无呈现位发起，双面均可见）。 */
+    public String owner() { return owner; }
     public State state() { return state; }
     public int exitCode() { return exitCode; }
 }

@@ -1351,6 +1351,21 @@ const app = (() => {
         row.cells[0].textContent = t.name;
         row.cells[1].textContent = t.description;
       }
+      // 后台任务区块（M23 工单 06）：注册表缺席无字段 → 占位；终态保留呈现（收敛可见）
+      const bgLine = $('#bgTasks');
+      const tasks = data.backgroundTasks;
+      if (!tasks || !tasks.length) {
+        bgLine.textContent = '—';
+      } else {
+        bgLine.innerHTML = '';
+        for (const t of tasks) {
+          const item = document.createElement('div');
+          item.className = 'bg-task mono';
+          const stateText = t.state === 'RUNNING' ? '运行中' : (t.exitCode === 0 ? '完成(0)' : '结束(' + t.exitCode + ')');
+          item.textContent = t.taskId + ' · ' + stateText + ' · ' + t.command;
+          bgLine.appendChild(item);
+        }
+      }
     } catch (e) {
       statusFailures++;
       if (statusFailures === 1) showToast('状态刷新失败：' + errText(e));

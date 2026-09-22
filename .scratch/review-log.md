@@ -17,6 +17,22 @@
 
 ## 审查记录
 
+### 2026-09-22 · M23 工单 06 验收实测修正（后台任务按呈现位归属过滤 + dbg 残留清理）
+
+- **验收实测两问题**：①CLI 触发的后台任务出现在 Web **新会话**状态面（statusJson 全量吐 `registry.all()`，完成通知 listener 也是全量路由——同根：呈现位无归属概念）；②运行日志带 `[dbg-*]` System.err 调试残留 5 处（dbg-reg/notify/prompt/loop）。
+- **修复口径**：归属复用 presenterId（M19「谁发起谁作答」既有载体，零新概念）——`BackgroundTask.owner` 贯穿 `FsBashTool.execute(exec.presenterId())` → `registry.start` 三参；三处呈现位（CLI 提示符 hint、Web 状态面、双侧完成通知 listener）统一按「本位或 null」过滤，null（子代理/直调）双面可见防静默失踪。dbg 残留全清。
+- **模式化问题（本次新识别）**：
+  1. **进程级注册表的可见化必须先问归属**——"全局 registry + 全量渲染"在单呈现位下无感、双呈现位装配下必然串显；新增可见化位时（提示符/状态面/通知）把"按发起方过滤"列入设计检查项，与 M19 OCR #22「先到先得实例上挂单绑定会串位」同族。
+  2. **调试打印残留入库再犯**（工单 01「异常日志」同类，间隔 5 张工单）——`[dbg-*]` 前缀是为排障加的，实现完忘删；提交前 `grep -rn "System.err.println\|\[dbg" <改动文件>` 应入 duo-workflow 提交前核对清单。
+- **收口**：全量 test BUILD SUCCESS（web 77 / cli 36 / agent 176）；CHANGELOG 补工单 06 条目（含归属过滤）。
+
+### 2026-09-22 · M23 工单 06 审查（0.18.0 分支，HEAD 工作树：后台任务可见化）
+
+- **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 c752f89）→ 修复 → 全仓 test 收口。
+- **计数**：双轴轻量（本工单体量小）；修复 3 项（statusJson 后台区块字段缺失补齐、CliPlugin 提示行空任务零噪声、注册表缺席部署零感）。
+- **模式化问题**：可见化工单（读注册表渲染）的实现风险集中在**数据收敛**（终态后无幽灵条目）与**缺席零感**（注册表/服务不在场时部署形态不劣化）——测试各锁一条。
+- **收口**：全量 BUILD SUCCESS；报告并入 `.scratch/m23-cli-experience/issues/06-*.md`。
+
 ### 2026-09-22 · M23 工单 05 审查（0.18.0 分支，HEAD 工作树：bash 输出三层与 spill）
 
 - **范围与轮次**：双轴（Standards + Spec 并行子代理，基点 efe0ee6）→ 修复 → 全仓 test 收口。
