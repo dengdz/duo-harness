@@ -55,6 +55,13 @@ mvn -pl duo-harness-example -am package exec:java \
   -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
 ```
 
+日常验收/反复启动加 `-DskipTests`（`-am` 会拉起上游全部模块，`package` 默认逐模块跑全量测试，属收口 `mvn test` 的职责）——首次构建或发布前仍用原命令完整跑：
+
+```bash
+mvn -pl duo-harness-example -am package exec:java -DskipTests \
+  -Dexec.mainClass=dev.duo.harness.example.agentrepl.AgentReplMain
+```
+
 LLM 驱动真实工具的完整闭环（同一 `llm:` 配置）。启动即含本机 fs 工具族六件（read / write / edit / glob / grep / bash，workspace 绑定 = 启动进程的当前目录）、三档权限预设（默认 workspace-write，终端 `/permission [档位]` 查看与切换），以及 web 工具族（M20：`web_fetch` 恒在；解开 `agent-demo.yml` 的 `search` 注释并 `export TAVILY_API_KEY=…` 即含 `web_search`）。标志性场景：
 
 | 输入 | 预期 |
