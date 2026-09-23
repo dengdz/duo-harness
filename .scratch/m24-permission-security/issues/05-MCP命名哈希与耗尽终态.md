@@ -11,18 +11,19 @@ MCP 远端工具名一律规范化 + 短哈希后缀（`mcp__<server>__<tool>__<
 无（可立即开工）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] 规范化 + 一律哈希后缀（稳定性测试：同输入同名、跨服务器组合不漂移）
 - [x] 重名不再抛错（双服务器同名工具共存场景）
 - [x] 重连耗尽会话事件通知 + Web 状态面标注
 - [x] 测试（先例 McpToolSyncTest / ReconnectPolicyTest / ConnectionLifecycleTest / WebFaceTest）
-- [ ] 工单级验收件：同名工具共存 + 拔服务器可见通知演示，用户手动确认
+- [x] 工单级验收件：同名工具共存 + 拔服务器可见通知演示，用户手动确认
 - [x] CHANGELOG 记账（0.19.0 段）
 
 ## Comments
-- 2026-09-23：实现与三轴审查完成（报告见下），全量 BUILD SUCCESS（858 用例 0 失败，2 既有 skip）。**待用户手动验收后转 done。**
+- 2026-09-23：实现与三轴审查完成（报告见下），全量 BUILD SUCCESS（858 用例 0 失败，2 既有 skip）。
+- 2026-09-23：**用户手动验收通过（DemoMain M2 段真机实测）**：远端工具名带哈希后缀（`mcp__files__read_file__5330f725`、`mcp__files__write_file__85d62d9b`）；涉密 guard 前缀拦截与 always-deny 审批拒绝在哈希名下照常生效；拔连接后 `[消失] 未注册` 正常。同名共存与耗尽通知由自动化测试锁定（McpToolSyncTest 坍缩共存/预算耗尽用例 + ConnectorStatusBoardTest）。全场景过，转 done。
 - **命名实现定稿（审查后修正）**：哈希对 **server + 原始工具名** 计算（初版对清洗后名计算，被行级轴抓出「清洗同形异名工具哈希相同」违背防坍缩承诺——修正后清洗同形的异名工具哈希必不同）；展示段仍为清洗后名字。清洗同形 + 哈希截断碰撞的双保险 = convertAll 序号后缀兜底（正常永不进入）。
 - **状态板定位记档**：`ConnectorStatusBoard`（service 名 connectorStatus）落 tools 域——通用连接器状态聚合，mcp 填充 / CLI 订阅通知（收件箱注入，空闲开新轮、忙挂 next-turn）/ WebFace 状态面读快照；三处都只依赖 tools，避免 web/cli 反向依赖 mcp。行停止/拔线即 remove 条目（防幽灵永驻）。
 - 已知边界记档：① 状态板 static SHARED 跨插件行聚合，行 dispose 即 remove 条目（幽灵已防）；② provide 幂等兜底（重复注册吞异常按复用处理）；③ mcp 行须先于 cli 行装配（订阅在 apply 时判定，optionalInject 时序契约已注释）。
