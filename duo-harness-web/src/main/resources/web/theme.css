@@ -237,6 +237,8 @@
   /* 停止态（发送按钮三态之二，验收反馈——独立停止按钮已移除）：危险色示中断语义 */
   #send.stop { background: var(--danger); }
   #send.stop:hover { background: var(--danger); filter: brightness(0.9); }
+  /* 中断标记（用户主动停止的中性呈现——非执行异常，不弹错误卡） */
+  .interrupted-mark { margin: 6px 0 2px; font-size: 12px; color: var(--text-dim); }
 
   /* ===== §样式层 · 全局提示（toast：基础设施错误可见化，顶部居中） ===== */
   #toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 99; }

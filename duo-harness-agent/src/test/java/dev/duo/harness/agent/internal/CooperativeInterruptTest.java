@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,7 +43,8 @@ class CooperativeInterruptTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：CooperativeInterruptTest —— 协作式中断：工具段中断收口（流出文本"
-                + "保留+未派发合成）、流式段中断收口、恢复续接、空闲请求拒绝（4 用例） ===");
+                + "保留+未派发合成）、流式段中断收口（阻塞读抛出/不可打断读回调收敛）、恢复续接、"
+                + "空闲请求拒绝（5 用例） ===");
     }
 
     @TempDir
@@ -144,15 +146,16 @@ class CooperativeInterruptTest {
     }
 
     @Test
-    @Timeout(20)
+    @Timeout(15)
     void streamPhaseInterruptKeepsFlowingText() throws Exception {
-        // 流式段中断：requestInterrupt 打断 streamTurn 的阻塞读（此处以 latch 模拟），
-        // 适配器抛出的异常在标志位下收敛为中断收口——已流出文本保留
+        // 流式段中断（inLlmStream 门下的契约）：流式读不可打断，收敛点在 chunk 回调——
+        // 已流出文本保留落 assistant/interrupted，页面据此呈现中断标记
         Context root = Context.root();
         try {
             root.plugin(new ToolsPlugin(), null).awaitStartup();
             ToolsService tools = root.as(ToolsServiceView.class).tools();
-            CountDownLatch streaming = new CountDownLatch(1);
+            CountDownLatch firstChunk = new CountDownLatch(1);
+            CountDownLatch gate = new CountDownLatch(1);
             LlmAdapter llm = new LlmAdapter() {
                 @Override public void stream(ChatRequest request,
                         java.util.function.Consumer<ChatChunk> onChunk) {
@@ -161,15 +164,14 @@ class CooperativeInterruptTest {
                 @Override public LlmTurn streamTurn(ChatRequest request,
                         java.util.function.Consumer<String> textSink) {
                     textSink.accept("流式开头");
-                    streaming.countDown();
-                    // 模拟真实流式阻塞读：中断打断后以异常冒出（而非正常返回）
+                    firstChunk.countDown();
                     try {
-                        Thread.sleep(10_000);
+                        gate.await(10, TimeUnit.SECONDS);
                     } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("模拟流被中断打断", e);
+                        throw new IllegalStateException(e);
                     }
-                    throw new IllegalStateException("不应在未中断时到达");
+                    textSink.accept("后续块");
+                    throw new AssertionError("不应到达：置位后的 chunk 回调应抛出收敛");
                 }
             };
             Session session = Session.create(tempDir.resolve("stream-sessions"));
@@ -178,8 +180,9 @@ class CooperativeInterruptTest {
 
             Thread sender = Thread.ofVirtual().start(() ->
                     agent.send("问", AgentListener.NONE));
-            assertTrue(streaming.await(10, TimeUnit.SECONDS));
+            assertTrue(firstChunk.await(10, TimeUnit.SECONDS));
             assertTrue(agent.requestInterrupt());
+            gate.countDown();
             sender.join(10_000);
 
             SessionEvent mark = session.events().stream()
@@ -214,12 +217,13 @@ class CooperativeInterruptTest {
     @Timeout(15)
     void interruptedReplyCarriesFlagAndCompletesFalse() throws Exception {
         // reply 语义：interrupted=true、completed=false、finalText 为中断说明
+        // （流式段回调收敛模型：读不可打断，置位后的 chunk 抛出收口）
         Context root = Context.root();
         try {
             root.plugin(new ToolsPlugin(), null).awaitStartup();
             ToolsService tools = root.as(ToolsServiceView.class).tools();
-            CountDownLatch turnStarted = new CountDownLatch(1);
-            AtomicInteger turn = new AtomicInteger();
+            CountDownLatch firstChunk = new CountDownLatch(1);
+            CountDownLatch gate = new CountDownLatch(1);
             LlmAdapter llm = new LlmAdapter() {
                 @Override public void stream(ChatRequest request,
                         java.util.function.Consumer<ChatChunk> onChunk) {
@@ -227,19 +231,15 @@ class CooperativeInterruptTest {
                 }
                 @Override public LlmTurn streamTurn(ChatRequest request,
                         java.util.function.Consumer<String> textSink) {
-                    if (turn.incrementAndGet() == 1) {
-                        turnStarted.countDown();
-                        textSink.accept("部分");
-                        // 模拟流式阻塞：中断打断后异常冒出（正常返回是未中断路径）
-                        try {
-                            Thread.sleep(10_000);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new IllegalStateException("流被中断打断", e);
-                        }
-                        return new LlmTurn("不应到达", List.of());
+                    textSink.accept("部分");
+                    firstChunk.countDown();
+                    try {
+                        gate.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        throw new IllegalStateException(e);
                     }
-                    return new LlmTurn("续答", List.of());
+                    textSink.accept("后续块");
+                    throw new AssertionError("不应到达：置位后的 chunk 回调应抛出收敛");
                 }
             };
             Session session = Session.create(tempDir.resolve("flag-sessions"));
@@ -248,14 +248,92 @@ class CooperativeInterruptTest {
             java.util.concurrent.atomic.AtomicReference<dev.duo.harness.agent.AgentReply> reply =
                     new java.util.concurrent.atomic.AtomicReference<>();
             Thread sender = Thread.ofVirtual().start(() -> reply.set(agent.send("问", AgentListener.NONE)));
-            assertTrue(turnStarted.await(10, TimeUnit.SECONDS));
+            assertTrue(firstChunk.await(10, TimeUnit.SECONDS));
             assertTrue(agent.requestInterrupt());
+            gate.countDown();
             sender.join(10_000);
             assertFalse(reply.get().completed());
             assertTrue(reply.get().interrupted(), "reply 携带中断标志");
             session.close();
         } finally {
             root.dispose();
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void streamingInterruptConvergesAtNextChunkWithoutInterruptibleRead() throws Exception {
+        // 验收实测修正：真实适配器阻塞在 socket 流的 readLine 上，线程 interrupt 打不断
+        // ——中断后 chunk 照常到达（本用例以吞中断的阻塞模拟该语义），收敛点在 chunk
+        // 回调：置位后的下一个 chunk 即抛出收口，已流出文本保留、后续块不落日志。
+        // 修正二（inLlmStream 门）：流式段 requestInterrupt 不打断线程——打断击不醒读，
+        // 却可能击中正在落盘的 lockChannel（InterruptibleChannel 关闭连坐独占锁）；
+        // 断言线程从未被打断 + 收敛后通道健康（续接 send 正常完成）
+        Context root = Context.root();
+        try {
+            root.plugin(new ToolsPlugin(), null).awaitStartup();
+            ToolsService tools = root.as(ToolsServiceView.class).tools();
+            CountDownLatch firstChunk = new CountDownLatch(1);
+            CountDownLatch gate = new CountDownLatch(1);
+            AtomicBoolean threadInterrupted = new AtomicBoolean(false);
+            AtomicInteger turns = new AtomicInteger();
+            LlmAdapter llm = new LlmAdapter() {
+                @Override public void stream(ChatRequest request,
+                        java.util.function.Consumer<ChatChunk> onChunk) {
+                    throw new UnsupportedOperationException();
+                }
+                @Override public LlmTurn streamTurn(ChatRequest request,
+                        java.util.function.Consumer<String> textSink) {
+                    if (turns.incrementAndGet() > 1) {
+                        return new LlmTurn("续答", List.of()); // 中断后的续接：正常直答
+                    }
+                    textSink.accept("中断前的块");
+                    firstChunk.countDown();
+                    blockLikeRealReadLine(gate, threadInterrupted);
+                    textSink.accept("中断后仍到达的块");
+                    throw new AssertionError("不应到达：置位后的 chunk 回调应抛出收敛");
+                }
+            };
+            Session session = Session.create(tempDir.resolve("chunk-sessions"));
+            ToolCallingAgent agent = new ToolCallingAgent(llm, tools, session,
+                    new PromptRegistry("测试"));
+            java.util.concurrent.atomic.AtomicReference<dev.duo.harness.agent.AgentReply> reply =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Thread sender = Thread.ofVirtual().start(() -> reply.set(agent.send("问", AgentListener.NONE)));
+            assertTrue(firstChunk.await(10, TimeUnit.SECONDS));
+            assertTrue(agent.requestInterrupt());
+            gate.countDown(); // 后续 chunk 照常到达（读不可打断的真实语义）
+            sender.join(10_000);
+            assertFalse(sender.isAlive(), "send 应已收敛");
+            assertFalse(threadInterrupted.get(), "流式段中断不得打断 send 线程（inLlmStream 门）");
+            assertTrue(reply.get().interrupted(), "流式段中断按回调收敛");
+            SessionEvent mark = session.events().stream()
+                    .filter(e -> SessionEvent.ASSISTANT_INTERRUPTED.equals(e.type()))
+                    .findFirst().orElseThrow();
+            assertEquals("中断前的块", mark.text(), "中断后的 chunk 不落日志");
+            assertFalse(session.events().stream().anyMatch(e -> e.text() != null
+                    && e.text().contains("中断后仍到达的块")), "置位后的块整体不落日志");
+            // 通道健康：中断标记落盘成功后，续接 send 正常完成（带伤通道会 ClosedChannelException）
+            dev.duo.harness.agent.AgentReply resumed = agent.send("继续", AgentListener.NONE);
+            assertTrue(resumed.completed(), "中断后续接正常（落盘通道无伤）");
+            session.close();
+        } finally {
+            root.dispose();
+        }
+    }
+
+    /** 模拟 socket 流上的 readLine：对线程中断无响应（只记录被打断的事实供断言），
+     * 只有数据到达/流关闭才返回。 */
+    private static void blockLikeRealReadLine(CountDownLatch gate, AtomicBoolean threadInterrupted) {
+        while (true) {
+            try {
+                gate.await(10, TimeUnit.SECONDS);
+                return;
+            } catch (InterruptedException e) {
+                // 真实 readLine 对线程中断免疫：记录事实、清标志继续阻塞（防 await 立即重抛）
+                threadInterrupted.set(true);
+                Thread.interrupted();
+            }
         }
     }
 

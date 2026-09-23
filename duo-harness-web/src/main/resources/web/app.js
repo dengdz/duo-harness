@@ -574,6 +574,21 @@ const render = (() => {
     scroll();
   }
 
+  /** 中断标记（M23 语义的前端中性呈现）：定格流式气泡 + 灰色标记行——中断是用户
+   * 主动操作不是执行异常（回放投影为 [已中断] 前缀气泡，实时/回放语义一致）。 */
+  function interruptedMark() {
+    if (t.streamingBubble) {
+      t.streamingBubble.classList.remove('streaming');
+      t.streamingBubble = null;
+    }
+    showMessages();
+    const mark = document.createElement('div');
+    mark.className = 'interrupted-mark';
+    mark.textContent = '⏸ 已中断（已流出内容已保留，继续对话即续接）';
+    t.container.appendChild(mark);
+    scroll();
+  }
+
   function runError(text) {
     // 流式中断/异常收口：半开的流式气泡就地定格（摘流式态与光标），错误卡随后追加——
     // 中断收口没有 assistant/message，气泡不停格就一直带光标悬着
@@ -708,6 +723,7 @@ const render = (() => {
     else if (ev.type === 'subagent/completed') subagentCompleted(ev);
     else if (ev.type === 'command/run') commandLine(ev);
     else if (ev.type === 'command/done') commandResult(ev);
+    else if (ev.type === 'assistant/interrupted') interruptedMark();
     else if (ev.type === 'run/error') runError(ev.text);
   }
 
@@ -802,7 +818,8 @@ const sse = (() => {
     // 渲染单源（render.dispatch）；chunk 逐帧仅渲染——一次回复可达数百帧，状态面
     // 刷新交给 5s 轮询，其余事件帧后刷新一次
     render.dispatch(event);
-    if (event.type === 'assistant/message' || event.type === 'run/error') app.clearSendBusy();
+    if (event.type === 'assistant/message' || event.type === 'run/error'
+        || event.type === 'assistant/interrupted') app.clearSendBusy();
     if (event.type !== 'assistant/chunk') app.refreshStatus();
   }
 

@@ -200,6 +200,14 @@ public final class ToolCallingAgent implements ChatAgent {
      */
     private volatile boolean interruptRequested;
     private volatile Thread sendThread;
+    /**
+     * 流式段标记（验收实测修正二）：chunk 回调在 send 线程上逐块落盘会话事件，此段内
+     * thread interrupt 打不醒流式读（readLine 对中断免疫），却可能正好击中一次落盘
+     * IO——InterruptibleChannel 语义会直接关闭 lockChannel（唯一持锁通道，POSIX 语义
+     * 连坐释放独占锁），且不可恢复。流式段没有任何需要 interrupt 唤醒的等待（收敛走
+     * chunk 回调，毫秒级），所以置位期间 requestInterrupt 只立标志不打断线程。
+     */
+    private volatile boolean inLlmStream;
 
     @Override
     public AgentReply send(String userText, AgentListener listener) {
@@ -225,19 +233,32 @@ public final class ToolCallingAgent implements ChatAgent {
                 // 请求附加提醒——模型主动收敛而不是被硬掐
                 int remaining = maxIterations - iteration + 1;
                 String reminder = remaining == 2 ? ITERATION_REMINDER : null;
+                inLlmStream = true;
                 LlmTurn turn;
                 try {
                     turn = llm.streamTurn(buildRequest(reminder), text -> {
+                        // 流式段协作式中断的真正生效点（验收实测修正）：线程 interrupt 打不断
+                        // 适配器阻塞在 socket 流上的 readLine，输出持续期间字节不断到达、
+                        // 空闲超时也不触发——中断只能空等到整轮生成完。chunk 回调是 send
+                        // 线程在流上的既有执行点，置位后下一个 chunk（毫秒级）即抛出收敛，
+                        // 不再依赖「阻塞读抛异常」的假设（既有用例以可打断的 sleep 模拟
+                        // 阻塞读，恰好掩盖了这一点）
+                        if (interruptRequested) {
+                            clearResidualInterrupt();
+                            throw new StreamInterrupted();
+                        }
                         listener.onChunk(text);
                         finalReply.append(text);
                     });
                 } catch (RuntimeException e) {
-                    // 流式段被中断打断（阻塞 IO 抛出）——标志位下收敛为中断收口
+                    // 流式段被中断打断（阻塞 IO 抛出 / chunk 回调收敛）——标志位下收敛为中断收口
                     if (interruptRequested) {
                         clearResidualInterrupt();
                         return interruptedReply(finalReply, invocations);
                     }
                     throw e;
+                } finally {
+                    inLlmStream = false;
                 }
 
                 if (!turn.hasToolCalls()) {
@@ -291,7 +312,8 @@ public final class ToolCallingAgent implements ChatAgent {
         return new AgentReply("已中断（协作式暂停，已流出内容已保留）", invocations, false, true);
     }
 
-    /** 协作式中断请求：有 send 在飞时置标志 + 打断线程；空闲返回 false。 */
+    /** 协作式中断请求：有 send 在飞时置标志；非流式段附加线程打断（唤醒工具等待），
+     * 流式段只立标志（inLlmStream 注释——打断只会击落落盘通道，chunk 回调已收敛）。 */
     @Override
     public boolean requestInterrupt() {
         Thread active = sendThread;
@@ -299,7 +321,9 @@ public final class ToolCallingAgent implements ChatAgent {
             return false;
         }
         interruptRequested = true;
-        active.interrupt();
+        if (!inLlmStream) {
+            active.interrupt();
+        }
         return true;
     }
 
@@ -312,6 +336,14 @@ public final class ToolCallingAgent implements ChatAgent {
     private void clearResidualInterrupt() {
         if (interruptRequested) {
             Thread.interrupted();
+        }
+    }
+
+    /** 流式段中断的收敛信号（chunk 回调抛出；无堆栈——纯控制流不作异常现场）。 */
+    private static final class StreamInterrupted extends RuntimeException {
+
+        private StreamInterrupted() {
+            super(null, null, false, false);
         }
     }
 

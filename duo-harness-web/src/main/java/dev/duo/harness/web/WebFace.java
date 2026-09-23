@@ -188,9 +188,13 @@ public final class WebFace {
                                 }
                             });
                     if (!reply.completed()) {
-                        // 迭代上限 / 中断等未完成终止（ADR-0018）：CLI 有 [异常终止] 行，
-                        // Web 直推 run/error 错误卡补齐可见性（BUG-20260917-03 同口径）
-                        pushTransientFrame(tab, toJson(SessionEvent.errorEvent(reply.finalText())));
+                        // 迭代上限等异常终止（ADR-0018）：直推 run/error 错误卡补齐可见性
+                        // （BUG-20260917-03 同口径）。中断收口除外——用户主动停止不是执行
+                        // 异常，可见性由 assistant/interrupted 会话事件承载（前端中性标记、
+                        // 回放投影 [已中断] 前缀），弹错误卡是语义错位（验收实测反馈）
+                        if (!reply.interrupted()) {
+                            pushTransientFrame(tab, toJson(SessionEvent.errorEvent(reply.finalText())));
+                        }
                     }
                     java.util.List<String> queued = tab.agent.drainNextTurn();
                     currentText = queued.isEmpty() ? null : String.join("\n\n", queued);
