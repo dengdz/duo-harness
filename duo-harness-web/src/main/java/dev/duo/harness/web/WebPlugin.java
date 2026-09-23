@@ -130,6 +130,13 @@ public final class WebPlugin implements Plugin<JsonNode> {
                         ? new dev.duo.harness.agent.fileref.FileReferenceService(
                                 ctx.as(WebWorkspaceView.class).workspace().root())
                         : null;
+        // plan 态 bash 只读判定器（M24 工单 04）：workspace 在场时构建（与裁决链 detector
+        // 同源同参，只读无状态）；缺席即 null，plan 态 bash 到达 fail-closed 拒
+        dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector =
+                ctx.hasService(WorkspacePolicy.SERVICE_NAME)
+                        ? new dev.duo.harness.tools.fs.ReadOnlyBashDetector(
+                                ctx.as(WebWorkspaceView.class).workspace().root())
+                        : null;
 
         // Web 面自建全新会话（BUG-20260923-01）：不再续接目录最新——web 行先于 cli 行
         // 装配（回答者路由契约：审批/提问 Web 卡片优先），latest 会抢走 CLI 的续接目标，
@@ -149,7 +156,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
                 adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery);
+                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -206,7 +213,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         face.onSessionChanged(fresh -> {
             face.setAgent(PresenterAssembly.chatAgent(
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery));
+                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector));
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);

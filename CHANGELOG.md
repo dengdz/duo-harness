@@ -6,6 +6,8 @@
 
 ### Added
 
+- **计划模式硬禁（M24 工单 04，ADR-0026 决策三）**：plan 态非白名单工具定义不注入模型请求（模型不可见）+ pre-execute deny 兜底（异常路径到达即拒，理由经 tool/result 回模型，成对落日志无悬置态）；白名单 = 只读探索四件（read/glob/grep/read_image）+ web_fetch/web_search（维持只读档 ask 语义不放开）+ exit_plan_mode（批准闭环恒在）+ ask_user/todo_write（无副作用交互/状态件）；bash 经只读判定器参数级裁决（plan 态只读命令放行、写命令拒、判定器缺席 fail-closed）；批准（exit_plan_mode 获批）后工具全量恢复、续接恢复激活态场景同源生效；M7#1「引导式不硬禁」销账（术语表口径已改写）
+
 - **/effort 思考等级四行映射（M24 工单 10，ADR-0026 决策六/七）**：CLI `/effort` 四档归一 off/low/medium/high（缺省 medium，无参显示当前档与映射说明、非法档拒切）；切换落 `model/effort` 会话事件、swap 换链下一轮对话生效；请求参数按 provider 四行映射——anthropic `thinking+budget_tokens`（off 关闭；low 2048 / medium 8192 / high 16384，max_tokens 保持不小于 budget+1024 以满足协议约束（low 档维持缺省 8192））、openai-compat `reasoning_effort` 直传（off 不带该字段）、glm `thinking.type` 开关二值化（off=disabled，low/medium/high 均=enabled）、deepseek 显式降级标注（档位不落任何参数，提示「思考请切 reasoner 模型」）——不支持不静默；辅助性请求（标题生成）强制 low 档（请求级覆盖直达适配器），不随用户 high 档烧大钱
 
 - **/model 白名单切换与 resume 意图（M24 工单 09，ADR-0026 决策六）**：`~/.duo/config.yml` 的 `llm:` 段新增 `models` 白名单清单；CLI `/model` 无参列出清单与当前模型、带参白名单内切换（清单外拒切——模型名决定成本面）；切换落 `model/intent` 会话事件（保存意图）、swap 换链下一轮对话生效（首期限同 provider）；resume 续接时意图 ≠ 当前模型仅横幅提示不自动切（防成本意外）

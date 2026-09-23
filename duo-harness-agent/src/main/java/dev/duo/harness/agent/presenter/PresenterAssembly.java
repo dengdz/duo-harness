@@ -231,8 +231,26 @@ public final class PresenterAssembly {
                                       dev.duo.harness.attachment.RequestVariants variants,
                                       boolean vision,
                                       dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
+        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
+                governance, presenterId, variants, vision, fileDelivery, null);
+    }
+
+    /**
+     * 对话执行者（M24 工单 04 plan 硬禁版）：{@code planBashDetector} 非 null 时
+     * plan 态到达的 bash 经只读判定器参数级裁决（只读放行/写命令 deny）；null 时
+     * plan 态 bash 一律 fail-closed 拒。注入收缩与执行兜底均在 agent 内生效。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      int maxParallelToolCalls, ContextGovernance governance,
+                                      String presenterId,
+                                      dev.duo.harness.attachment.RequestVariants variants,
+                                      boolean vision,
+                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
+                                      dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector) {
         return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance, presenterId, variants, vision, fileDelivery);
+                maxParallelToolCalls, governance, presenterId, variants, vision, fileDelivery,
+                planBashDetector);
     }
 
     /**

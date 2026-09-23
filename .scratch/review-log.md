@@ -250,3 +250,14 @@
   2. **「辅助性请求」是清单不是举例**——工单写「标题生成等」时，「等」字的覆盖面（压缩摘要、标题）要在实现时主动枚举收敛，否则 Spec 轴会以「窄化未经确认」打回。
   3. **新会话事件登记类型表是红线 3 的固定落点**——`SessionEvent` 加常量的同 diff 必须同步 `docs/05-参考/会话事件类型表.md`（Standards 轴连续三单抓到文档漏同步）。
 - **收口**：`mvn test` 全量 BUILD SUCCESS（918 用例 0 失败，2 既有 skip）；报告全文并入 `.scratch/m24-permission-security/issues/10-effort思考等级四行映射.md`。
+
+### 2026-09-23 · M24 工单 04 审查（0.19.0 分支，四轴制第三轮：计划模式硬禁）
+
+- **范围与轮次**：四轴并行（Standards / Spec / 行级规则 / Java 规范，基点 a0bbc92 工作树）→ 修复 → 全链 test 收口。
+- **计数**：Standards 建议 5；Spec 缺失 0 + 正确性 7 项全过；行级 low 4；Java 轴 MAJOR 5。处置：修 8 / 记档 5。四轴零阻断——Spec 轴「十项条目逐条全过」为四轴制以来最干净的一轮。
+- **三轴同点互证**：extractCommand 每次新 ObjectMapper 与 buildRequest N+1 重扫事件流，Standards/行级/Java 三轴独立抓到——热路径重对象与循环内重复计算是行级审查的高信噪比区。
+- **模式化问题（本次新识别）**：
+  1. **「定义级不可判定」的工具白名单要拆两层**——bash 类参数级语义工具，注入层（模型不可见）与执行层（到达时参数裁决）语义不同层；白名单常量定义处必须注释两层各自的落点，否则审查必来问。
+  2. **并发执行点与串行执行点的新增 guard 必须成对**——ToolCallingAgent 的 executeToolGroup（池内）与 executeOneToolCall（串行）是同一语义的两个物理落点，只 guard 一处 = 另一处漏勺；测试也要成对（本单并发组用例即审查抓出的缺口）。
+  3. **MODE 态类状态放事件流（isActive last-wins）让「恢复」免费**——批准后恢复/续接恢复零额外代码，事件溯源的红利再次兑现。
+- **收口**：`mvn test` 全量 BUILD SUCCESS（923 用例 0 失败，2 既有 skip）；报告全文并入 `.scratch/m24-permission-security/issues/04-计划模式硬禁.md`。

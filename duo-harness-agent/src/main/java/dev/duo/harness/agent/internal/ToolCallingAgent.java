@@ -84,6 +84,8 @@ public final class ToolCallingAgent implements ChatAgent {
     private final dev.duo.harness.attachment.ImageFileDelivery fileDelivery;
     /** 视觉能力开关（llm.vision，ADR-0022）：true 时引用解析为 base64 图片部件。 */
     private final boolean vision;
+    /** plan 态 bash 只读判定器（M24 工单 04；null = plan 态 bash 一律拒）。 */
+    private final dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector;
     /**
      * 两级收件箱（M23 ADR-0025 决策一；next-step 级由 M19 steer 单级升级）：
      * busy 期间外部线程经 {@link #injectUserMessage}（next-step，step 边界排干）或
@@ -156,15 +158,20 @@ public final class ToolCallingAgent implements ChatAgent {
                             int maxParallelToolCalls, ContextGovernance governance,
                             String presenterId) {
         this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, null, false, null);
+                governance, presenterId, null, false, null, null);
     }
 
-    /** 全参构造（M21 工单 05）：requestVariants 非空且 vision=true 时附件引用进请求。 */
+    /**
+     * 全参构造（M24 工单 04 plan 硬禁版）：planBashDetector 非 null 时 plan 态到达的
+     * bash 调用按只读判定器参数级裁决（只读放行/写命令 deny）；null 时 plan 态 bash
+     * 到达一律 fail-closed 拒（无法证明只读即不冒险）。
+     */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             PromptRegistry prompts, int maxIterations,
                             int maxParallelToolCalls, ContextGovernance governance,
                             String presenterId, dev.duo.harness.attachment.RequestVariants requestVariants,
-                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
+                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
+                            dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
@@ -182,6 +189,7 @@ public final class ToolCallingAgent implements ChatAgent {
         this.requestVariants = requestVariants;
         this.fileDelivery = fileDelivery;
         this.vision = vision;
+        this.planBashDetector = planBashDetector;
     }
 
     /**
@@ -408,11 +416,10 @@ public final class ToolCallingAgent implements ChatAgent {
         Semaphore permits = new Semaphore(maxParallelToolCalls);
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (ToolCallRequest call : group) {
-                JsonNode args = argumentsAsJson(call.argumentsJson());
                 futures.add(pool.submit(() -> {
                     permits.acquire();
                     try {
-                        return tools.execute(call.name(), args, presenterId);
+                        return planDenyOrExecute(call);
                     } finally {
                         permits.release();
                     }
@@ -444,9 +451,22 @@ public final class ToolCallingAgent implements ChatAgent {
     /** 独占调用：当前线程执行 + 成对提交（屏障语义下池已排空，独享执行期）。 */
     private void executeOneToolCall(ToolCallRequest call, LlmTurn turn,
                                     AgentListener listener, List<ToolInvocation> invocations) {
-        ToolResult result = tools.execute(call.name(), argumentsAsJson(call.argumentsJson()),
-                presenterId);
+        ToolResult result = planDenyOrExecute(call);
         commitToolCall(call, result, turn, listener, invocations);
+    }
+
+    /**
+     * 执行入口（M24 工单 04 pre-execute 兜底）：plan 态白名单外工具到达即拒——
+     * 理由经 tool/result 错误形态回模型（成对落日志无悬置态），不触达工具实现。
+     * 非 plan 态直通（与既有行为一致）。
+     */
+    private ToolResult planDenyOrExecute(ToolCallRequest call) {
+        String denyReason = dev.duo.harness.agent.plan.PlanMode.denyReason(
+                session, call.name(), call.argumentsJson(), planBashDetector);
+        if (denyReason != null) {
+            return ToolResult.error(denyReason);
+        }
+        return tools.execute(call.name(), argumentsAsJson(call.argumentsJson()), presenterId);
     }
 
     /** 成对有序提交：tool/call 与 tool/result 相邻落日志 + 回调 + 调用台账（model 序）。 */
@@ -503,7 +523,12 @@ public final class ToolCallingAgent implements ChatAgent {
      * 提醒仅进请求视图，不落会话日志。
      */
     private ChatRequest buildRequest(String reminder) {
+        // plan 态注入收缩（M24 工单 04，ADR-0026 决策三）：非白名单工具定义不进请求——
+        // 模型不可见是第一道防线，pre-execute deny（见执行点）只是异常路径兜底
+        boolean planActive = dev.duo.harness.agent.plan.PlanMode.isActive(session);
         List<ToolSpec> specs = tools.list().stream()
+                .filter(def -> !planActive
+                        || dev.duo.harness.agent.plan.PlanMode.WHITELIST.contains(def.name()))
                 .map(def -> new ToolSpec(def.name(), def.description(),
                         def.parameters() == null ? "{}" : def.parameters().toString()))
                 .toList();

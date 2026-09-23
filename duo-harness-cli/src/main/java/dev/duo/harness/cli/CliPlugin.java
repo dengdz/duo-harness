@@ -234,7 +234,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
                 maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                requestVariants, visionEnabled, fileDelivery);
+                requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy));
         ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out, resolvePermissionRules(ctx));
         this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
@@ -339,6 +339,18 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private Path sessionsDir() {
         return sessionsDirOverride != null
                 ? sessionsDirOverride : DuoHome.resolve().resolveDir("agent-sessions");
+    }
+
+    /**
+     * plan 态 bash 只读判定器（M24 工单 04，ADR-0026 决策三）：workspace 在场时按
+     * 其根构建（与 WorkspaceApprovalPlugin 裁决链的 detector 同源同参——判定器只读
+     * 无状态，双实例无冲突）；缺席（纯对话装配无 bash）为 null，plan 态 bash 到达
+     * 一律 fail-closed 拒。
+     */
+    private static dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector(
+            WorkspacePolicy workspacePolicy) {
+        return workspacePolicy == null
+                ? null : new dev.duo.harness.tools.fs.ReadOnlyBashDetector(workspacePolicy.root());
     }
 
     /**
@@ -532,7 +544,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 holder.session = Session.create(sessionsDir);
                 agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
                         maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                        requestVariants, visionEnabled, fileDelivery);
+                        requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy));
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
