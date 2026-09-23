@@ -11,14 +11,14 @@ yml 增 `llm.models` 白名单清单（缺席/空 = 不可切，/model 提示配
 08（provider 字段与装配选型先行）
 
 ## Status
-in-progress
+done
 
 ## Checklist
 - [x] `llm.models` 解析 + `/model` 命令（无参列出 / 带参切换 / 清单外拒切）
 - [x] 切换会话事件 + 下一 turn 生效（adapter 重建）
 - [x] resume 意图投影 + 横幅提示不自动切
 - [x] 测试（先例 ChatAgent seam / CliPluginTest / BootTest）
-- [ ] 工单级验收件：切模型下 turn 生效 + resume 提示演示，用户手动确认
+- [x] 工单级验收件：切模型下 turn 生效 + resume 提示演示，用户手动确认
 - [x] CHANGELOG 记账（0.19.0 段）
 
 ## Comments
@@ -65,3 +65,8 @@ in-progress
 ## 审查报告（第 2 轮）：修复复核
 
 第 1 轮修复均为小改（调序、短路、strip、删观测方法、FQN），由新增与既有测试锁定（872 用例 BUILD SUCCESS）——按 SKILL 第 4 步未触发四轴复跑。
+
+## 验收与收口（2026-09-23）
+
+- **验收件通过（用户手动两轮）**：第 1 轮 `/model deepseek-v4-pro` 切换生效后 `/exit` + 重启——无「会话已被占用」、续接同一会话；第 2 轮 resume 横幅完整出现「（该会话上次使用模型 deepseek-v4-pro，当前 deepseek-flash；/model deepseek-v4-pro 切回）」，`/model` 无参确认当前仍 deepseek-flash（不自动切，防成本意外）。
+- **验收期发现并修复 BUG-20260923-01**：web 行先于 cli 行装配（回答者路由契约），Web 面 `latest()` 抢走目录最新会话、CLI 撞同进程持锁注册表被顶开新建——每次启动必「被占 → 新建」，resume 横幅结构性不可达。修复：WebPlugin 启动自建会话不抢占 + `Session.latest` 跳过 0 字节空会话（commit c98e7c7，测试 session 61 / web 全量 / cli 40 全绿）。
