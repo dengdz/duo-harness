@@ -575,6 +575,12 @@ const render = (() => {
   }
 
   function runError(text) {
+    // 流式中断/异常收口：半开的流式气泡就地定格（摘流式态与光标），错误卡随后追加——
+    // 中断收口没有 assistant/message，气泡不停格就一直带光标悬着
+    if (t.streamingBubble) {
+      t.streamingBubble.classList.remove('streaming');
+      t.streamingBubble = null;
+    }
     showMessages();
     const card = document.createElement('div');
     card.className = 'card error';
@@ -941,22 +947,21 @@ const app = (() => {
 
 
   // ---- composer：发送（不本地回显，用户气泡由 SSE user/message 渲染） ----
-  // 发送受理中禁用按钮（"…"），202 后转"思考中…"——保持到本轮处理完成（assistant/message）
-  // 或出错（run/error）才解除：期间服务端单飞 busy，按钮态与之精确对应；断线重连由回放复位兜底
-  function setSendBusy(busy, label) {
+  // 发送按钮三态（验收反馈：停止并入同钮，不再独立按钮）——
+  // send=发送可点 / thinking=受理中禁用（思考中…）/ stop=执行中可点（协作式中断）；
+  // 键盘回车始终走发送（执行中回车 = 注入，与 CLI 同语义），停止只能点钮触发
+  let sendMode = 'send'; // 当前按钮态（点击分流：stop 态点钮 = 中断，其余 = 发送）
+  function setSendMode(mode) {
+    sendMode = mode;
     const btn = $('#send');
-    btn.disabled = busy;
-    btn.textContent = busy ? (label || '…') : '发送';
-    $('#stop').hidden = !busy; // 停止按钮只在执行中出现（M23 工单 02：发送侧与执行侧同busy）
+    btn.disabled = mode === 'thinking';
+    btn.classList.toggle('stop', mode === 'stop');
+    btn.textContent = mode === 'thinking' ? '思考中…' : (mode === 'stop' ? '停止' : '发送');
+    btn.title = mode === 'stop' ? '协作式中断当前任务（已流出内容保留，再发消息即续接）' : '';
   }
 
   function clearSendBusy() {
-    const btn = $('#send');
-    if (btn.disabled) {
-      btn.disabled = false;
-      btn.textContent = '发送';
-    }
-    $('#stop').hidden = true;
+    setSendMode('send');
   }
 
   let sendInFlight = false; // 请求在途闸：只拦重入，不拦"思考中"——执行中发消息是合法注入
@@ -1013,30 +1018,31 @@ const app = (() => {
     if (!attachments.length) attChips.innerHTML = ''; // 无附件发送时清可能残留的空壳
     input.value = '';
     sendInFlight = true;
-    setSendBusy(true, '…');
+    setSendMode('thinking');
     render.showMessages();
     try {
       const res = await api.sendMessage(text, attachments);
       if (res.status === 202) {
-        // 202 空体 = 正常受理（异步执行）；带体 = 结构化受理（M19）：
-        // injected = 运行中注入；command = 斜杠命令（命中执行的结果走事件流渲染，
-        // 拒绝类无事件、text 随体 toast——未知命令/适用面/busy）
+        // 202 空体 = 正常受理（异步执行）——同钮转【停止】；带体 = 结构化受理（M19）：
+        // injected = 运行中注入（agent 仍在跑，保持【停止】）；command = 斜杠命令（命中执行
+        // 的结果走事件流渲染，拒绝类无事件、text 随体 toast——未知命令/适用面/busy）
         const body = await res.text();
         if (!body) {
-          setSendBusy(true, '思考中…');
+          setSendMode('stop');
           return;
         }
-        setSendBusy(false);
         let ack = {};
         try { ack = JSON.parse(body); } catch (e) { /* 兼容旧纯文本体 */ }
         if (ack.outcome === 'injected') {
           showToast(ack.text || '已注入，待当前步骤完成', 'info');
-        } else if (ack.outcome === 'command' && ack.text) {
-          showToast(ack.text, 'info');
+          setSendMode('stop'); // 注入即 agent 在跑：保持停止态到收口帧
+        } else {
+          setSendMode('send');
+          if (ack.outcome === 'command' && ack.text) showToast(ack.text, 'info');
         }
         return;
       }
-      setSendBusy(false);
+      setSendMode('send');
       if (res.status === 409) showToast('已有对话在执行中，请稍候', 'info');
       else showToast('消息发送失败（HTTP ' + res.status + '）');
       pendingAttachments.unshift(...attachments); // 失败返还：附件不丢
@@ -1044,31 +1050,38 @@ const app = (() => {
     } catch (err) {
       pendingAttachments.unshift(...attachments);
       renderAttChips();
-      setSendBusy(false);
+      setSendMode('send');
       showToast('消息发送失败：' + errText(err));
     } finally {
       sendInFlight = false;
     }
   }
-  $('#send').addEventListener('click', send);
+  $('#send').addEventListener('click', () => {
+    if (sendMode === 'stop') {
+      doStop();
+      return;
+    }
+    send();
+  });
   $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
-  // 停止按钮（M23 工单 02）：协作式中断——202 受理后按钮保持到中断收口
-  // （run/error 帧到达即复位）；409 = 已无任务（并发收口），直接复位
-  $('#stop').addEventListener('click', async () => {
+  // 停止（M23 工单 02，验收反馈并入发送按钮）：协作式中断——202 受理后保持停止态到
+  // 中断收口（assistant/interrupted 灰色标记到达即复位，不再弹受理 toast——收敛是
+  // 毫秒级，标记行本身就是反馈）；409 = 已无任务（并发收口），直接回发送
+  async function doStop() {
     try {
       const res = await api.stop();
       if (res.status === 202) {
-        showToast('已请求中断（协作式收口中，稍候）', 'info');
+        // 保持停止态等收口标记；无额外提示
       } else if (res.status === 409) {
         showToast('当前无执行中任务', 'info');
-        $('#stop').hidden = true;
+        setSendMode('send');
       } else {
         showToast('中断请求失败（HTTP ' + res.status + '）', 'err');
       }
     } catch (err) {
       showToast('中断请求失败：' + errText(err), 'err');
     }
-  });
+  }
   // 附件入口（M21 工单 04）：粘贴与拖拽图片 → 上传入列（vision 关闭时端点 409 提示）
   $('#input').addEventListener('paste', (e) => handleAttachmentFiles(e.clipboardData.files));
 
