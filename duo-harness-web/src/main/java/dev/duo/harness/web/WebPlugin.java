@@ -32,7 +32,8 @@ import java.util.Set;
  * 模式）。技能清单 / AGENTS.md 片段由对应插件（SkillsPlugin / AgentsMdPlugin）
  * 注册进 prompts 服务——本插件只做对话执行者装配，不重复注册。装配链还负责：
  * 注册 ask_user 与计划呈交工具（纯 Web 部署的 HITL 完整，与 CLI 装配共存时先到先得）、
- * 装配 Web answerer 与审计桥、接管会话独占锁（启动遇占用即 FAILED 点名被占会话）。</p>
+ * 装配 Web answerer 与审计桥、启动自建全新会话（BUG-20260923-01：不续接不抢占——
+ * CLI 侧 resume 语义不受影响，恢复历史对话走 /switch）。</p>
  *
  * <p>LLM 未配置时插件 FAILED 点名（整个 Web 面不可用——LLM 配置先于服务启动装载）。</p>
  *
@@ -130,17 +131,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
                                 ctx.as(WebWorkspaceView.class).workspace().root())
                         : null;
 
-        Session session;
-        try {
-            session = Session.latest(DuoHome.resolve().resolveDir("agent-sessions"));
-            if (session == null) {
-                session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
-            }
-        } catch (dev.duo.harness.session.SessionLockedException e) {
-            // 单写者检测：会话已被占用（另一入口或其他进程）——启动即失败并点名会话，
-            // 不静默分脑共享同一日志（两个进程各持内存视图、JSONL 交错追加）
-            throw new PluginException("Web 面无法启动：" + e.getMessage(), e);
-        }
+        // Web 面自建全新会话（BUG-20260923-01）：不再续接目录最新——web 行先于 cli 行
+        // 装配（回答者路由契约：审批/提问 Web 卡片优先），latest 会抢走 CLI 的续接目标，
+        // CLI 随后撞同进程持锁注册表被顶开新建，resume 续接语义（模型意图横幅）就此
+        // 永远失效。自建的空会话由 Session.latest 的空会话跳过规则隔离，不污染 CLI 的
+        // 下次续接；恢复上次 Web 对话走 /switch。
+        Session session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
         // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置；governance 段
         // 可省（缺省常量，0.7.0 行为），配置错误（未知字段/类型/越界）启动即 FAILED 点名
         ContextGovernance.Tuning governanceTuning = PresenterAssembly.parseGovernance(config);

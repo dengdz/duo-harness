@@ -26,7 +26,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（48 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（51 用例） ===");
     }
 
     @TempDir
@@ -370,7 +370,8 @@ class SessionTest {
         Path older = sessionsDir().resolve("20260101-000000-aaaa.jsonl");
         Path newer = sessionsDir().resolve("20260101-000000-bbbb.jsonl");
         Files.writeString(older, "");
-        Files.writeString(newer, "");
+        // newer 须有内容（BUG-20260923-01 起 latest 跳过空会话）：一条最小合法事件
+        Files.writeString(newer, "{\"type\":\"user/message\",\"at\":1,\"text\":\"最新对话\"}\n");
         // 修改时间粒度可能同毫秒：显式错开，保证"最近活动"判定确定
         Files.setLastModifiedTime(newer, java.nio.file.attribute.FileTime.fromMillis(
                 Files.getLastModifiedTime(older).toMillis() + 10_000));
@@ -379,6 +380,24 @@ class SessionTest {
 
         assertNotNull(latest);
         assertEquals("20260101-000000-bbbb", latest.id(), "应取修改时间最新的会话");
+    }
+
+    @Test
+    void latestSkipsEmptySessions() throws IOException {
+        // BUG-20260923-01：0 字节空会话（如 Web 面自建的新会话）不是可续接的对话——
+        // 即使它 mtime 最新，latest 也应跳过它取最近有内容的会话
+        Files.createDirectories(sessionsDir());
+        Path empty = sessionsDir().resolve("20260101-000000-empty.jsonl");
+        Path filled = sessionsDir().resolve("20260101-000000-fill.jsonl");
+        Files.writeString(empty, "");
+        Files.writeString(filled, "{\"type\":\"user/message\",\"at\":1,\"text\":\"有内容的旧对话\"}\n");
+        Files.setLastModifiedTime(empty, java.nio.file.attribute.FileTime.fromMillis(
+                Files.getLastModifiedTime(filled).toMillis() + 10_000));
+
+        Session latest = Session.latest(sessionsDir());
+
+        assertNotNull(latest, "存在有内容会话时不应返回 null");
+        assertEquals("20260101-000000-fill", latest.id(), "应跳过空会话取最近有内容的会话");
     }
 
     @Test

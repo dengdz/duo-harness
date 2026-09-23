@@ -91,8 +91,9 @@ plugins:
     name: dev.duo.harness.example.mcpfs.RepeatReminderPlugin
     config: {}
 
-  # 会话独占：Web 面与 CLI 各自尝试续接最新会话，先到者持锁——后到者收到明确占用提示
-  # （CLI 改开新会话继续；Web 面启动失败点名被占会话）。同一会话同一时刻只允许一个属主
+  # 会话语义（BUG-20260923-01）：web 在前装配（回答者路由契约，见 cli 行注释），
+  # 启动自建全新会话、不续接不抢占；cli 在后续接最近一次有内容的对话（空会话跳过）。
+  # 同一会话同一时刻仍只允许一个属主（独占锁语义不变）
   - id: web
     name: dev.duo.harness.web.WebPlugin
     config:

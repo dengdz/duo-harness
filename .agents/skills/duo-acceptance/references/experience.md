@@ -43,3 +43,17 @@
 
 **影响范围**：
 所有需要真实装配的 Web 视觉验证与手动演示环境。
+
+## [2026-09-23] 「会话已被占用」排查：先比时间戳 + Java 同语义探锁 + classpath 前置 classes
+
+**问题描述**：
+工单 09 resume 横幅验收连卡多轮「会话已被占用 → 新建会话」。先后误判为「上一进程未死透」「锁残留」，考古终端时序耗大量轮次；隔离实验里改完代码验证竟毫无变化，几乎误判修复无效。
+
+**原因分析**：
+① 真根因是同 JVM 装配争抢——web 行先于 cli 行，Web 面 `latest()` 抢走目录最新会话，CLI 撞同进程持锁注册表被顶开新建，每轮的「被占会话」正是上一轮 CLI 刚建的；现象与「进程残留」一模一样，先入为主走了弯路。② python `fcntl.flock` 与 JVM `FileChannel`（fcntl 锁族）是独立锁族，flock 探测 fcntl 锁恒假阴性，一度把误判"验证"成结论。③ `dependency:build-classpath` 生成的是 ~/.m2 旧版本 jar，改完 session/web 源码跑验证时 classpath 根本没带上新 classes。
+
+**解决方案**：
+① 时间戳判别法：被占会话与本次实例启动**同一秒** = 同 JVM 内争抢（查装配顺序/服务单例），跨时段 = 跨进程残留（查进程生死）——先比时间戳再选排查方向。② 锁探测一律写 5 行 Java `FileChannel.tryLock`（与被测代码同语义），不用 shell/python 的 flock。③ 改码后的运行验证，classpath 必须把各模块 `target/classes` 前置在 build-classpath 产物之前（本仓库未 install，.m2 里只有旧版本）。④ 隔离终验标准姿势升级：`DUO_HOME=/tmp/xxx` + **单次 shell 调用内完成全流程**（起 → 操作 → `kill -9` + `wait` → 再起——跨调用 kill/ps 在沙箱下不可靠）。
+
+**影响范围**：
+所有涉及会话锁、双呈现位（CLI+Web）、多进程交互的验收与排障；一切"改了代码但行为没变"的验证场景。

@@ -290,7 +290,11 @@ public final class Session {
                 .toList();
     }
 
-    /** 目录内最近活动的会话（按文件修改时间，即最后被创建/写入的）；无会话返回 null。 */
+    /**
+     * 最近一次有内容的会话（按文件修改时间取最新；0 字节空会话跳过）——续接目标
+     * 必须有真实对话（BUG-20260923-01）：Web 面改为启动自建会话后，其空文件是目录
+     * mtime 最新，不过滤则 CLI 下次启动会"续接"一个空会话。目录无可续接会话返回 null。
+     */
     public static Session latest(Path sessionsDir) {
         Path latest = null;
         FileTime latestTime = null;
@@ -303,6 +307,9 @@ public final class Session {
             }
             for (Path path : files) {
                 try {
+                    if (Files.size(path) == 0) {
+                        continue; // 空会话（新建未对话）不是可续接的对话
+                    }
                     FileTime time = Files.getLastModifiedTime(path);
                     if (latest == null || time.compareTo(latestTime) > 0) {
                         latest = path;
