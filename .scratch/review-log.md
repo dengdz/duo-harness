@@ -261,3 +261,17 @@
   2. **并发执行点与串行执行点的新增 guard 必须成对**——ToolCallingAgent 的 executeToolGroup（池内）与 executeOneToolCall（串行）是同一语义的两个物理落点，只 guard 一处 = 另一处漏勺；测试也要成对（本单并发组用例即审查抓出的缺口）。
   3. **MODE 态类状态放事件流（isActive last-wins）让「恢复」免费**——批准后恢复/续接恢复零额外代码，事件溯源的红利再次兑现。
 - **收口**：`mvn test` 全量 BUILD SUCCESS（923 用例 0 失败，2 既有 skip）；报告全文并入 `.scratch/m24-permission-security/issues/04-计划模式硬禁.md`。
+
+### 2026-09-23 · M24 工单 07 审查（0.19.0 分支，四轴制第四轮：标签级会话绑定）
+
+- **范围与轮次**：四轴并行（Standards / Spec / 行级规则 / Java 规范，基点 bbb1d4f 工作树）→ 修复 → 全量 test 收口。
+- **计数**：Standards 偏差 2（后台误投未落 limitations、CHANGELOG 措辞窄）+ 待验收 1；Spec 阻断 1（后台通知路由恒落匿名上下文——min(seq) 未过滤 defaultTab）+ 建议 3 + 正确性 8 项对照通过；行级 medium 2 + low 6；Java 轴违规 1（测试忙等无界）+ 建议 8。处置：修 12 / 记档 5。
+- **Spec 轴阻断成色**：后台任务监听器从全局 agent 改为按 seq 选 tab 时，`tabs.values().min(seq)` 把匿名上下文（seq=0 恒在场）选为投递目标——「兼容位不该参与业务路由」的选源疏漏，单标签下浏览器标签永远收不到后台完成通知。修复 = 过滤 DEFAULT_TAB_ID 再取 min。
+- **TOCTOU 堵法升级**：/new 与 /switch 的 busy 守卫从「检查-行动两段式」改为 **CAS 占有式**（busy 从检查前持有到换绑 finally 释放）——Session.load 文件 IO 窗口内新 turn 潜入即写即将被 close 的会话，恰是守卫声称堵死的 BUG-20260914-01。占有式 CAS 让「换绑期」本身成为 busy 语义的一部分，与消息路径的 CAS 天然互斥。
+- **三轴同点互证**：resolveTab 回调失败路径锁泄漏（fresh 已 bind 未 close）由 Spec/行级双轴独立抓到——「创建半途失败的资源收口」是懒初始化的高发漏勺。
+- **模式化问题（本次新识别）**：
+  1. **「无 X 头请求」是兼容位不是路由参与者**——为兼容 curl/缓存页/存量测试引入匿名上下文时，一切按业务语义选目标（通知路由、fail-closed 归属）的代码必须显式排除它；匿名上下文的正确角色 = 接住无头请求，不是兜底业务目标。
+  2. **兼容位用 InheritableThreadLocal 承载「当前 turn」是虚拟线程架构的免费午餐**——工具池/subagent worker 都是 turn 内新建虚拟线程，ITL 跨创建继承让 ask-on-pool 场景零改动归属正确；残留是 turn 内 spawn 的长命线程持有陈旧值（记档，验收留意）。
+  3. **「每标签一份」改造的端点清单要按「读体」「写体」分派**——GET（status/sessions/page/export/attachment-read）与 POST（message/stop/answer/new/switch）的 resolveTab 时机不同：POST 必须先排空请求体再解析标签（keep-alive 复用正确性），本次审查抓到两处逆序。
+  4. **回调型装配的返回值化**——Consumer 回调承载不了「产物归谁」（WebPlugin 的 setAgent 全局单槽即分脑），Function 化让产物回流到正确的宿主；改回调签名是多宿主化的标志性动作。
+- **收口**：`mvn test` 全量 BUILD SUCCESS（935 用例 0 失败，2 既有 skip）；报告全文并入 `.scratch/m24-permission-security/issues/07-标签级会话绑定.md`。

@@ -35,8 +35,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Web 双面呈现位（M8）：JDK 内置 HttpServer 承载的本地服务——静态单页（双区布局，
@@ -97,14 +96,43 @@ public final class WebFace {
     private volatile dev.duo.harness.agent.governance.ContextGovernance governance;
     /** 会话目录（侧栏列表与切换用）。 */
     private final Path sessionsDir;
-    /** 可换会话（/new 等价）：换绑时 SSE 监听器随之迁移。 */
-    private volatile Session session;
-    /** 对话执行者（/new 重建；volatile 保证跨线程可见）。 */
-    private volatile ChatAgent agent;
-    /** 单飞标志：一次只跑一轮 send 或一个非 busySafe 命令（CLI 单入口同约定）。 */
-    private final AtomicBoolean busy = new AtomicBoolean(false);
-    /** agent send 执行中标志：busySafe 分级的探针（busy 兼作命令互斥，两者分离）。 */
-    private final AtomicBoolean agentRunning = new AtomicBoolean(false);
+    /**
+     * 标签上下文表（M24 工单 07，ADR-0026 决策五延伸）：每浏览器标签一份会话绑定
+     * （session/agent/busy/订阅），key 为标签上报的 tabId；缺失头视为匿名上下文
+     * {@link #DEFAULT_TAB_ID}（curl/缓存页/既有测试兼容，行为同单会话时代）。
+     * 未知 tabId 首次到达即懒创建（新标签默认新建会话，互踩隔离优先）。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, TabContext> tabs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** 匿名上下文键：无 tabId 请求的归属（单会话时代行为）。 */
+    static final String DEFAULT_TAB_ID = "";
+    /** 标签上下文：多会话并存的最小单元——换绑/重建 agent/单飞标志都以它为界。 */
+    private static final class TabContext {
+
+        final String tabId;
+        /** 创建序号（后台任务通知路由的确定性归属——owner 无 tab 粒度时取最早标签）。 */
+        final long seq;
+        /** 绑定会话（换绑时 SSE 监听器随之迁移；volatile 保证跨线程可见）。 */
+        volatile Session session;
+        /** 对话执行者（换绑重建；volatile 保证跨线程可见）。 */
+        volatile ChatAgent agent;
+        /** 单飞标志：一次只跑一轮 send 或一个非 busySafe 命令（CLI 单入口同约定）。 */
+        final AtomicBoolean busy = new AtomicBoolean(false);
+        /** agent send 执行中标志：busySafe 分级的探针（busy 兼作命令互斥，两者分离）。 */
+        final AtomicBoolean agentRunning = new AtomicBoolean(false);
+        /** 绑定会话的事件监听订阅（换绑先解绑旧的）。 */
+        Disposable sseSubscription;
+
+        TabContext(String tabId, long seq, Session session) {
+            this.tabId = tabId;
+            this.seq = seq;
+            this.session = session;
+        }
+    }
+    /** 标签创建序号发生器。 */
+    private final java.util.concurrent.atomic.AtomicLong tabSeq = new java.util.concurrent.atomic.AtomicLong();
+    /** 匿名上下文（start 传入的初始 session/agent；无 tabId 请求的归属）。 */
+    private final TabContext defaultTab;
     /** 后台任务注册表（M23 工单 04；null = 未注入——完成通知路由不挂载）。 */
     private volatile dev.duo.harness.tools.fs.BackgroundTaskRegistry backgroundTasks;
 
@@ -120,11 +148,18 @@ public final class WebFace {
                 if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
                     return;
                 }
-                ChatAgent current = agent;
+                // 标签归属（M24 工单 07 记档）：任务 owner 只有呈现位粒度无 tab——
+                // 确定性路由到创建最早的真实标签（匿名上下文不参与——它是无 tabId
+                // 请求的兼容位，路由进去浏览器标签永远看不到）；无真实标签回退匿名
+                TabContext target = tabs.values().stream()
+                        .filter(t -> !DEFAULT_TAB_ID.equals(t.tabId))
+                        .min(java.util.Comparator.comparingLong(t -> t.seq))
+                        .orElse(defaultTab);
+                ChatAgent current = target.agent;
                 if (current == null) return;
                 String notice = task.notice();
-                if (busy.compareAndSet(false, true)) {
-                    startAgentTurn(notice, current);
+                if (target.busy.compareAndSet(false, true)) {
+                    startAgentTurn(notice, target);
                 } else {
                     current.injectNextTurn(notice);
                 }
@@ -135,34 +170,38 @@ public final class WebFace {
     /**
      * 启动一轮 agent 执行（虚拟线程）+ next-turn 排干循环（M23 工单 04）：通知路由与
      * 用户消息共用——turn 收口后 next-turn 队列非空则合并续跑，直到队列空。
+     * 执行期以 turn 上下文（ITL）标记所属标签——WebPlugin 经 {@code face::currentSession}
+     * 共享的会话供给方（审计桥/规则 sink/todo/subagent）由此解析到发起标签的会话。
      */
-    private void startAgentTurn(String text, ChatAgent current) {
-        agentRunning.set(true);
+    private void startAgentTurn(String text, TabContext tab) {
+        tab.agentRunning.set(true);
         Thread.ofVirtual().start(() -> {
+            TURN_TAB.set(tab.tabId);
             String currentText = text;
             try {
                 while (currentText != null) {
                     dev.duo.harness.agent.AgentReply reply =
-                            current.send(currentText, new dev.duo.harness.agent.AgentListener() {
+                            tab.agent.send(currentText, new dev.duo.harness.agent.AgentListener() {
                                 @Override
                                 public void onChunk(String chunk) {
-                                    session.append(SessionEvent.assistantChunk(chunk));
+                                    tab.session.append(SessionEvent.assistantChunk(chunk));
                                 }
                             });
                     if (!reply.completed()) {
                         // 迭代上限 / 中断等未完成终止（ADR-0018）：CLI 有 [异常终止] 行，
                         // Web 直推 run/error 错误卡补齐可见性（BUG-20260917-03 同口径）
-                        pushTransientFrame(toJson(SessionEvent.errorEvent(reply.finalText())));
+                        pushTransientFrame(tab, toJson(SessionEvent.errorEvent(reply.finalText())));
                     }
-                    java.util.List<String> queued = current.drainNextTurn();
+                    java.util.List<String> queued = tab.agent.drainNextTurn();
                     currentText = queued.isEmpty() ? null : String.join("\n\n", queued);
                 }
             } catch (Exception e) {
                 log.warn("消息处理失败", e);
-                pushTransientFrame(toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
+                pushTransientFrame(tab, toJson(SessionEvent.errorEvent("消息处理失败，详情见服务端日志")));
             } finally {
-                agentRunning.set(false);
-                busy.set(false);
+                TURN_TAB.remove();
+                tab.agentRunning.set(false);
+                tab.busy.set(false);
             }
         });
     }
@@ -177,15 +216,12 @@ public final class WebFace {
     private volatile java.util.function.Supplier<Session> newSessionSupplier =
             () -> { throw new IllegalStateException("新会话供给者未装配"); };
     /**
-     * 会话变更回调（/new 与 /switch 共用）：装配层以入参会话重建 agent——
-     * ToolCallingAgent 持有 final 会话引用，不重建即分脑（消息落旧会话、
-     * 页面显示新会话，BUG-20260914-02）。
+     * 会话变更回调（/new 与 /switch 与新标签创建共用）：装配层按入参会话重建 agent 并
+     * **返回**——ToolCallingAgent 持有 final 会话引用，不重建即分脑（消息落旧会话、
+     * 页面显示新会话，BUG-20260914-02）；返回值归标签上下文（M24 工单 07）。
      */
-    private volatile Consumer<Session> sessionChangedCallback = changed -> { };
-
-    /** fail-closed 去抖复查任务（同一时刻至多一个；窗口内新摘除会重置窗口）。 */
-    private final AtomicReference<java.util.concurrent.ScheduledFuture<?>> failClosedCheck =
-            new AtomicReference<>();
+    private volatile Function<Session, ChatAgent> sessionChangedCallback =
+            changed -> null;
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
                     WebAnswerer webAnswerer, Path sessionsDir, int pageSize,
@@ -198,7 +234,10 @@ public final class WebFace {
         this.attachments = attachments;
         this.visionGate = visionGate;
         this.sessionQuery = sessionQuery;
-        this.session = session;
+        // 匿名上下文（M24 工单 07）：start 传入的初始会话/agent 归默认 tab——
+        // 带 tabId 的浏览器标签各自懒创建上下文，无 tabId 请求（curl/缓存页/测试）走这里
+        this.defaultTab = new TabContext(DEFAULT_TAB_ID, tabSeq.getAndIncrement(), session);
+        this.tabs.put(DEFAULT_TAB_ID, this.defaultTab);
         this.webAnswerer = webAnswerer;
         this.sessionsDir = sessionsDir;
         this.authToken = authToken;
@@ -214,8 +253,10 @@ public final class WebFace {
      * 启动并绑定 127.0.0.1:port（port 0 = 系统随机分配，测试用）。
      * governance 可为 null（无治理装配时状态面省略上下文占用字段）。
      *
-     * <p><b>会话所有权</b>：WebFace 接管传入会话的生命周期——换绑（/new、/switch）时
-     * 关闭旧会话释放其独占锁，{@link #stop()} 关闭当前会话。调用方无须（也不应）再关闭。</p>
+     * <p><b>会话所有权</b>：WebFace 接管传入会话的生命周期——传入会话归匿名上下文
+     * （无 tabId 请求）；带 tabId 的浏览器标签各自懒创建会话（新标签默认新建），
+     * 换绑（/new、/switch）时关闭该标签旧会话释放其独占锁，{@link #stop()} 关闭
+     * 全部标签会话。调用方无须（也不应）再关闭。</p>
      *
      * @throws IOException 端口绑定失败
      */
@@ -292,8 +333,12 @@ public final class WebFace {
         WebFace face = new WebFace(server, ctx, tools, session, webAnswerer, sessionsDir, pageSize,
                 attachments, visionGate, sessionQuery, authToken);
         face.governance = governance;
-        face.bindSession(session);
-        face.agent = agent;
+        face.bindTab(face.defaultTab, session);
+        face.defaultTab.agent = agent;
+        if (webAnswerer != null) {
+            // 挂起项标签归属（M24 工单 07）：ask 时刻解析 turn 上下文——fail-closed 按标签选择性拒绝
+            webAnswerer.setTabResolver(WebFace::currentTabId);
+        }
         face.registerEndpoints();
         face.heartbeat.scheduleAtFixedRate(face::pingAll,
                 HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
@@ -301,41 +346,110 @@ public final class WebFace {
         return face;
     }
 
-    /** 换绑串行化锁：并发切换（连点侧栏/新话题）下保证"关闭上一个"链条线性、会话锁不泄漏。 */
+    /** 换绑串行化锁：并发切换（连点侧栏/新话题/新标签首请求）下保证"关闭上一个"链条线性、会话锁不泄漏。 */
     private final Object bindLock = new Object();
 
-    /** 绑定会话的事件监听（SSE 推送源）；换会话时先解绑旧的，并释放旧会话的独占锁。 */
-    private void bindSession(Session target) {
+    /**
+     * 当前 turn 的标签（M24 工单 07）：startAgentTurn 的专属虚拟线程入口置位、收口清除；
+     * 工具并发池为 turn 内新建的虚拟线程（InheritableThreadLocal 跨创建继承），池线程上的
+     * ask（web_fetch 只读档 ask 语义等）归属不丢。静态：WebPlugin 经 {@code face::currentSession}
+     * 共享的会话供给方与 WebAnswerer 的挂起项归属解析器都要读到它。
+     */
+    private static final InheritableThreadLocal<String> TURN_TAB = new InheritableThreadLocal<>();
+
+    /** 当前 turn 的标签 id（turn 上下文外为 null——WebAnswerer 归属解析用）。 */
+    static String currentTabId() {
+        return TURN_TAB.get();
+    }
+
+    /** 标签 id 白名单（浏览器 crypto.randomUUID 或降级串；预编译——每请求都校验）。 */
+    private static final java.util.regex.Pattern TAB_ID =
+            java.util.regex.Pattern.compile("[0-9a-zA-Z_-]{1,64}");
+
+    /**
+     * 标签解析（M24 工单 07）：X-Tab-Id 头优先，SSE 通道回退 {@code ?tabId=} 查询串
+     * （EventSource 不支持自定义头，与 token 双通道同口径）。缺失 = 匿名上下文；携带
+     * 但形态非法（白名单外字符/超长）400 拒绝——坏值静默并入匿名上下文会让多标签
+     * 互踩复活（fail-closed）。命中未知 tabId 即懒创建：新会话 + 回调重建 agent
+     * （新标签默认新建会话；服务端重启后旧标签的 tabId 同样无记录，等同新标签）。
+     *
+     * @return 上下文；null = 请求已响应（非法 tabId / 创建失败）
+     */
+    private TabContext resolveTab(HttpExchange exchange) throws IOException {
+        String tabId = exchange.getRequestHeaders().getFirst("X-Tab-Id");
+        if (tabId == null || tabId.isBlank()) {
+            tabId = queryParam(exchange, "tabId");
+        }
+        tabId = tabId == null ? "" : tabId.strip();
+        if (!tabId.isEmpty() && !TAB_ID.matcher(tabId).matches()) {
+            respondEmpty(exchange, 400);
+            return null;
+        }
+        TabContext tab = tabs.get(tabId);
+        if (tab != null) {
+            return tab;
+        }
+        // 慢路径整体持锁（含回调建 agent）：同 tabId 的并发首请求（浏览器首载同时发
+        // status/sessions/SSE 三发）要么等创建完成拿到带 agent 的完整上下文，要么复用
+        // ——agent 挪到锁外回填会留出"上下文在场而 agent 未就位"窗口，早到消息 503
         synchronized (bindLock) {
-            Session previous = session;
-            session = target;
-            if (sseSubscription != null) {
+            tab = tabs.get(tabId); // 双检：并发首请求只建一个会话（会话文件与锁各就各位）
+            if (tab != null) {
+                return tab;
+            }
+            Session fresh = null;
+            try {
+                fresh = newSessionSupplier.get();
+                tab = new TabContext(tabId, tabSeq.getAndIncrement(), fresh);
+                bindTab(tab, fresh);
+                tab.agent = sessionChangedCallback.apply(fresh);
+                tabs.put(tabId, tab);
+                return tab;
+            } catch (Exception e) {
+                if (fresh != null) {
+                    // 回调失败（建 agent/挂标题）时新会话已持独占锁：就地释放，
+                    // 不给失败的首请求留永久占用（同 bindTab 的锁泄漏自警）
+                    fresh.close();
+                }
+                log.warn("标签上下文创建失败 tabId={}", tabId, e);
+                respondText(exchange, 500, "标签会话创建失败");
+                return null;
+            }
+        }
+    }
+
+    /** 绑定会话到标签（事件监听 SSE 推送源）；换会话时先解绑旧的，并释放旧会话的独占锁。 */
+    private void bindTab(TabContext tab, Session target) {
+        synchronized (bindLock) {
+            Session previous = tab.session;
+            tab.session = target;
+            if (tab.sseSubscription != null) {
                 try {
-                    sseSubscription.dispose();
+                    tab.sseSubscription.dispose();
                 } catch (Exception e) {
                     // 旧监听器注销失败无碍：新订阅已就位
                 }
             }
-            sseSubscription = target.addListener(this::pushSessionEvent);
+            tab.sseSubscription = target.addListener((index, event) ->
+                    pushSessionEvent(index, event, tab));
             if (previous != null && previous != target) {
-                // 换绑即本进程不再使用旧会话：释放独占锁（否则旧会话被本进程白占，他处打不开）。
+                // 换绑即本标签不再使用旧会话：释放独占锁（否则旧会话被本进程白占，他处打不开）。
                 // 必须串行：并发换绑各关各的快照会跳过中间会话，其独占锁永久泄漏
                 previous.close();
             }
         }
     }
 
-    private Disposable sseSubscription;
-
-    /** 换绑会话并通知装配层重建 agent（/new 语义；回调拿到的是已换绑的同一会话）。 */
-    private void newSession() {
+    /** 换绑标签会话并经回调重建该标签的 agent（/new 语义；回调返回值即新 agent）。 */
+    private void newSessionFor(TabContext tab) {
         Session fresh = newSessionSupplier.get();
-        bindSession(fresh);
-        sessionChangedCallback.accept(fresh);
+        bindTab(tab, fresh);
+        tab.agent = sessionChangedCallback.apply(fresh);
     }
 
-    /** 注册会话变更回调（装配层接线；/new 与 /switch 换绑后都回调重建 agent）。 */
-    void onSessionChanged(java.util.function.Consumer<Session> onChanged) {
+    /** 注册会话变更回调（装配层接线）：换绑后按会话重建 agent 并**返回**——多标签下
+     * agent 归标签上下文而非全局单槽（Consumer 时代的 setAgent 全局写入即分脑）。 */
+    void onSessionChanged(java.util.function.Function<Session, ChatAgent> onChanged) {
         this.sessionChangedCallback = java.util.Objects.requireNonNull(onChanged, "onChanged");
     }
 
@@ -344,9 +458,9 @@ public final class WebFace {
         this.newSessionSupplier = java.util.Objects.requireNonNull(supplier, "supplier");
     }
 
-    /** 测试与装配层用：替换对话执行者（/new 重建后调用）。 */
+    /** 测试与装配层用：替换匿名上下文的对话执行者（start 初始接线；标签 agent 走回调）。 */
     void setAgent(ChatAgent agent) {
-        this.agent = agent;
+        this.defaultTab.agent = agent;
     }
 
     /** 补全服务直传（装配层调用；WebPlugin 自产自用不经服务声明，见 WebPlugin fileRefs 注释）。 */
@@ -354,21 +468,33 @@ public final class WebFace {
         this.fileRefs = service;
     }
 
-    /** 当前会话（装配层重建 agent 时取用）。 */
+    /**
+     * 当前会话：turn 上下文内 = 发起标签的会话（WebPlugin 共享供给方——审计桥/规则
+     * sink/todo/subagent——由此落到正确标签的会话）；turn 外 = 匿名上下文会话
+     * （启动接线与测试的既有语义）。
+     */
     Session currentSession() {
-        return session;
+        String turnTab = TURN_TAB.get();
+        if (turnTab != null) {
+            TabContext tab = tabs.get(turnTab);
+            if (tab != null && tab.session != null) {
+                return tab.session;
+            }
+        }
+        return defaultTab.session;
     }
 
-    /** 会话事件广播：帧带日志序号 id——浏览器以最后收到的 id 作重连游标（ADR-0010）。 */
-    private void pushSessionEvent(int index, SessionEvent event) {
+    /** 会话事件广播（按标签路由，M24 工单 07）：帧带日志序号 id——浏览器以最后收到的
+     * id 作重连游标（ADR-0010）；只有绑定该会话的标签连接能收到（A 标签的卡片不弹到 B）。 */
+    private void pushSessionEvent(int index, SessionEvent event, TabContext tab) {
         // 序号由会话在写入处随回调给出（不从日志末尾反推——并发追加下反推会错位）
         String frame = toJson(event);
-        broadcast(client -> client.send(dataFrameWithId(index, frame)));
+        broadcast(client -> client.send(dataFrameWithId(index, frame)), tab.tabId);
     }
 
-    /** 非会话帧广播（run/error 等直推帧）：帧不带序号，契约见 {@link #dataFrame}。 */
-    private void pushTransientFrame(String payload) {
-        broadcast(client -> client.send(dataFrame(payload)));
+    /** 非会话帧广播（run/error 等直推帧）：帧不带序号，契约见 {@link #dataFrame}；按发起标签路由。 */
+    private void pushTransientFrame(TabContext tab, String payload) {
+        broadcast(client -> client.send(dataFrame(payload)), tab.tabId);
     }
 
     /** 帧写动作（写失败 IOException 即摘除该连接）。 */
@@ -378,9 +504,12 @@ public final class WebFace {
         void write(SseClient client) throws IOException;
     }
 
-    /** 广播到全部连接：逐连接执行帧写，写失败即摘除死连接。 */
-    private void broadcast(FrameSink sink) {
+    /** 广播到标签 ownTabId 的连接（M24 工单 07 路由核心）：逐连接执行帧写，写失败即摘除死连接。 */
+    private void broadcast(FrameSink sink, String ownTabId) {
         for (SseClient client : sseOutputs.toArray(SseClient[]::new)) {
+            if (!ownTabId.equals(client.tabId)) {
+                continue;
+            }
             try {
                 sink.write(client);
             } catch (IOException e) {
@@ -391,17 +520,27 @@ public final class WebFace {
 
     /** 心跳：向全部 SSE 客户端写注释帧，写失败即摘除死连接。 */
     private void pingAll() {
-        broadcast(client -> client.send(": ping\n\n"));
+        for (SseClient client : sseOutputs.toArray(SseClient[]::new)) {
+            try {
+                client.send(": ping\n\n");
+            } catch (IOException e) {
+                removeClient(client);
+            }
+        }
     }
 
-    /** SSE 客户端连接：输出流 + 帧写串行化。回放（连接线程）与实时广播（写线程）
-     *  会并发写同一连接，不加锁则帧字节交错、前端解析失败。 */
+    /** SSE 客户端连接：输出流 + 帧写串行化 + 所属标签（会话事件按标签路由的依据）。
+     * 回放（连接线程）与实时广播（写线程）会并发写同一连接，不加锁则帧字节交错、
+     * 前端解析失败。 */
     static final class SseClient {
 
         private final OutputStream out;
+        /** 连接所属标签（握手时上报；匿名连接为 {@link WebFace#DEFAULT_TAB_ID}）。 */
+        final String tabId;
 
-        SseClient(OutputStream out) {
+        SseClient(OutputStream out, String tabId) {
             this.out = out;
+            this.tabId = tabId;
         }
 
         /** 单帧原子写（含 flush）。 */
@@ -420,31 +559,50 @@ public final class WebFace {
     }
 
     /**
-     * 摘除死连接；全部客户端离场时悬空交互按"无人能答"拒绝（ADR-0008 语义延伸）。
-     * 拒绝经 {@link #scheduleFailClosedCheck()} 去抖：立即判空会误杀刷新场景
+     * 摘除死连接；该标签的客户端全部离场时其悬空交互按"无人能答"拒绝（ADR-0008 语义
+     * 延伸 + M24 工单 07 按标签化：卡片按标签路由后，"是否仍有人能看见该审批"以标签
+     * 为界——其他标签的连接在场不代表本标签会话的卡片可见）。
+     * 拒绝经 {@link #scheduleFailClosedCheck(String)} 去抖：立即判空会误杀刷新场景
      * （断旧立新窗口里新连接尚未入列）。包级可见供测试确定性驱动摘除时点——
-     * 传入的连接即使不在列表中也生效：判定只看"摘除后列表是否为空"。
+     * 传入的连接即使不在列表中也生效：判定只看"摘除后该标签是否还有连接"。
      */
     void removeClient(SseClient client) {
         sseOutputs.remove(client);
-        if (webAnswerer != null && sseOutputs.isEmpty()) {
-            scheduleFailClosedCheck();
+        if (webAnswerer != null && !hasClientOf(client.tabId)) {
+            scheduleFailClosedCheck(client.tabId);
         }
     }
 
-    /** 调度去抖复查：宽限后仍无任何连接才 fail-closed；窗口内新摘除重置窗口。 */
-    private void scheduleFailClosedCheck() {
-        java.util.concurrent.ScheduledFuture<?> prior = failClosedCheck.getAndSet(
-                heartbeat.schedule(this::failClosedIfNoClient, FAIL_CLOSED_GRACE_MS, TimeUnit.MILLISECONDS));
+    /** 该标签是否仍有 SSE 连接在场。 */
+    private boolean hasClientOf(String tabId) {
+        for (SseClient client : sseOutputs.toArray(SseClient[]::new)) {
+            if (client.tabId.equals(tabId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 每标签的去抖复查任务（同一标签同一时刻至多一个；窗口内新摘除会重置窗口）。 */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>>
+            failClosedChecks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 调度去抖复查：宽限后该标签仍无连接才 fail-closed 其挂起项；窗口内新摘除重置窗口。 */
+    private void scheduleFailClosedCheck(String tabId) {
+        java.util.concurrent.ScheduledFuture<?> prior = failClosedChecks.put(tabId,
+                heartbeat.schedule(() -> failClosedIfNoClient(tabId),
+                        FAIL_CLOSED_GRACE_MS, TimeUnit.MILLISECONDS));
         if (prior != null) {
             prior.cancel(false);
         }
     }
 
-    /** 宽限期到：仍无任何客户端在场才判定"无人能答"。 */
-    private void failClosedIfNoClient() {
-        if (webAnswerer != null && sseOutputs.isEmpty()) {
-            webAnswerer.failClosedAll();
+    /** 宽限期到：该标签仍无客户端在场才判定"无人能答"（只拒该标签的挂起项）。
+     * 触发即摘除表项——按 tabId 慢性累积的防泄漏收口（窗口内新摘除已重新占位）。 */
+    private void failClosedIfNoClient(String tabId) {
+        failClosedChecks.remove(tabId);
+        if (webAnswerer != null && !hasClientOf(tabId)) {
+            webAnswerer.failClosedFor(tabId);
         }
     }
 
@@ -587,7 +745,10 @@ public final class WebFace {
 
     /** 状态面 JSON。 */
     private void handleStatus(HttpExchange exchange) throws IOException {
-        respondJson(exchange, 200, statusJson());
+        String json = statusJson(exchange);
+        if (json != null) {
+            respondJson(exchange, 200, json);
+        }
     }
     /**
      * 停止入口（M23 工单 02，ADR-0025 决策一）：POST /api/stop 请求协作式中断——
@@ -599,12 +760,16 @@ public final class WebFace {
         if (!requirePost(exchange)) {
             return;
         }
-        ChatAgent current = agent;
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return;
+        }
+        ChatAgent current = tab.agent;
         if (current == null) {
             respondText(exchange, 503, "对话面未就绪（agent 未装配）");
             return;
         }
-        if (!agentRunning.get() || !current.requestInterrupt()) {
+        if (!tab.agentRunning.get() || !current.requestInterrupt()) {
             respondText(exchange, 409, "当前无执行中任务");
             return;
         }
@@ -674,10 +839,14 @@ public final class WebFace {
         respondJson(exchange, 200, root.toString());
     }
 
-    /** 附件授权读取（M21 工单 04）：先验证当前会话日志确实引用了此 id，再回字节。 */
+    /** 附件授权读取（M21 工单 04）：先验证请求标签会话日志确实引用了此 id，再回字节。 */
     private void handleAttachmentRead(HttpExchange exchange) throws IOException {
         if (attachments == null) {
             respondEmpty(exchange, 503);
+            return;
+        }
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
             return;
         }
         String id = queryParam(exchange, "id");
@@ -685,7 +854,8 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
-        AttachmentRef ref = session.referencedAttachments().stream()
+        Session bound = tab.session;
+        AttachmentRef ref = bound.referencedAttachments().stream()
                 .filter(r -> r.attachmentId().equals(id))
                 .findFirst().orElse(null);
         if (ref == null || !attachments.exists(id)) {
@@ -707,6 +877,10 @@ public final class WebFace {
         byte[] raw = readBodyLimited(exchange);
         if (raw == null) {
             respondEmpty(exchange, 413);
+            return;
+        }
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
             return;
         }
         String text;
@@ -768,7 +942,7 @@ public final class WebFace {
         final String userText;
         String stripped = text.strip();
         if (stripped.startsWith("/")) {
-            String skillInjected = handleCommand(exchange, stripped);
+            String skillInjected = handleCommand(exchange, stripped, tab);
             if (skillInjected == null) {
                 return; // 命令分支已响应（命中执行或拒绝）
             }
@@ -776,17 +950,17 @@ public final class WebFace {
         } else {
             userText = text;
         }
-        ChatAgent current = agent;
+        ChatAgent current = tab.agent;
         if (current == null) {
             respondText(exchange, 503, "对话面未就绪（agent 未装配）");
             return;
         }
-        if (!busy.compareAndSet(false, true)) {
+        if (!tab.busy.compareAndSet(false, true)) {
             // 运行中治理（M19 steer，ADR-0020 决策 8）：agent 执行中的消息进注入收件箱
             // （迭代边界排干为普通 user/message，下一轮请求可见）；agent 未执行（busy 被
             // 非 busySafe 命令互斥持有）时不入收件箱——保留 409（消息不会被"当前步骤"消化）
-            if (agentRunning.get() && current.injectUserMessage(userText)) {
-                attachmentRefs.forEach(session::appendUserAttachment); // 引用先于注入的 user/message
+            if (tab.agentRunning.get() && current.injectUserMessage(userText)) {
+                attachmentRefs.forEach(tab.session::appendUserAttachment); // 引用先于注入的 user/message
                 respondJson(exchange, 202,
                         "{\"outcome\":\"injected\",\"text\":\"已注入，待当前步骤完成\"}");
             } else {
@@ -794,9 +968,9 @@ public final class WebFace {
             }
             return;
         }
-        attachmentRefs.forEach(session::appendUserAttachment); // 引用先于 agent 侧 user/message
+        attachmentRefs.forEach(tab.session::appendUserAttachment); // 引用先于 agent 侧 user/message
         exchange.sendResponseHeaders(202, -1);
-        startAgentTurn(userText, current);
+        startAgentTurn(userText, tab);
     }
     /**
      * 斜杠命令分支（M19）：经命令注册表共享入口解释输入——命中命令同步执行于 Web
@@ -807,7 +981,7 @@ public final class WebFace {
      * 在 Web 面不消费（当前唯一转发方 /plan 为 CLI 专属）——转发型命令上 Web 前须先
      * 补呈现位消费路径。
      */
-    private String handleCommand(HttpExchange exchange, String line) throws IOException {
+    private String handleCommand(HttpExchange exchange, String line, TabContext tab) throws IOException {
         CommandsRegistry commands;
         try {
             // 惰性寻址（InteractivePolicy 同款）：命令服务由装配保证在场（web 插件 inject），
@@ -819,13 +993,14 @@ public final class WebFace {
         }
         // 非 busySafe 命令（如 /compact 动上下文）执行期占住单飞标志：agent send 与命令
         // 互斥——压缩摘要走 LLM 的窗口内不会再启动 agent 轮次（投影结构不被交错改写）。
-        // agent 执行中不抢互斥——交 dispatch 的 busySafe 分级回应（"执行中，需等待空闲"）
+        // agent 执行中不抢互斥——交 dispatch 的 busySafe 分级回应（"执行中，需等待空闲"）。
+        // 互斥与探针都是标签粒度（M24 工单 07）：A 标签跑 agent 不拦 B 标签的 /compact
         String commandName = line.split("\\s+", 2)[0].substring(1);
         dev.duo.harness.agent.commands.CommandDefinition matched = commands.find(commandName);
         boolean needsMutex = matched != null && !matched.busySafe();
         boolean mutexHeld = false;
-        if (needsMutex && !agentRunning.get()) {
-            if (!busy.compareAndSet(false, true)) {
+        if (needsMutex && !tab.agentRunning.get()) {
+            if (!tab.busy.compareAndSet(false, true)) {
                 respondJson(exchange, 202, "{\"outcome\":\"command\",\"text\":"
                         + JSON.writeValueAsString("已有命令在执行中，请稍候再试。") + "}");
                 return null;
@@ -834,8 +1009,8 @@ public final class WebFace {
         }
         try {
             CommandOutcome outcome = commands.dispatch(line,
-                    new CommandEnv(CommandScope.WEB, () -> session, s -> { }, () -> { },
-                            agentRunning::get),
+                    new CommandEnv(CommandScope.WEB, () -> tab.session, s -> { }, () -> { },
+                            tab.agentRunning::get),
                     skillsOrNull());
             if (!outcome.isCommand()) {
                 return outcome.text(); // 技能直调注入文本
@@ -849,7 +1024,7 @@ public final class WebFace {
             return null;
         } finally {
             if (mutexHeld) {
-                busy.set(false);
+                tab.busy.set(false);
             }
         }
     }
@@ -875,7 +1050,9 @@ public final class WebFace {
         dev.duo.harness.agent.skills.SkillRegistry skills();
     }
 
-    /** 开新会话：换绑事件流 + 通知装配层重建 agent（供给者未装配/创建失败 → 500，不断连接）。 */
+    /** 开新会话（绑定发起标签，M24 工单 07）：换绑该标签事件流 + 回调重建其 agent；
+     * 供给者未装配/创建失败 → 500，不断连接。该标签 turn 执行中 409——换绑会关闭
+     * 正在写入的会话（换绑与重建 agent 是同一动作两面，BUG-20260914-01 教训）。 */
     private void handleSessionNew(HttpExchange exchange) throws IOException {
         byte[] discarded = readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
         if (discarded == null) {
@@ -885,20 +1062,35 @@ public final class WebFace {
         if (!requirePost(exchange)) {
             return;
         }
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return;
+        }
+        // CAS 占有 busy 至换绑收口（finally 释放）：检查-行动两段式会留出"检查通过后、
+        // 换绑落地前"新 turn 潜入的窗口——被换绑关闭的正是它正在写的会话（BUG-20260914-01）
+        if (!tab.busy.compareAndSet(false, true)) {
+            respondText(exchange, 409, "当前有对话在执行中，完成后再开新话题");
+            return;
+        }
         try {
-            newSession();
+            newSessionFor(tab);
         } catch (Exception e) {
             // 异常细节仅服务端日志留痕——错误响应不回显内部消息（M10-02 脱敏）
             log.warn("新会话创建失败", e);
             respondText(exchange, 500, "新会话创建失败");
             return;
+        } finally {
+            tab.busy.set(false);
         }
-        respondJson(exchange, 200, "{\"id\":\"" + session.id() + "\"}");
+        respondJson(exchange, 200, "{\"id\":\"" + tab.session.id() + "\"}");
     }
 
     /** 会话列表（侧栏）：修改时间倒序。 */
     private void handleSessions(HttpExchange exchange) throws IOException {
-        respondJson(exchange, 200, sessionsJson());
+        String json = sessionsJson(exchange);
+        if (json != null) {
+            respondJson(exchange, 200, json);
+        }
     }
 
     /** 侧栏搜索单次返回的命中上限（呈现位侧常量；工具侧上限由插件配置管）。 */
@@ -993,7 +1185,11 @@ public final class WebFace {
                 respondText(exchange, 400, "未知格式: \"" + formatArg + "\"（可选 markdown | json）");
                 return;
             }
-            Session current = session;
+            TabContext tab = resolveTab(exchange);
+            if (tab == null) {
+                return;
+            }
+            Session current = tab.session;
             String fileName = dev.duo.harness.session.SessionExport.fileName(current.id(), parse);
             String body = parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
                     ? dev.duo.harness.session.SessionExport.markdown(current)
@@ -1012,9 +1208,12 @@ public final class WebFace {
     }
 
     /**
-     * 切换会话：{id} → 加载该会话并换绑（SSE 推送新会话存量回放）；
-     * 会话变更回调重建 agent——不重建即分脑（agent 写旧会话、页面看新会话）。
+     * 切换会话（绑定发起标签，M24 工单 07）：{id} → 加载该会话并换绑**发起标签**
+     * （其他标签的绑定与事件流不动），SSE 推送新会话存量回放；会话变更回调重建
+     * 该标签 agent——不重建即分脑（agent 写旧会话、页面看新会话）。
      * id 按生成形态白名单校验：路径分隔符/穿越串一律 400，不进路径解析。
+     * 该标签 turn 执行中 409（同 /new 守卫）；目标会话被其他标签/进程占用由
+     * 独占锁拦（SessionLockedException → 409 点名冲突）。
      */
     private void handleSessionSwitch(HttpExchange exchange) throws IOException {
         if (!requirePost(exchange)) {
@@ -1025,21 +1224,35 @@ public final class WebFace {
             respondEmpty(exchange, 413);
             return;
         }
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return;
+        }
         try {
             String id = JSON.readTree(new String(raw, StandardCharsets.UTF_8)).path("id").asText("");
             if (id.isBlank() || !SESSION_ID.matcher(id).matches()) {
                 respondEmpty(exchange, 400);
                 return;
             }
-            if (id.equals(session.id())) {
+            if (id.equals(tab.session.id())) {
                 // 切到当前会话：幂等成功——重新 load 自己必撞独占锁（OverlappingFileLockException），
                 // 而语义上本就无需动作（侧栏点当前项、重复提交切换请求都不该失败）
                 respondJson(exchange, 200, "{\"switched\":true}");
                 return;
             }
-            Session loaded = Session.load(sessionsDir.resolve(id + ".jsonl"));
-            bindSession(loaded);
-            sessionChangedCallback.accept(loaded);
+            // CAS 占有 busy 至换绑收口（finally 释放）：同 /new 的 TOCTOU 堵法——
+            // Session.load 文件 IO 期间新 turn 潜入即写即将被 close 的会话
+            if (!tab.busy.compareAndSet(false, true)) {
+                respondText(exchange, 409, "当前有对话在执行中，完成后再切换会话");
+                return;
+            }
+            try {
+                Session loaded = Session.load(sessionsDir.resolve(id + ".jsonl"));
+                bindTab(tab, loaded);
+                tab.agent = sessionChangedCallback.apply(loaded);
+            } finally {
+                tab.busy.set(false);
+            }
             respondJson(exchange, 200, "{\"switched\":true}");
         } catch (dev.duo.harness.session.SessionLockedException e) {
             // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
@@ -1126,6 +1339,10 @@ public final class WebFace {
             respondEmpty(exchange, 405);
             return;
         }
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return;
+        }
         int before;
         try {
             before = Integer.parseInt(queryParam(exchange, "before"));
@@ -1133,7 +1350,7 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
-        Session bound = session;
+        Session bound = tab.session;
         List<SessionEvent> events = bound.events();
         if (before < 0 || before > events.size()) {
             respondEmpty(exchange, 400);
@@ -1194,15 +1411,19 @@ public final class WebFace {
         respondJson(exchange, 200, root.toString());
     }
 
-    /**
-     * SSE 会话事件流：连接帧 + 回放（尾部快照/增量）+ 实时广播（断开摘除输出流）。
+    /** SSE 会话事件流：连接帧 + 回放（尾部快照/增量）+ 实时广播（断开摘除输出流）。
      * 首连（无 Last-Event-ID）发尾部窗口快照（ADR-0013）；断线重连带游标只补其后事件（ADR-0010）。
-     */
+     * 连接按 tabId 归属（M24 工单 07）——回放与实时推送都只覆盖所属标签的会话；
+     * 未知 tabId 在此懒创建上下文（新标签首连即新建会话的时刻）。 */
     private void handleEvents(HttpExchange exchange) throws IOException {
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return;
+        }
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         exchange.getResponseHeaders().set("Cache-Control", "no-cache");
         exchange.sendResponseHeaders(200, 0);
-        SseClient client = new SseClient(exchange.getResponseBody());
+        SseClient client = new SseClient(exchange.getResponseBody(), tab.tabId);
         sseOutputs.add(client);
         try {
             // 连接帧是 SSE 注释（冒号行），不是 data 帧——前端 JSON.parse 不消费它
@@ -1210,7 +1431,7 @@ public final class WebFace {
             // 回放窗口：replay/start 告知模式与窗口头（前端据此整窗替换或保留存量）→ 事件帧（带
             // 日志序号 id）→ replay/done 边界帧（前端回放结束钩子：EmptyHero 判定与侧栏刷新）
             String cursor = exchange.getRequestHeaders().getFirst(LAST_EVENT_ID_HEADER);
-            Session bound = session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
+            Session bound = tab.session; // 单次取用：换绑并发下事件快照与窗口映射必须同源
             List<SessionEvent> events = bound.events(); // 共享不可变快照（ADR-0014）：一次取用遍历全程稳定
             ReplayWindow window = resolveReplayWindow(cursor, events, bound, pageSize);
             // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
@@ -1332,11 +1553,16 @@ public final class WebFace {
         }
     }
 
-    /** 侧栏 JSON：会话列表（修改时间倒序，current 标记当前会话，occupied 占用探测、title 标题——工单 M13-05/06）。 */
-    private String sessionsJson() {
+    /** 侧栏 JSON：会话列表（修改时间倒序，current 标记请求标签的当前会话，occupied 占用探测、
+     * title 标题——工单 M13-05/06；current 按标签解析，M24 工单 07）。 */
+    private String sessionsJson(HttpExchange exchange) throws IOException {
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return null;
+        }
         var root = JSON.createObjectNode();
         var arr = root.putArray("sessions");
-        String currentId = session.id();
+        String currentId = tab.session.id();
         for (Session.SessionSummary summary : Session.list(sessionsDir)) {
             Path jsonl = sessionsDir.resolve(summary.id() + ".jsonl");
             var node = arr.addObject()
@@ -1349,8 +1575,13 @@ public final class WebFace {
         return root.toString();
     }
 
-    /** 状态面 JSON：插件快照 + 工具清单 + 上下文占用（与治理计量同源，无治理时省略）。 */
-    private String statusJson() {
+    /** 状态面 JSON：插件快照 + 工具清单 + 上下文占用（与治理计量同源，无治理时省略；
+     * 占用按请求标签的会话解析——M24 工单 07）。 */
+    private String statusJson(HttpExchange exchange) throws IOException {
+        TabContext tab = resolveTab(exchange);
+        if (tab == null) {
+            return null;
+        }
         try {
             var root = JSON.createObjectNode();
             var plugins = root.putArray("plugins");
@@ -1371,7 +1602,7 @@ public final class WebFace {
             }
             dev.duo.harness.agent.governance.ContextGovernance current = governance;
             if (current != null) {
-                var occupancy = current.occupancy(session);
+                var occupancy = current.occupancy(tab.session);
                 root.putObject("context")
                         .put("tokens", occupancy.tokens())
                         .put("thresholdTokens", occupancy.thresholdTokens())
@@ -1465,14 +1696,24 @@ public final class WebFace {
         return sseOutputs.size();
     }
 
-    /** 停止服务与心跳（插件 dispose 调用），并关闭当前会话（会话所有权见 {@link #start}）。 */
+    /** 停止服务与心跳（插件 dispose 调用），并关闭全部标签会话（会话所有权见 {@link #start}）；
+     * 悬空审批全局 fail-closed 收口（停机即无人能答，别让 turn 线程空等 10 分钟兜底）。 */
     public void stop() {
         heartbeat.shutdownNow();
         for (SseClient client : List.copyOf(sseOutputs)) {
             client.close();
         }
         sseOutputs.clear();
+        if (webAnswerer != null) {
+            webAnswerer.failClosedAll();
+        }
         server.stop(0);
-        session.close();
+        for (TabContext tab : List.copyOf(tabs.values())) {
+            if (tab.session != null) {
+                tab.session.close();
+            }
+        }
+        tabs.clear();
+        failClosedChecks.clear();
     }
 }

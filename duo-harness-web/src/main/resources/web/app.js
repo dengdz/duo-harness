@@ -26,10 +26,33 @@ const duoToken = (() => {
   } catch (e) { /* 存储不可用：仅本次会话内存态 */ }
   return fromUrl || stored;
 })();
+
+// ----- §0.2 标签身份（M24 工单 07）：每标签持久 tabId，服务端按标签绑定会话 -----
+// sessionStorage 每浏览器标签一份（localStorage 同源全标签共享——会令所有标签同
+// tabId、隔离归零），刷新不丢（F5 保留同一会话）；隐私模式/禁用存储降级为临时 id
+// （刷新即新标签，与 token 降级同口径）。新标签（无记录）= 服务端新建会话；服务端
+// 重启后旧 tabId 无记录同样新建——"无记录的旧标签等同新标签"。
+const duoTabId = (() => {
+  try {
+    let id = sessionStorage.getItem('duoTabId');
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID()
+          : 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+      sessionStorage.setItem('duoTabId', id);
+    }
+    return id;
+  } catch (e) {
+    return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+})();
+
 const _duoFetch = window.fetch.bind(window);
 window.fetch = (url, opts = {}) => {
-  if (duoToken && typeof url === 'string' && url.startsWith('/api/')) {
-    opts = { ...opts, headers: { ...(opts.headers || {}), 'X-Duo-Token': duoToken } };
+  if (typeof url === 'string' && url.startsWith('/api/')) {
+    opts = { ...opts, headers: { ...(opts.headers || {}) } };
+    // 标签身份随全部 /api 请求上报（SSE 走查询串——EventSource 不支持自定义头）
+    opts.headers['X-Tab-Id'] = duoTabId;
+    if (duoToken) opts.headers['X-Duo-Token'] = duoToken;
   }
   return _duoFetch(url, opts);
 };
@@ -789,7 +812,8 @@ const sse = (() => {
 
   function connect() {
     disconnect(); // 重连路径幂等：先清旧连接再建（首连时为空操作）
-    source = new EventSource('/api/events?token=' + encodeURIComponent(duoToken));
+    source = new EventSource('/api/events?token=' + encodeURIComponent(duoToken)
+        + '&tabId=' + encodeURIComponent(duoTabId));
     source.onopen = () => {
       app.clearSendBusy(); // 断线期间可能错过解除帧——连接建立即复位
     };

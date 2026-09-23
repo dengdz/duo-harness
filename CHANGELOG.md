@@ -6,6 +6,8 @@
 
 ### Added
 
+- **标签级会话绑定（M24 工单 07，ADR-0026 决策五延伸）**：浏览器每标签生成持久 tabId（sessionStorage，F5 刷新保留同会话）随全部 /api 请求上报（X-Tab-Id 头 + SSE 查询串双通道，同鉴权令牌口径），服务端按标签多会话并存——新标签打开默认新建会话（不弹选择页，互踩隔离优先）、服务端重启后旧标签（tabId 无记录）等同新标签；会话事件流按标签路由，A 标签的对话与审批/提问卡片不弹到 B 标签，审批挂起 fail-closed 按标签选择性拒绝（A 离场不牵连 B 的待答审批）；/new 与 /switch 只改发起标签（resume 仍走侧栏手动入口），该标签 turn/命令互斥执行中拒换绑（busy 守卫，防换绑关闭正在写入的会话）；无 tabId 请求（curl/缓存页）行为同单会话时代。M8#4「多标签互踩」销账，完整多会话协调仍属 1.0 后
+
 - **计划模式硬禁（M24 工单 04，ADR-0026 决策三）**：plan 态非白名单工具定义不注入模型请求（模型不可见）+ pre-execute deny 兜底（异常路径到达即拒，理由经 tool/result 回模型，成对落日志无悬置态）；白名单 = 只读探索四件（read/glob/grep/read_image）+ web_fetch/web_search（维持只读档 ask 语义不放开）+ exit_plan_mode（批准闭环恒在）+ ask_user/todo_write（无副作用交互/状态件）；bash 经只读判定器参数级裁决（plan 态只读命令放行、写命令拒、判定器缺席 fail-closed）；批准（exit_plan_mode 获批）后工具全量恢复、续接恢复激活态场景同源生效；M7#1「引导式不硬禁」销账（术语表口径已改写）
 
 - **/effort 思考等级四行映射（M24 工单 10，ADR-0026 决策六/七）**：CLI `/effort` 四档归一 off/low/medium/high（缺省 medium，无参显示当前档与映射说明、非法档拒切）；切换落 `model/effort` 会话事件、swap 换链下一轮对话生效；请求参数按 provider 四行映射——anthropic `thinking+budget_tokens`（off 关闭；low 2048 / medium 8192 / high 16384，max_tokens 保持不小于 budget+1024 以满足协议约束（low 档维持缺省 8192））、openai-compat `reasoning_effort` 直传（off 不带该字段）、glm `thinking.type` 开关二值化（off=disabled，low/medium/high 均=enabled）、deepseek 显式降级标注（档位不落任何参数，提示「思考请切 reasoner 模型」）——不支持不静默；辅助性请求（标题生成）强制 low 档（请求级覆盖直达适配器），不随用户 high 档烧大钱

@@ -131,9 +131,13 @@ class WebFaceTest {
             ctx.as(AnswersView.class).answers().register(ctx,
                     new dev.duo.harness.agent.AuditingAnswerer(face::currentSession, webAnswerer));
         }
-        // 会话变更接线：/new 与 /switch 换绑后回调（装配层职责，骨架用例记录变更）
+        // 会话变更接线：/new 与 /switch 换绑后回调（装配层职责，骨架用例记录变更）——
+        // 生产同款返回新 agent 归标签上下文（M24 工单 07），测试用换绑会话的同款脚本
         face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
-        face.onSessionChanged(changed -> changedSessions.add(changed));
+        face.onSessionChanged(changed -> {
+            changedSessions.add(changed);
+            return scriptedAgent(changed, "ok");
+        });
         return face;
     }
 
@@ -729,7 +733,10 @@ class WebFaceTest {
                 (userText, listener) -> new AgentReply("ok", List.of(), true), null, null,
                 tempDir.resolve("web-sessions"), 3);
         face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
-        face.onSessionChanged(changed -> changedSessions.add(changed));
+        face.onSessionChanged(changed -> {
+            changedSessions.add(changed);
+            return scriptedAgent(changed, "ok");
+        });
 
         String stream;
         try (SseCollector sse = openSse(null)) {
@@ -977,7 +984,7 @@ class WebFaceTest {
         askApproval(webAnswerer, got, done);
 
         // 摘除死连接（写失败后的摘除时点）→ 列表空 → 进入宽限
-        face.removeClient(new WebFace.SseClient(new java.io.ByteArrayOutputStream()));
+        face.removeClient(new WebFace.SseClient(new java.io.ByteArrayOutputStream(), WebFace.DEFAULT_TAB_ID));
         Thread.sleep(500);
         assertTrue(webAnswerer.currentPending() != null, "宽限期内不得立即拒绝");
         assertTrue(done.await(WebFace.FAIL_CLOSED_GRACE_MS + 1_500, TimeUnit.MILLISECONDS),
@@ -998,7 +1005,7 @@ class WebFaceTest {
         askApproval(webAnswerer, got, done);
 
         // 旧连接摘除 → 宽限窗口开启；刷新后的新连接窗口内入列
-        face.removeClient(new WebFace.SseClient(new java.io.ByteArrayOutputStream()));
+        face.removeClient(new WebFace.SseClient(new java.io.ByteArrayOutputStream(), WebFace.DEFAULT_TAB_ID));
         HttpResponse<java.io.InputStream> reconnect = client.send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + face.port() + "/api/events")).GET().build(),
                 HttpResponse.BodyHandlers.ofInputStream());

@@ -203,19 +203,17 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, adapter, governanceTuning, face::currentSession);
-        // /new：全新会话；/switch：换绑既有会话——两者换绑后都经会话变更回调重建 agent
-        // （ToolCallingAgent 持有 final 会话引用，不重建即分脑）
+        // /new：全新会话；/switch：换绑既有会话；新标签首请求：懒创建——三者换绑后都经
+        // 会话变更回调重建 agent（ToolCallingAgent 持有 final 会话引用，不重建即分脑）。
+        // 回调**返回**新 agent 归标签上下文（M24 工单 07）——不再有全局单槽 setAgent
         face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));
         // 会话变更回调是单回调槽（覆盖式 setter，非多播）——全部换绑动作必须合并在这一次
         // 注册里。教训（BUG-20260916-01）：第二处注册会覆盖"换绑重建 agent"，切回分脑
         //（agent 写已 close 的旧会话，发消息必报错）。标题生成（工单 M13-06）随换绑同源
         // attach，双开时与 CLI 共享静态去重表
         face.onSessionChanged(fresh -> {
-            face.setAgent(PresenterAssembly.chatAgent(
-                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector));
             SessionTitles.attach(fresh, adapter);
-            // 显式换绑（新话题/切换）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
+            // 显式换绑（新话题/切换/新标签）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);
             // 会话级规则随会话生命周期（ADR-0026 决策一）：新会话无规则事件即清空
             PresenterAssembly.restorePermissionRules(ctx, fresh);
@@ -227,6 +225,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
                     }
                 });
             }
+            return PresenterAssembly.chatAgent(
+                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
+                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector);
         });
         SessionTitles.attach(session, adapter);
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重

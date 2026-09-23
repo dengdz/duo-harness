@@ -21,6 +21,11 @@ import java.util.concurrent.TimeoutException;
  * POST 作答完成<b>最旧</b>一项（串行下即当前唯一）；等待线程被打断（协作式中断
  * 传导）按 fail-closed 返回并移除自身，后续 ask 不受污染。</p>
  *
+ * <p><b>标签归属（M24 工单 07）</b>：{@code tabResolver} 在 ask 时刻解析发起标签
+ * （WebFace 的 turn 上下文），挂起项按 tab 归属——多标签并存时 fail-closed 按标签
+ * 选择性拒绝（A 标签离场只拒 A 的挂起项，B 标签的审批不受牵连）；解析为空的挂起项
+ * 归匿名上下文（与无 tabId 请求同口径）。</p>
+ *
  * <p>阻塞语义：{@code answer()} 在虚拟线程上等待 CompletableFuture（工具链本就
  * 运行在虚拟线程，阻塞不占平台线程，ADR-0002 同源）。**无人能答即拒**：
  * {@link #failClosedAll()} 以拒绝完成全部悬空请求（人不在环 = 不批准，ADR-0008）；
@@ -32,16 +37,25 @@ public final class WebAnswerer implements Answerer {
     /** 回答者来源标识（审计署名）。 */
     public static final String SOURCE = "web";
 
-    /** 待答状态：请求（id = 卡片回填关联键）+ 完成器（端点写入答案、断连写入 fail-closed）。 */
-    record Pending(String id, InteractionRequest request, CompletableFuture<InteractionAnswer> future) { }
+    /** 待答状态：请求（id = 卡片回填关联键）+ 完成器（端点写入答案、断连写入 fail-closed）
+     * + 发起标签（M24 工单 07；answer 时已归一化，匿名归属为 {@link WebFace#DEFAULT_TAB_ID}）。 */
+    record Pending(String id, InteractionRequest request, CompletableFuture<InteractionAnswer> future,
+                   String tabId) { }
 
     /** FIFO 待答队列（ConcurrentLinkedQueue：ask/complete/interrupt 三方并发）。 */
     private final ConcurrentLinkedQueue<Pending> queue = new ConcurrentLinkedQueue<>();
     private final long answerTimeoutMs;
+    /** 发起标签解析器（ask 时刻取值；null = 未装配，挂起项无归属）。 */
+    private volatile java.util.function.Supplier<String> tabResolver;
 
     /** @param answerTimeoutMs 兜底超时（超时按 fail-closed；正常流程由断连触发） */
     public WebAnswerer(long answerTimeoutMs) {
         this.answerTimeoutMs = answerTimeoutMs;
+    }
+
+    /** 挂发起标签解析器（WebFace 装配；包级可见——归属是 Web 面内部关注点）。 */
+    void setTabResolver(java.util.function.Supplier<String> resolver) {
+        this.tabResolver = java.util.Objects.requireNonNull(resolver, "resolver");
     }
 
     /** 亲和路由（M19，ADR-0020 决策 7）：本回答者代表 Web 呈现位。 */
@@ -53,7 +67,11 @@ public final class WebAnswerer implements Answerer {
     @Override
     public InteractionAnswer answer(InteractionRequest request) {
         CompletableFuture<InteractionAnswer> future = new CompletableFuture<>();
-        Pending waiting = new Pending(request.id(), request, future);
+        String tabId = tabResolver != null ? tabResolver.get() : null;
+        // 无归属（resolver 缺席或 turn 上下文外）归一化到匿名上下文——与「无 tabId 请求
+        // = 匿名上下文」一致，per-tab fail-closed 对 "" 的清扫不漏掉它们
+        Pending waiting = new Pending(request.id(), request, future,
+                tabId == null || tabId.isBlank() ? WebFace.DEFAULT_TAB_ID : tabId);
         queue.add(waiting);
         try {
             return future.get(answerTimeoutMs, TimeUnit.MILLISECONDS);
@@ -132,6 +150,27 @@ public final class WebAnswerer implements Answerer {
         while ((waiting = queue.poll()) != null) {
             waiting.future().complete(InteractionAnswer.failClosed());
         }
+    }
+
+    /**
+     * 按标签 fail-closed（M24 工单 07）：只拒绝归属于 {@code tabId} 的挂起项——
+     * 该标签的 SSE 全部离场且宽限期已过时调用（其他标签的连接在场不代表本标签
+     * 会话的卡片有人能看见，按标签路由后可见性以标签为界）。无归属挂起项不动
+     * （由全局 fail-closed 或兜底超时收口）。
+     *
+     * @return 实际拒绝的挂起项数（观测用）
+     */
+    int failClosedFor(String tabId) {
+        int rejected = 0;
+        for (java.util.Iterator<Pending> it = queue.iterator(); it.hasNext(); ) {
+            Pending waiting = it.next();
+            if (tabId.equals(waiting.tabId())) {
+                it.remove();
+                waiting.future().complete(InteractionAnswer.failClosed());
+                rejected++;
+            }
+        }
+        return rejected;
     }
 
     /** 当前待答请求数（排队呈现与测试观测用）。 */
