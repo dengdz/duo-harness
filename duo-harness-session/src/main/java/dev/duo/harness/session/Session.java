@@ -752,6 +752,21 @@ public final class Session {
     }
 
     /**
+     * 模型意图投影（M24 工单 09，ADR-0026 决策六）：最新一次 {@code model/intent}
+     * 事件的模型名（latest-wins，permissionMode 同款倒查）；无切换事件返回 null
+     * ——调用方按「未切换」处理。保存意图与执行绑定分离：resume 据此提示、不自动切。
+     */
+    public String modelIntent() {
+        List<SessionEvent> snapshot = events();
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            if (SessionEvent.MODEL_INTENT.equals(snapshot.get(i).type())) {
+                return snapshot.get(i).text();
+            }
+        }
+        return null;
+    }
+
+    /**
      * todo 清单投影（ADR-0018）：最新一次 {@code todo/write} 的清单 JSON（latest-wins）。
      * 其后出现新的 user/message 即清空（新轮开始——上一轮清单的使命结束，返回 null）；
      * 终版 assistant/message 之后保留（用户读完答案还能看到完成的清单）。

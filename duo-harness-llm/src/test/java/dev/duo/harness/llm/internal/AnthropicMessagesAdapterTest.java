@@ -48,7 +48,7 @@ class AnthropicMessagesAdapterTest {
     private AnthropicMessagesAdapter adapter() {
         return new AnthropicMessagesAdapter(new LlmConfig(server.baseUrl(), "sk-ant-test",
                 "claude-test", LlmConfig.DEFAULT_SYSTEM_PROMPT, 1, 0, 90_000, false,
-                LlmConfig.DELIVERY_INLINE, LlmConfig.PROVIDER_ANTHROPIC));
+                LlmConfig.DELIVERY_INLINE, LlmConfig.PROVIDER_ANTHROPIC, List.of()));
     }
 
     @Test

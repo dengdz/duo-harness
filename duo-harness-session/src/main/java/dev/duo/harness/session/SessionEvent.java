@@ -121,6 +121,13 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     public static final String PERMISSION_RULES = "permission/rules";
 
     /**
+     * 模型意图切换（M24 工单 09，ADR-0026 决策六；text = 模型名）——/model 切换的
+     * 「保存意图」落盘；执行绑定由适配器换链完成。latest-wins 经
+     * {@code Session.modelIntent()} 读取——resume 提示「上次使用 X」的依据。
+     */
+    public static final String MODEL_INTENT = "model/intent";
+
+    /**
      * 上下文压缩点（M19，ADR-0020 决策 6；text = 远端历史的总结全文，toolName = 触发方式
      * {@code "manual"}（/compact 命令）或 {@code "auto"}（预算触发））。一处语义两处触发
      * ——"上下文为何变小"在日志可审计。投影 latest-wins：最后压缩点之前的一切以总结
@@ -296,5 +303,10 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
      */
     public static SessionEvent permissionRules(String rulesJson) {
         return new SessionEvent(PERMISSION_RULES, System.currentTimeMillis(), rulesJson);
+    }
+
+    /** 便捷工厂：模型意图切换（模型名；latest-wins 投影，M24 工单 09）。 */
+    public static SessionEvent modelIntent(String modelName) {
+        return new SessionEvent(MODEL_INTENT, System.currentTimeMillis(), modelName);
     }
 }

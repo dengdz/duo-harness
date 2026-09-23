@@ -229,3 +229,13 @@
   3. **聚合状态板的「幽灵条目」与「provide 竞态」成对出现**——多行装配共享一块板时，行停止要 remove 条目、服务发布要幂等兜底；两者都源于「板的生命周期 > 单行生命周期」。
 - **三轴制第三轮实证**：行级轴抓到 high（哈希输入违约——正是本轴「对照承诺逐行核实」的强项）；Standards 轴的文档面 3 项全中。四轴（Java 规范轴）自工单 09 起加入。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（858 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/05-MCP命名哈希与耗尽终态.md`。
+
+### 2026-09-23 · M24 工单 09 审查（0.19.0 分支，四轴制首跑：/model 白名单切换与 resume 意图）
+
+- **范围与轮次**：四轴并行（Standards / Spec / 行级规则 / **Java 规范轴首跑**，基点 6405ee5 工作树）→ 修复 → 全链 package 收口。
+- **计数**：Standards 初报红线 3/6 两项（经主审核实为误报——子代理读取了陈旧工作树，文档与 CHANGELOG 实已在本 diff）；Spec 缺失 3（append/swap 顺序、空清单措辞、CLI 级测试缺口）+ 正确性全过；行级 low 7；Java 规范轴 MAJOR 2（O-18/CON-16 同根：static 可变配置字段）+ 候选 6 条全部正确过滤。处置：修 7 / 记档 6。
+- **四轴首跑实证**：Java 规范轴产出 2 条 MAJOR（static 可变配置字段的状态归属不对称）——与行级轴 #6、Standards ② 三轴同点互证，合并修复（activeConfig static→instance volatile）。「手册条款适用性过滤」工作正常：record/中文测试名/虚拟线程等 6 条候选被正确裁决为不适用。四轴产出率均非零，改造有效。
+- **模式化问题（本次新识别）**：
+  1. **「落事件 + 换绑定」两步写的顺序**——持久化优先（先 append 事件再 swap 执行绑定）：append 抛错时零副作用，反之绑定已换而意图未落盘，resume 倒查失去依据。
+  2. **「目标 == 当前」短路**——切换类命令在白名单校验后、执行前补一条等值短路，避免无操作切换的冗余落盘。
+- **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（872 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/09-model白名单切换与resume意图.md`。

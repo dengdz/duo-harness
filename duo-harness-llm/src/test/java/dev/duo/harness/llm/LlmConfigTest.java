@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -140,5 +141,45 @@ class LlmConfigTest {
         llm.put("baseUrl", baseUrl).put("apiKey", apiKey).put("model", model);
         ObjectNode root = JsonNodeFactory.instance.objectNode().set("llm", llm);
         return Files.writeString(tempDir.resolve("config.yml"), root.toString());
+    }
+
+    @Test
+    void modelsWhitelistParsingAndFailLoud() throws Exception {
+        // 缺席 → 空表（/model 不可切，M24 工单 09）；合法清单照常解析；非文本条目 FAILED 点名
+        assertTrue(LlmConfig.load(tempConfig("https://x", "k", "m"), Map.of()).models().isEmpty(),
+                "未声明 models 为空表");
+
+        ObjectNode llm = JsonNodeFactory.instance.objectNode()
+                .put("baseUrl", "https://x").put("apiKey", "k").put("model", "m");
+        llm.putArray("models").add("deepseek-chat").add("claude-sonnet-4-5");
+        Path config = write(llm);
+        LlmConfig loaded = LlmConfig.load(config, Map.of());
+        assertEquals(List.of("deepseek-chat", "claude-sonnet-4-5"), loaded.models());
+        assertTrue(loaded.modelAllowed("deepseek-chat"));
+        assertFalse(loaded.modelAllowed("gpt-x"));
+
+        ObjectNode bad = JsonNodeFactory.instance.objectNode()
+                .put("baseUrl", "https://x").put("apiKey", "k").put("model", "m");
+        bad.putArray("models").add("deepseek-chat").add(42);
+        assertThrows(PluginException.class, () -> LlmConfig.load(write(bad), Map.of()),
+                "白名单坏条目 FAILED 点名（成本闸门不静默缩减）");
+    }
+
+    @Test
+    void withModelSwapsOnlyModel() {
+        LlmConfig base = new LlmConfig("https://x", "k", "旧模型", "sp", 5, 100, 1000, true,
+                LlmConfig.DELIVERY_FILES, LlmConfig.PROVIDER_ANTHROPIC, List.of("a", "b"));
+        LlmConfig swapped = base.withModel("新模型");
+        assertEquals("新模型", swapped.model());
+        assertEquals("https://x", swapped.baseUrl(), "withModel 只换模型名");
+        assertEquals("k", swapped.apiKey());
+        assertEquals("sp", swapped.systemPrompt());
+        assertEquals(5, swapped.retryMaxAttempts());
+        assertEquals(100, swapped.retryInitialBackoffMs());
+        assertEquals(1000, swapped.streamIdleTimeoutMs());
+        assertTrue(swapped.vision());
+        assertEquals(LlmConfig.DELIVERY_FILES, swapped.imageDelivery());
+        assertEquals(LlmConfig.PROVIDER_ANTHROPIC, swapped.provider());
+        assertEquals(List.of("a", "b"), swapped.models());
     }
 }

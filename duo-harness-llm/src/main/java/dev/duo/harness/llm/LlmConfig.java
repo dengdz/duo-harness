@@ -8,6 +8,7 @@ import dev.duo.harness.core.api.boot.DuoHome;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -31,11 +32,13 @@ import java.util.Map;
  * @param provider    provider 声明（M24 工单 08，ADR-0026 决策七）：openai-compat（缺省）|
  *                    anthropic | deepseek | glm——决定适配器选型、鉴权头形态与思考等级
  *                    映射策略；不再由 baseUrl 隐式表达
+ * @param models      可切模型白名单（M24 工单 09，ADR-0026 决策一/六；空 = /model 不可切。
+ *                    模型名直接决定成本面，白名单即「收得住」）
  */
 public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
                         int retryMaxAttempts, long retryInitialBackoffMs,
                         long streamIdleTimeoutMs, boolean vision, String imageDelivery,
-                        String provider) {
+                        String provider, List<String> models) {
 
     /** imageDelivery inline（缺省）。 */
     public static final String DELIVERY_INLINE = "inline";
@@ -67,11 +70,11 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /** 流式空闲超时缺省值（90s：思考模型的长间隔不误伤，半开连接不至于久等）。 */
     public static final long DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
-    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s），vision 关闭、inline 投递、openai-compat。 */
+    /** 兼容构造：重试与空闲超时参数取缺省（3 次 / 1000ms / 90s），vision 关闭、inline 投递、openai-compat、无白名单。 */
     public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
         this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS,
                 DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, false,
-                DELIVERY_INLINE, PROVIDER_OPENAI_COMPAT);
+                DELIVERY_INLINE, PROVIDER_OPENAI_COMPAT, List.of());
     }
 
     /** 兼容构造：vision 显式、投递 inline。 */
@@ -80,10 +83,10 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
                      long streamIdleTimeoutMs, boolean vision) {
         this(baseUrl, apiKey, model, systemPrompt, retryMaxAttempts,
                 retryInitialBackoffMs, streamIdleTimeoutMs, vision, DELIVERY_INLINE,
-                PROVIDER_OPENAI_COMPAT);
+                PROVIDER_OPENAI_COMPAT, List.of());
     }
 
-    /** 投递形态与 provider 归一（校验在 load 处 fail-loud）。 */
+    /** 投递形态与 provider 归一（校验在 load 处 fail-loud）；models 防御性拷贝（null 归空表）。 */
     public LlmConfig {
         if (imageDelivery == null || imageDelivery.isBlank()) {
             imageDelivery = DELIVERY_INLINE;
@@ -95,6 +98,20 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
         } else {
             provider = provider.strip().toLowerCase(java.util.Locale.ROOT);
         }
+        models = models == null ? List.of() : List.copyOf(models);
+    }
+
+    /** 模型切换（/model 执行绑定，M24 工单 09）：仅换模型名（strip 归一），其余配置原样保留（同 provider 约束由调用方把关）。 */
+    public LlmConfig withModel(String newModel) {
+        String stripped = java.util.Objects.requireNonNull(newModel, "newModel").strip();
+        return new LlmConfig(baseUrl, apiKey, stripped,
+                systemPrompt, retryMaxAttempts, retryInitialBackoffMs, streamIdleTimeoutMs,
+                vision, imageDelivery, provider, models);
+    }
+
+    /** 当前模型是否在 /model 可切白名单内（空白名单 = 全部不可切）。 */
+    public boolean modelAllowed(String candidate) {
+        return models.contains(java.util.Objects.requireNonNull(candidate, "candidate"));
     }
 
 
@@ -128,6 +145,9 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
         String baseUrl = override(text(llm, "baseUrl"), env.get(ENV_BASE_URL));
         String apiKey = override(text(llm, "apiKey"), env.get(ENV_API_KEY));
         String model = override(text(llm, "model"), env.get(ENV_MODEL));
+        if (model != null) {
+            model = model.strip();
+        }
         String systemPrompt = text(llm, "systemPrompt");
 
         if (baseUrl == null || apiKey == null || model == null) {
@@ -143,7 +163,30 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
                 parseStreamIdleTimeoutMs(llm),
                 llm != null && llm.path("vision").asBoolean(false),
                 parseImageDelivery(llm),
-                parseProvider(llm));
+                parseProvider(llm),
+                parseModels(llm));
+    }
+
+    /**
+     * 解析可选 models 白名单（缺省空表 = /model 不可切）：非数组或含非文本/空白条目
+     * 启动即 FAILED 点名——白名单是成本闸门，坏条目不允许静默缩减。
+     */
+    private static List<String> parseModels(JsonNode llm) {
+        if (llm == null || !llm.hasNonNull("models")) {
+            return List.of();
+        }
+        JsonNode array = llm.get("models");
+        if (!array.isArray()) {
+            throw new PluginException("llm.models 非法: 应为模型名字符串数组");
+        }
+        List<String> out = new java.util.ArrayList<>();
+        for (JsonNode entry : array) {
+            if (!entry.isTextual() || entry.asText().isBlank()) {
+                throw new PluginException("llm.models 含非法条目: \"" + entry + "\"（应为非空模型名字符串）");
+            }
+            out.add(entry.asText().strip());
+        }
+        return List.copyOf(out);
     }
 
     /**

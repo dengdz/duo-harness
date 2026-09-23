@@ -89,6 +89,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private final Path sessionsDirOverride;
     /** 注入的 LLM 执行链（null = apply 时按 LlmConfig 装配；测试注入 mock）。 */
     private final LlmAdapter llmOverride;
+    /** 当前 LLM 配置（loadLlm 刷新；/model 白名单与当前模型来源，M24 工单 09）。 */
+    private volatile dev.duo.harness.llm.LlmConfig activeConfig;
+    /** 可换执行链（apply 构建；/model 的 swap 入口；注入 mock 模式为 null）。 */
+    private volatile dev.duo.harness.llm.SwappableLlmAdapter swappableLlm;
     /** 请求变体解析器（M21 工单 05；apply 时按附件库与 vision 构建，null = 视觉未启用）。 */
     private dev.duo.harness.attachment.RequestVariants requestVariants;
 
@@ -167,6 +171,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 ? ctx.as(CliWorkspaceView.class).workspace() : null;
 
         LlmAdapter llm = llmOverride != null ? llmOverride : loadLlm();
+        if (llm instanceof dev.duo.harness.llm.SwappableLlmAdapter swappable) {
+            this.swappableLlm = swappable; // /model 切换的 swap 入口（M24 工单 09）
+        }
         // 视觉链路（M21 工单 05）：llm.vision=true 且附件库在册时构建请求变体解析器
         dev.duo.harness.attachment.AttachmentStore attachments =
                 ctx.hasService(dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME)
@@ -303,6 +310,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 ctx, session, false);
         // 会话级权限规则恢复（M24，ADR-0026 决策一）：续接该会话的规则快照
         PresenterAssembly.restorePermissionRules(ctx, session);
+        // 模型意图提示（M24 工单 09，ADR-0026 决策六）：resume 续接时意图 ≠ 当前绑定
+        // 则横幅提示、不自动切——保存意图与执行绑定分离，切换由用户拍板
+        String modelIntent = session.modelIntent();
+        if (modelIntent != null && activeConfig != null && !modelIntent.equals(activeConfig.model())) {
+            String suggestion = activeConfig.modelAllowed(modelIntent)
+                    ? "；/model " + modelIntent + " 切回"
+                    : "（该模型不在当前 llm.models 白名单，如需切回请先在 config.yml 声明）";
+            out.println("（该会话上次使用模型 " + modelIntent + "，当前 " + activeConfig.model() + suggestion + "）");
+        }
 
         // 续接计划模式：激活态随会话恢复（指导片段重新挂上）
         plan.active = PlanMode.isActive(session);
@@ -528,6 +544,41 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 plan.active = false;
                 disposeGuidance(plan);
                 return "新会话 " + holder.session.id() + "。";
+            }));
+        // /model（M24 工单 09，ADR-0026 决策六）：白名单内运行时切模型——切换落
+        // model/intent 会话事件（保存意图）、swap 换链下一 turn 生效；清单外拒切
+        // （模型名决定成本面）；清单缺席 = 不可切
+        commands.register(ctx, new CommandDefinition("model",
+                "查看或切换模型：/model [模型名]（可切清单 = config.yml llm.models 白名单）",
+                CommandScope.CLI, true, context -> {
+                if (activeConfig == null || swappableLlm == null) {
+                    return "当前装配不支持运行时切模型（LLM 执行链为注入 mock）。";
+                }
+                var models = activeConfig.models();
+                if (models.isEmpty()) {
+                    return "/model 不可切：config.yml 的 llm 段未声明 models 白名单。";
+                }
+                String target = context.args().strip();
+                if (target.isEmpty()) {
+                    StringBuilder sb = new StringBuilder("当前模型: ").append(activeConfig.model())
+                            .append("\n可切清单:");
+                    for (String m : models) {
+                        sb.append("\n  - ").append(m)
+                                .append(m.equals(activeConfig.model()) ? "（当前）" : "");
+                    }
+                    return sb.toString();
+                }
+                if (!activeConfig.modelAllowed(target)) {
+                    return "模型不在白名单: " + target + "（可切: " + String.join(", ", models) + "）";
+                }
+                if (target.equals(activeConfig.model())) {
+                    return "已是当前模型: " + target;
+                }
+                dev.duo.harness.llm.LlmConfig next = activeConfig.withModel(target);
+                swappableLlm.swap(PresenterAssembly.llmAdapter(next));
+                activeConfig = next;
+                context.session().append(dev.duo.harness.session.SessionEvent.modelIntent(target));
+                return "已切换: " + target + "（下一轮对话生效）";
             }));
         // /permission 双面可用（ANY）：handler 只依赖 fs 插件的全局 workspace 服务
         // （无呈现位归属，切档即全局生效）——M19 用户故事 1（浏览器直接切档）；
@@ -1027,14 +1078,16 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private volatile dev.duo.harness.attachment.ImageFileDelivery fileDelivery;
 
     /** LLM 装配：配置缺失时 FAILED 并给出示例（沿 CLI 既有提示形态）。 */
-    private static LlmAdapter loadLlm() {
+    private LlmAdapter loadLlm() {
         try {
             dev.duo.harness.llm.LlmConfig cfg = dev.duo.harness.llm.LlmConfig.load();
             visionEnabled = cfg.vision();
             filesDeliveryEnabled = dev.duo.harness.llm.LlmConfig.DELIVERY_FILES.equals(cfg.imageDelivery());
             deliveryBaseUrl = cfg.baseUrl();
             deliveryApiKey = cfg.apiKey();
-            return PresenterAssembly.llmAdapter(cfg);
+            activeConfig = cfg;
+            // 可换执行链（M24 工单 09）：/model 切换的 swap 入口——治理与 agent 共享同一装饰器
+            return new dev.duo.harness.llm.SwappableLlmAdapter(PresenterAssembly.llmAdapter(cfg));
         } catch (PluginException e) {
             throw new PluginException("CLI 面无法启动——LLM 未配置: " + e.getMessage()
                     + "\n示例（~/.duo/config.yml）:\n  llm:\n    baseUrl: https://api.deepseek.com"

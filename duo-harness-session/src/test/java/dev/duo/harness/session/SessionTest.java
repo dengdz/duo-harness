@@ -811,6 +811,22 @@ class SessionTest {
     }
 
     @Test
+    void modelIntentProjectionLatestWins() throws IOException {
+        // 模型意图投影（M24 工单 09，ADR-0026 决策六）：latest-wins（permissionMode
+        // 同款先例）；无切换事件的新会话返回 null
+        Session session = Session.create(sessionsDir());
+        assertNull(session.modelIntent(), "新会话无切换事件");
+        session.append(SessionEvent.modelIntent("deepseek-chat"));
+        session.append(SessionEvent.modelIntent("claude-sonnet-4-5"));
+        assertEquals("claude-sonnet-4-5", session.modelIntent(), "latest-wins 取最后意图");
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals("claude-sonnet-4-5", reloaded.modelIntent(), "重放投影一致");
+        reloaded.close();
+    }
+
+    @Test
     void permissionModeOfDoesNotReleaseHeldLock() throws IOException {
         // OCR #15 回归：本进程持锁期间经 permissionModeOf 读同文件——只读 fd 有意不关
         // （POSIX 陷阱：关闭任意 fd 释放进程全部锁）。探测方式：新通道 tryLock 必须
