@@ -354,7 +354,10 @@ public final class ContextGovernance {
 
     /** compaction 摘要生成：压缩点之前的全部消息经 LLM 直答折叠为固定骨架摘要。 */
     String summarize(List<Message> remote) {
-        ChatRequest request = new ChatRequest(SUMMARY_SYSTEM, toChatMessages(remote), List.of());
+        // 辅助性请求强制 low 档（M24 工单 10，ADR-0026 决策六「标题生成等」）——
+        // 摘要是内部折叠件，不随用户 /effort high 档烧大钱
+        ChatRequest request = new ChatRequest(SUMMARY_SYSTEM, toChatMessages(remote), List.of(),
+                dev.duo.harness.llm.LlmConfig.EFFORT_LOW);
         StringBuilder summary = new StringBuilder();
         llm.stream(request, (ChatChunk chunk) -> summary.append(chunk.text()));
         return summary.toString();

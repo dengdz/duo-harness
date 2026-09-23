@@ -152,12 +152,53 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 + "/chat/completions";
     }
 
+    /**
+     * 本次请求生效的思考等级：请求级覆盖优先（辅助性请求强制 low），否则取配置档
+     * （/effort 切换经 withEffort 换链生效）。
+     */
+    private String effortOf(ChatRequest request) {
+        return request.effortOverride() != null ? request.effortOverride() : config.effort();
+    }
+
+    /**
+     * 思考等级的三行映射（M24 工单 10，ADR-0026 决策六；Anthropic 行在自有适配器）：
+     * <ul>
+     *   <li>openai-compat：{@code reasoning_effort} 直传 low/medium/high；off 不带该
+     *       字段（回到 provider 缺省行为）</li>
+     *   <li>glm：{@code thinking.type} 开关二值化——off=disabled，low/medium/high 均
+     *       enabled（GLM 无档位细粒度，标注在 /effort 响应）</li>
+     *   <li>deepseek：永不带参数（OpenAI 兼容面无思考等级语义）——显式降级标注在
+     *       /effort 命令响应，此处静默不带即正确形态</li>
+     * </ul>
+     * 未知档按 off 处理（命令面已挡非法值，此处兜底不炸）。
+     */
+    private void applyEffort(ObjectNode root, String effort) {
+        String provider = config.provider() == null ? LlmConfig.PROVIDER_OPENAI_COMPAT
+                : config.provider();
+        boolean on = LlmConfig.EFFORT_LOW.equals(effort)
+                || LlmConfig.EFFORT_MEDIUM.equals(effort)
+                || LlmConfig.EFFORT_HIGH.equals(effort);
+        switch (provider) {
+            case LlmConfig.PROVIDER_GLM ->
+                    root.putObject("thinking").put("type", on ? "enabled" : "disabled");
+            case LlmConfig.PROVIDER_DEEPSEEK -> {
+                // 显式降级行：档位不落任何请求参数——「思考请切 reasoner 模型」由 /effort 响应标注
+            }
+            default -> {
+                if (on) {
+                    root.put("reasoning_effort", effort);
+                }
+            }
+        }
+    }
+
     private String requestBody(ChatRequest request) throws IOException {
         ObjectNode root = JSON.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
         // 流末 usage 统计帧（ADR-0009）：治理计量与状态展示优先用真实值，估算只兜底
         root.putObject("stream_options").put("include_usage", true);
+        applyEffort(root, effortOf(request));
         ArrayNode messages = root.putArray("messages");
         messages.addObject().put("role", "system").put("content", request.systemPrompt());
         for (ChatMessage message : request.messages()) {

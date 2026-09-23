@@ -432,8 +432,10 @@ class CliPluginTest {
         try {
             fx.awaitIdle();
             String out = fx.output();
-            assertTrue(out.contains("未知命令: /nope（可用命令: export, exit, stop, new, model, permission, compact, title, plan"),
-                    "七命令注册序即清单序（/stop 插在 exit 后、/model 插在 permission 前）: " + out);
+            assertTrue(out.contains("未知命令: /nope（可用命令: "
+                            + "export, exit, stop, new, model, effort, permission, compact, title, plan"),
+                    "命令注册序即清单序（/stop 插在 exit 后、/model 插在 permission 前、"
+                            + "/effort 插在 model 后——工单 10）: " + out);
         } finally {
             fx.dispose();
         }

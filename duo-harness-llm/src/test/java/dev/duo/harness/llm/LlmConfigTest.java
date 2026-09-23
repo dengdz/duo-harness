@@ -22,7 +22,7 @@ class LlmConfigTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：LlmConfigTest —— LLM 配置装载：必填校验、缺省值、错误点名（5 用例） ===");
+        System.out.println("\n=== 套件：LlmConfigTest —— LLM 配置装载：必填校验、缺省值、错误点名（15 用例） ===");
     }
 
     private static final Path NO_FILE = Path.of("/nonexistent/config.yml");
@@ -181,5 +181,59 @@ class LlmConfigTest {
         assertEquals(LlmConfig.DELIVERY_FILES, swapped.imageDelivery());
         assertEquals(LlmConfig.PROVIDER_ANTHROPIC, swapped.provider());
         assertEquals(List.of("a", "b"), swapped.models());
+    }
+
+    @Test
+    void effortDefaultsToMediumAndNormalizes() {
+        // 工单 10：effort 缺省 medium；null/空白归一缺省、大小写与空白归一
+        assertEquals(LlmConfig.DEFAULT_EFFORT,
+                new LlmConfig("https://x", "k", "m", "sp").effort());
+        assertEquals(LlmConfig.EFFORT_HIGH,
+                new LlmConfig("https://x", "k", "m", "sp", 3, 1000, 90_000, false,
+                        LlmConfig.DELIVERY_INLINE, LlmConfig.PROVIDER_ANTHROPIC,
+                        List.of(), "  HIGH  ").effort());
+        assertEquals(LlmConfig.DEFAULT_EFFORT,
+                new LlmConfig("https://x", "k", "m", "sp", 3, 1000, 90_000, false,
+                        LlmConfig.DELIVERY_INLINE, LlmConfig.PROVIDER_ANTHROPIC,
+                        List.of(), " ").effort());
+    }
+
+    @Test
+    void withEffortSwapsOnlyEffort() {
+        // 工单 10：/effort 换链只换档位，其余配置原样保留（与 withModel 同构）
+        LlmConfig base = new LlmConfig("https://x", "k", "m", "sp", 5, 100, 1000, true,
+                LlmConfig.DELIVERY_FILES, LlmConfig.PROVIDER_ANTHROPIC, List.of("a", "b"),
+                LlmConfig.EFFORT_MEDIUM);
+        LlmConfig swapped = base.withEffort(LlmConfig.EFFORT_HIGH);
+        assertEquals(LlmConfig.EFFORT_HIGH, swapped.effort());
+        assertEquals("m", swapped.model(), "withEffort 不动模型名");
+        assertEquals("k", swapped.apiKey());
+        assertEquals(LlmConfig.PROVIDER_ANTHROPIC, swapped.provider());
+        assertEquals(List.of("a", "b"), swapped.models());
+        assertTrue(swapped.vision());
+    }
+
+    @Test
+    void effortAllowedGatesFourLevels() {
+        // 工单 10：/effort 切换前校验——合法四档（大小写不敏感）、非法与 null 拒绝
+        assertTrue(LlmConfig.effortAllowed("OFF"));
+        assertTrue(LlmConfig.effortAllowed(" low "));
+        assertTrue(LlmConfig.effortAllowed("medium"));
+        assertTrue(LlmConfig.effortAllowed("high"));
+        assertTrue(!LlmConfig.effortAllowed("ultra"));
+        assertTrue(!LlmConfig.effortAllowed(null));
+    }
+
+    @Test
+    void effortNoteCoversFourProviderRows() {
+        // 工单 10「永不静默」：四行映射说明——不支持参数的 provider 显式降级标注
+        assertTrue(LlmConfig.effortNote(LlmConfig.PROVIDER_ANTHROPIC)
+                .contains("thinking+budget"), "Anthropic 行：thinking+budget");
+        assertTrue(LlmConfig.effortNote(LlmConfig.PROVIDER_DEEPSEEK)
+                .contains("reasoner"), "DeepSeek 行：降级标注指向 reasoner 模型");
+        assertTrue(LlmConfig.effortNote(LlmConfig.PROVIDER_GLM)
+                .contains("开关"), "GLM 行：开关二值化说明");
+        assertTrue(LlmConfig.effortNote(LlmConfig.PROVIDER_OPENAI_COMPAT)
+                .contains("reasoning_effort"), "openai-compat 行：reasoning_effort 直传");
     }
 }

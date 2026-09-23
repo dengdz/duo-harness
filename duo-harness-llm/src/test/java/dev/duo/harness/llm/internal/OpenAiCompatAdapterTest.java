@@ -28,7 +28,8 @@ class OpenAiCompatAdapterTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：OpenAiCompatAdapterTest —— OpenAI 兼容适配器：流式聚合与请求形态、usage 统计捕获、错误呈现、流式空闲超时二分（17 用例） ===");
+        System.out.println("\n=== 套件：OpenAiCompatAdapterTest —— OpenAI 兼容适配器：流式聚合与请求形态、"
+                + "usage 统计捕获、错误呈现、流式空闲超时二分（21 用例） ===");
     }
 
     private final ObjectMapper json = new ObjectMapper();
@@ -301,5 +302,68 @@ class OpenAiCompatAdapterTest {
         List<String> chunks = collect(adapterWithIdleTimeout(300), request("x"));
 
         assertEquals(List.of("间歇", "后到"), chunks, "停顿不误伤，两段增量完整到达");
+    }
+
+    @Test
+    void openaiCompatCarriesReasoningEffortByLevel() throws Exception {
+        // 工单 10 openai-compat 行：low/medium/high 直传 reasoning_effort；off 不带该字段
+        server.respondSse(List.of());
+        adapterWithEffort(LlmConfig.PROVIDER_OPENAI_COMPAT, LlmConfig.EFFORT_MEDIUM)
+                .streamTurn(request("问"), text -> { });
+        assertEquals("medium", json.readTree(server.lastRequestBody()).path("reasoning_effort").asText(),
+                "reasoning_effort 直传档位词");
+
+        server.respondSse(List.of());
+        adapterWithEffort(LlmConfig.PROVIDER_OPENAI_COMPAT, LlmConfig.EFFORT_OFF)
+                .streamTurn(request("问"), text -> { });
+        assertNull(json.readTree(server.lastRequestBody()).get("reasoning_effort"),
+                "off 档不带 reasoning_effort 字段");
+    }
+
+    @Test
+    void glmMapsThinkingSwitchByOnOff() throws Exception {
+        // 工单 10 glm 行：thinking.type 开关二值化——low/medium/high 均 enabled、off disabled
+        server.respondSse(List.of());
+        adapterWithEffort(LlmConfig.PROVIDER_GLM, LlmConfig.EFFORT_LOW)
+                .streamTurn(request("问"), text -> { });
+        assertEquals("enabled", json.readTree(server.lastRequestBody()).path("thinking").path("type").asText(),
+                "GLM 非 off 档均映射 enabled");
+
+        server.respondSse(List.of());
+        adapterWithEffort(LlmConfig.PROVIDER_GLM, LlmConfig.EFFORT_OFF)
+                .streamTurn(request("问"), text -> { });
+        assertEquals("disabled", json.readTree(server.lastRequestBody()).path("thinking").path("type").asText(),
+                "GLM off 档映射 disabled");
+    }
+
+    @Test
+    void deepseekNeverCarriesEffortParams() throws Exception {
+        // 工单 10 deepseek 行（显式降级）：任何档位都不带思考参数——标注在 /effort 响应
+        server.respondSse(List.of());
+        adapterWithEffort(LlmConfig.PROVIDER_DEEPSEEK, LlmConfig.EFFORT_HIGH)
+                .streamTurn(request("问"), text -> { });
+        JsonNode body = json.readTree(server.lastRequestBody());
+        assertNull(body.get("reasoning_effort"), "deepseek 不带 reasoning_effort");
+        assertNull(body.get("thinking"), "deepseek 不带 thinking");
+    }
+
+    @Test
+    void requestEffortOverrideBeatsConfigEffort() throws Exception {
+        // 工单 10 辅助降档：请求级覆盖优先——config=off + override=high → reasoning_effort=high
+        server.respondSse(List.of());
+        new OpenAiCompatAdapter(new LlmConfig(server.baseUrl(), "sk-test", "test-model",
+                LlmConfig.DEFAULT_SYSTEM_PROMPT))
+                .streamTurn(new ChatRequest("系统提示",
+                        List.of(new ChatMessage(ChatMessage.Role.USER, "问", null, null, null)),
+                        List.of(), LlmConfig.EFFORT_HIGH), text -> { });
+        assertEquals("high", json.readTree(server.lastRequestBody()).path("reasoning_effort").asText(),
+                "请求级覆盖压过配置档");
+    }
+
+    /** 指定 provider 与 effort 档的适配器（兼容构造 + withEffort 链式）。 */
+    private OpenAiCompatAdapter adapterWithEffort(String provider, String effort) throws IOException {
+        return new OpenAiCompatAdapter(new LlmConfig(server.baseUrl(), "sk-test", "test-model",
+                LlmConfig.DEFAULT_SYSTEM_PROMPT, 1, 0, 90_000, false,
+                LlmConfig.DELIVERY_INLINE, provider, List.of()).withEffort(effort));
     }
 }

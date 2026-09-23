@@ -42,7 +42,8 @@ import java.util.function.Consumer;
  * 连续多条工具结果合并为单条 user 消息（协议要求 user/assistant 交替）；assistant
  * 的工具调用映射为 {@code tool_use} 块（input 为 argumentsJson 解析后的对象）。
  * 首期限制：图片仅 inline data URI 形态（files 投递为 DeepSeek 专有，Anthropic 面
- * 不支持）；max_tokens 固定 8192（协议必填，可配置化随思考等级工单，M24 工单 10）。</p>
+ * 不支持）；max_tokens 协议必填，off 档缺省 8192、思考档随 budget 抬升（见
+ * {@link #applyEffort}——M24 工单 10）。</p>
  *
  * <p>SSE 帧序：{@code message_start}（input_tokens）→ {@code content_block_start}
  * （tool_use 携 id/name）→ {@code content_block_delta}（text_delta / input_json_delta）
@@ -56,8 +57,11 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
     /** 协议版本头（Anthropic messages API 当前稳定版）。 */
     private static final String ANTHROPIC_VERSION = "2023-06-01";
 
-    /** max_tokens 协议必填缺省（可配置化随思考等级工单，M24 工单 10）。 */
+    /** max_tokens 协议必填缺省。 */
     private static final int DEFAULT_MAX_TOKENS = 8192;
+
+    /** 思考档 max_tokens 抬升余量（协议要求 max_tokens &gt; budget_tokens）。 */
+    private static final int MAX_TOKENS_HEADROOM = 1024;
 
     private final LlmConfig config;
     private final HttpClient http;
@@ -153,8 +157,8 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
     private String requestBody(ChatRequest request) throws IOException {
         ObjectNode root = JSON.createObjectNode();
         root.put("model", config.model());
-        root.put("max_tokens", DEFAULT_MAX_TOKENS);
         root.put("stream", true);
+        applyEffort(root, effortOf(request));
         if (!request.systemPrompt().isBlank()) {
             root.put("system", request.systemPrompt());
         }
@@ -186,13 +190,54 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
         return root.toString();
     }
 
-    /** user/assistant 消息映射：assistant 携工具调用时输出 text + tool_use 块数组。 */
+    /**
+     * 本次请求生效的思考等级：请求级覆盖优先（辅助性请求强制 low），否则取配置档
+     * （/effort 切换经 withEffort 换链生效）。
+     */
+    private String effortOf(ChatRequest request) {
+        return request.effortOverride() != null ? request.effortOverride() : config.effort();
+    }
+
+    /**
+     * Anthropic 行映射（M24 工单 10，ADR-0026 决策六）：off → 不带 thinking 节点
+     * （思考关闭）；low/medium/high → {@code thinking: {type: enabled, budget_tokens}}
+     * （2048 / 8192 / 16384），且 max_tokens 同步抬到 budget + {@link #MAX_TOKENS_HEADROOM}
+     * （协议要求 max_tokens &gt; budget_tokens——成本仍由实际用量决定，抬上限不改计费本质）。
+     * 未知档按 off 处理（命令面已挡非法值，此处兜底不炸）。
+     */
+    private static void applyEffort(ObjectNode root, String effort) {
+        if (effort == null) {
+            effort = LlmConfig.DEFAULT_EFFORT;
+        }
+        int budget = switch (effort) {
+            case LlmConfig.EFFORT_LOW -> LlmConfig.ANTHROPIC_BUDGET_LOW;
+            case LlmConfig.EFFORT_MEDIUM -> LlmConfig.ANTHROPIC_BUDGET_MEDIUM;
+            case LlmConfig.EFFORT_HIGH -> LlmConfig.ANTHROPIC_BUDGET_HIGH;
+            default -> 0;
+        };
+        if (budget <= 0) {
+            root.put("max_tokens", DEFAULT_MAX_TOKENS);
+            return;
+        }
+        root.putObject("thinking").put("type", "enabled").put("budget_tokens", budget);
+        root.put("max_tokens", Math.max(DEFAULT_MAX_TOKENS, budget + MAX_TOKENS_HEADROOM));
+    }
+
+    /**
+     * user/assistant 消息映射：assistant 携工具调用时输出 thinking（如有）+ text +
+     * tool_use 块数组——扩展思考协议要求 thinking 块（含 signature）在工具循环的
+     * 下一轮请求中原样回传（M24 工单 10 审查修复）；块以 reasoningContent 通道的
+     * JSON 形态承载（采集见 {@link #aggregateTurn}）。
+     */
     private ObjectNode userOrAssistantMessage(ChatMessage message) throws IOException {
         ObjectNode node = JSON.createObjectNode();
         boolean assistant = message.role() == ChatMessage.Role.ASSISTANT;
         node.put("role", assistant ? "assistant" : "user");
         if (assistant && message.toolCalls() != null && !message.toolCalls().isEmpty()) {
             ArrayNode content = node.putArray("content");
+            if (message.reasoningContent() != null && message.reasoningContent().startsWith("{")) {
+                content.add(JSON.readTree(message.reasoningContent()));
+            }
             if (!message.content().isEmpty()) {
                 content.addObject().put("type", "text").put("text", message.content());
             }
@@ -276,10 +321,18 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
         }
     }
 
-    /** 聚合一轮：text_delta 累积 + tool_use 块聚合（start 携 id/name，input_json_delta 拼参数）+ usage。 */
+    /** 聚合一轮：text_delta 累积 + tool_use 块聚合（start 携 id/name，input_json_delta 拼参数）+ thinking 块 + usage。 */
     private LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink) throws IOException {
         StringBuilder text = new StringBuilder();
         List<ToolCallRequest> toolCalls = new ArrayList<>();
+        // thinking 块聚合容器（M24 工单 10 审查修复）：扩展思考协议要求工具循环的下一轮
+        // 请求原样回传 assistant 回合的 thinking 块（含 signature，缺失即 400 签名错误）
+        // ——聚合为单块 JSON 经 reasoningContent 通道持久化（tool/call 事件既有通道，
+        // OpenAI 兼容面 reasoning_content 为纯文本不受影响：块 JSON 以 "{" 开头可鉴别）
+        StringBuilder thinkingText = new StringBuilder();
+        StringBuilder thinkingSignature = new StringBuilder();
+        boolean thinkingBlock = false;
+        String redactedBlockJson = null;
         // tool_use 块聚合容器：content block index → id/name/参数分片
         Map<Integer, String> ids = new TreeMap<>();
         Map<Integer, String> names = new TreeMap<>();
@@ -312,10 +365,16 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
                 }
                 if ("content_block_start".equals(type)) {
                     JsonNode block = frame.path("content_block");
-                    if ("tool_use".equals(block.path("type").asText())) {
+                    String blockType = block.path("type").asText();
+                    if ("tool_use".equals(blockType)) {
                         int index = frame.path("index").asInt(0);
                         ids.put(index, block.path("id").asText());
                         names.put(index, block.path("name").asText());
+                    } else if ("thinking".equals(blockType)) {
+                        thinkingBlock = true;
+                    } else if ("redacted_thinking".equals(blockType)) {
+                        // 不可逆加密思考块（安全过滤触发）：无 delta，整块原样保留回传
+                        redactedBlockJson = block.toString();
                     }
                     continue;
                 }
@@ -329,6 +388,10 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
                     } else if ("input_json_delta".equals(deltaType)) {
                         arguments.computeIfAbsent(frame.path("index").asInt(0),
                                 k -> new StringBuilder()).append(delta.path("partial_json").asText());
+                    } else if ("thinking_delta".equals(deltaType)) {
+                        thinkingText.append(delta.path("thinking").asText());
+                    } else if ("signature_delta".equals(deltaType)) {
+                        thinkingSignature.append(delta.path("signature").asText());
                     }
                 }
             }
@@ -341,7 +404,17 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
         }
         TokenUsage usage = promptTokens == 0 && completionTokens == 0 ? null
                 : new TokenUsage(promptTokens, completionTokens, promptTokens + completionTokens);
-        return new LlmTurn(text.toString(), toolCalls, null, usage);
+        String reasoning = null;
+        if (redactedBlockJson != null) {
+            reasoning = redactedBlockJson;
+        } else if (thinkingBlock && thinkingText.length() > 0) {
+            reasoning = JSON.createObjectNode()
+                    .put("type", "thinking")
+                    .put("thinking", thinkingText.toString())
+                    .put("signature", thinkingSignature.toString())
+                    .toString();
+        }
+        return new LlmTurn(text.toString(), toolCalls, reasoning, usage);
     }
 
     /** text_delta 增量提取（无则空串）。 */

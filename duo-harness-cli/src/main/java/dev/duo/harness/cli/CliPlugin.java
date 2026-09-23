@@ -580,6 +580,42 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 context.session().append(dev.duo.harness.session.SessionEvent.modelIntent(target));
                 return "已切换: " + target + "（下一轮对话生效）";
             }));
+        // /effort（M24 工单 10，ADR-0026 决策六）：思考等级四档归一——切换落
+        // model/effort 会话事件、swap 换链下一 turn 生效；映射按 provider 四行走
+        // （anthropic thinking+budget / openai-compat reasoning_effort / glm 开关 /
+        // deepseek 显式降级标注），不支持不静默；无参显示当前档
+        commands.register(ctx, new CommandDefinition("effort",
+                "查看或切换思考等级：/effort [off|low|medium|high]（缺省 medium，下一轮对话生效）",
+                CommandScope.CLI, true, context -> {
+                if (activeConfig == null || swappableLlm == null) {
+                    return "当前装配不支持运行时切思考等级（LLM 执行链为注入 mock）。";
+                }
+                String target = context.args().strip().toLowerCase(java.util.Locale.ROOT);
+                if (target.isEmpty()) {
+                    StringBuilder sb = new StringBuilder("当前思考等级: ").append(activeConfig.effort())
+                            .append("\n可切档位:");
+                    for (String level : dev.duo.harness.llm.LlmConfig.EFFORT_LEVELS) {
+                        sb.append("\n  - ").append(level)
+                                .append(level.equals(activeConfig.effort()) ? "（当前）" : "");
+                    }
+                    sb.append("\n映射: ").append(dev.duo.harness.llm.LlmConfig
+                            .effortNote(activeConfig.provider()));
+                    return sb.toString();
+                }
+                if (!dev.duo.harness.llm.LlmConfig.effortAllowed(target)) {
+                    return "非法档位: " + target + "（可切: "
+                            + String.join(", ", dev.duo.harness.llm.LlmConfig.EFFORT_LEVELS) + "）";
+                }
+                if (target.equals(activeConfig.effort())) {
+                    return "已是当前档位: " + target;
+                }
+                dev.duo.harness.llm.LlmConfig next = activeConfig.withEffort(target);
+                swappableLlm.swap(PresenterAssembly.llmAdapter(next));
+                activeConfig = next;
+                context.session().append(dev.duo.harness.session.SessionEvent.modelEffort(target));
+                return "已切换: " + target + "（下一轮对话生效）\n"
+                        + dev.duo.harness.llm.LlmConfig.effortNote(next.provider());
+            }));
         // /permission 双面可用（ANY）：handler 只依赖 fs 插件的全局 workspace 服务
         // （无呈现位归属，切档即全局生效）——M19 用户故事 1（浏览器直接切档）；
         // 其余三命令闭包本呈现位状态（holder/plan/agent），维持 CLI 面。

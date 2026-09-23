@@ -128,6 +128,13 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     public static final String MODEL_INTENT = "model/intent";
 
     /**
+     * 思考等级切换（M24 工单 10，ADR-0026 决策六；text = 四档 off/low/medium/high）
+     * ——/effort 切换的落盘事件，与 {@link #MODEL_INTENT} 同构：保存档位、执行绑定由
+     * 适配器换链完成。不投影不横幅（工单字面无 resume 提示要求）。
+     */
+    public static final String MODEL_EFFORT = "model/effort";
+
+    /**
      * 上下文压缩点（M19，ADR-0020 决策 6；text = 远端历史的总结全文，toolName = 触发方式
      * {@code "manual"}（/compact 命令）或 {@code "auto"}（预算触发））。一处语义两处触发
      * ——"上下文为何变小"在日志可审计。投影 latest-wins：最后压缩点之前的一切以总结
@@ -308,5 +315,10 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：模型意图切换（模型名；latest-wins 投影，M24 工单 09）。 */
     public static SessionEvent modelIntent(String modelName) {
         return new SessionEvent(MODEL_INTENT, System.currentTimeMillis(), modelName);
+    }
+
+    /** 便捷工厂：思考等级切换（四档档位词，M24 工单 10）。 */
+    public static SessionEvent modelEffort(String level) {
+        return new SessionEvent(MODEL_EFFORT, System.currentTimeMillis(), level);
     }
 }

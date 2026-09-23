@@ -102,11 +102,18 @@ public final class SessionTitles {
         appendTitle(session, truncate(title != null ? title : firstMessage));
     }
 
-    /** 直答请求：无工具单消息，聚合全部增量。 */
+    /**
+     * 直答请求：无工具单消息，聚合全部增量。思考等级强制 low（M24 工单 10，
+     * ADR-0026 决策六「辅助性请求强制降档」）——标题是锦上添花，不随用户 /effort
+     * high 档烧大钱；经请求级覆盖直达适配器，与主对话链的配置档解耦。
+     * 已知权衡：用户档为 off 时标题恒为 low（openai-compat 会显式带
+     * reasoning_effort=low / Anthropic 开 2048 budget）——辅助请求保证最小可用
+     * 思考优于零思考，恒定档位不跟随用户档是本语义的取舍点。
+     */
     private static String requestTitle(LlmAdapter llm, String firstMessage) {
         ChatRequest request = new ChatRequest(TITLE_PROMPT,
                 List.of(new ChatMessage(ChatMessage.Role.USER, firstMessage, null, null, null)),
-                List.of());
+                List.of(), dev.duo.harness.llm.LlmConfig.EFFORT_LOW);
         StringBuilder out = new StringBuilder();
         llm.stream(request, (ChatChunk chunk) -> out.append(chunk.text()));
         return out.toString();

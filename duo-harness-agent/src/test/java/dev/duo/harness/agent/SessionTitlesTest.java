@@ -31,7 +31,7 @@ class SessionTitlesTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTitlesTest —— 会话标题：生成/降级/去重/续接不重生成/超时（5 用例） ===");
+        System.out.println("\n=== 套件：SessionTitlesTest —— 会话标题：生成/降级/去重/续接不重生成/超时（6 用例） ===");
     }
 
     /** 计数直答 adapter：固定回复 + 调用计数（用例按需覆写 stream 定制行为）。 */
@@ -186,5 +186,29 @@ class SessionTitlesTest {
         }
         assertEquals(message, session.title(), "超时降级 = 首条消息（本例不足 20 字不截断）");
         session.close();
+    }
+
+    @Test
+    void titleRequestForcesLowEffortOverride() throws Exception {
+        // 工单 10 辅助降档：标题直答请求带 effortOverride=low——不随用户 /effort 档烧大钱
+        Session session = newSession();
+        CountDownLatch done = new CountDownLatch(1);
+        List<ChatRequest> captured = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ScriptedAdapter llm = new ScriptedAdapter("标题") {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                captured.add(request);
+                super.stream(request, onChunk);
+                done.countDown();
+            }
+        };
+
+        SessionTitles.attach(session, llm, 5);
+        session.append(SessionEvent.userMessage("帮我查一下订单"));
+        awaitTitle(session, done);
+
+        assertEquals(1, captured.size());
+        assertEquals(dev.duo.harness.llm.LlmConfig.EFFORT_LOW, captured.get(0).effortOverride(),
+                "标题请求应强制 low 档（请求级覆盖）");
     }
 }

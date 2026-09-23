@@ -11,15 +11,23 @@ import java.util.Objects;
  * 转换为 {@link ToolSpec}；适配器按序序列化为 provider 协议的消息数组。
  * system 指令不进消息列表、不进会话日志（每轮单独传）。</p>
  *
- * @param systemPrompt 行为指令（每轮单独传，不进会话日志）
- * @param messages     按序对话历史（不含 system）
- * @param tools        可用工具清单（空 = 无工具；本次调用不启用 Function Calling）
+ * @param systemPrompt   行为指令（每轮单独传，不进会话日志）
+ * @param messages       按序对话历史（不含 system）
+ * @param tools          可用工具清单（空 = 无工具；本次调用不启用 Function Calling）
+ * @param effortOverride 思考等级覆盖（M24 工单 10；null = 跟随 {@code LlmConfig.effort()}
+ *                       配置档——辅助性请求（标题生成等）置 low 强制降档，不随用户档烧大钱）
  */
-public record ChatRequest(String systemPrompt, List<ChatMessage> messages, List<ToolSpec> tools) {
+public record ChatRequest(String systemPrompt, List<ChatMessage> messages, List<ToolSpec> tools,
+                          String effortOverride) {
 
     /** 无工具直答构造（M3/M4 兼容形态）。 */
     public ChatRequest(String systemPrompt, List<ChatMessage> messages) {
         this(systemPrompt, messages, List.of());
+    }
+
+    /** 兼容构造：无思考等级覆盖——档位跟随 {@code LlmConfig.effort()}（主对话链形态）。 */
+    public ChatRequest(String systemPrompt, List<ChatMessage> messages, List<ToolSpec> tools) {
+        this(systemPrompt, messages, tools, null);
     }
 
     /** 构造时校验非空与防御性拷贝——错误前移到构造点。 */
@@ -28,5 +36,8 @@ public record ChatRequest(String systemPrompt, List<ChatMessage> messages, List<
         Objects.requireNonNull(messages, "messages");
         messages = List.copyOf(messages);
         tools = tools == null ? List.of() : List.copyOf(tools);
+        if (effortOverride != null) {
+            effortOverride = effortOverride.strip().toLowerCase(java.util.Locale.ROOT);
+        }
     }
 }

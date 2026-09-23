@@ -239,3 +239,14 @@
   1. **「落事件 + 换绑定」两步写的顺序**——持久化优先（先 append 事件再 swap 执行绑定）：append 抛错时零副作用，反之绑定已换而意图未落盘，resume 倒查失去依据。
   2. **「目标 == 当前」短路**——切换类命令在白名单校验后、执行前补一条等值短路，避免无操作切换的冗余落盘。
 - **收口**：`mvn -pl duo-harness-example -am package` BUILD SUCCESS（872 用例 0 失败）；报告并入 `.scratch/m24-permission-security/issues/09-model白名单切换与resume意图.md`。
+
+### 2026-09-23 · M24 工单 10 审查（0.19.0 分支，四轴制第二轮：/effort 思考等级四行映射）
+
+- **范围与轮次**：四轴并行（Standards / Spec / 行级规则 / Java 规范，基点 fcee56b 工作树）→ 修复 → 全链 test 收口。
+- **计数**：Standards 阻断 1（事件类型表缺行）+ 建议 5；Spec 偏差 1（压缩摘要未降档）+ 正确性全过；行级 high 1（Anthropic thinking 回传缺失）+ medium 1 + low 1；Java 规范轴 MAJOR 2（C-01 魔法值 / F-09 超长行）+ 过滤记档 6 组。处置：修 9 / 记档 4。
+- **四轴第二轮实证**：行级轴抓到本轮最有价值的发现（thinking 块回传缺失——不修则 Anthropic 思考档 + 工具调用二轮 400，核心场景不可用）；Standards 轴文档面阻断再中（事件类型表——红线 3 的固定漏验点，工单 05/06/10 连续三单靠该轴抓出）；Java 轴 MAJOR 两条均快速修。四轴产出率连续两单非零。
+- **模式化问题（本次新识别）**：
+  1. **「provider 协议扩展块」的回传完整性**——启用 provider 思考/推理类参数后，响应侧的结构化块（thinking+signature）必须在工具循环下一轮原样回传，否则签名校验 400；新增请求参数时必须同步审查响应侧历史回传链（采集 → 持久化 → 重建 → 回传四段）。reasoning 单字段通道可承载块 JSON（以 `{` 开头鉴别），避免多字段污染。
+  2. **「辅助性请求」是清单不是举例**——工单写「标题生成等」时，「等」字的覆盖面（压缩摘要、标题）要在实现时主动枚举收敛，否则 Spec 轴会以「窄化未经确认」打回。
+  3. **新会话事件登记类型表是红线 3 的固定落点**——`SessionEvent` 加常量的同 diff 必须同步 `docs/05-参考/会话事件类型表.md`（Standards 轴连续三单抓到文档漏同步）。
+- **收口**：`mvn test` 全量 BUILD SUCCESS（918 用例 0 失败，2 既有 skip）；报告全文并入 `.scratch/m24-permission-security/issues/10-effort思考等级四行映射.md`。

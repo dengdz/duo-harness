@@ -34,11 +34,14 @@ import java.util.Map;
  *                    映射策略；不再由 baseUrl 隐式表达
  * @param models      可切模型白名单（M24 工单 09，ADR-0026 决策一/六；空 = /model 不可切。
  *                    模型名直接决定成本面，白名单即「收得住」）
+ * @param effort      思考等级四档 off/low/medium/high（M24 工单 10，ADR-0026 决策六；
+ *                    缺省 medium，/effort 切换经 withEffort 换链生效）
+ *                    模型名直接决定成本面，白名单即「收得住」）
  */
 public record LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
                         int retryMaxAttempts, long retryInitialBackoffMs,
                         long streamIdleTimeoutMs, boolean vision, String imageDelivery,
-                        String provider, List<String> models) {
+                        String provider, List<String> models, String effort) {
 
     /** imageDelivery inline（缺省）。 */
     public static final String DELIVERY_INLINE = "inline";
@@ -58,6 +61,26 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /** provider 声明：GLM（走 OpenAI 兼容面，思考等级映射策略不同）。 */
     public static final String PROVIDER_GLM = "glm";
 
+    /** 思考等级四档（M24 工单 10，ADR-0026 决策六）：全 provider 归一档位词。 */
+    public static final String EFFORT_OFF = "off";
+    public static final String EFFORT_LOW = "low";
+    public static final String EFFORT_MEDIUM = "medium";
+    public static final String EFFORT_HIGH = "high";
+
+    /** 思考等级缺省档：medium（思考能力可用又不烧大钱）。 */
+    public static final String DEFAULT_EFFORT = EFFORT_MEDIUM;
+
+    /** 思考等级合法档清单（/effort 展示与校验序）。 */
+    public static final List<String> EFFORT_LEVELS =
+            List.of(EFFORT_OFF, EFFORT_LOW, EFFORT_MEDIUM, EFFORT_HIGH);
+
+    /** Anthropic thinking budget_tokens 档位映射：low。 */
+    public static final int ANTHROPIC_BUDGET_LOW = 2_048;
+    /** Anthropic thinking budget_tokens 档位映射：medium。 */
+    public static final int ANTHROPIC_BUDGET_MEDIUM = 8_192;
+    /** Anthropic thinking budget_tokens 档位映射：high。 */
+    public static final int ANTHROPIC_BUDGET_HIGH = 16_384;
+
     /** systemPrompt 未配置时的缺省指令。 */
     public static final String DEFAULT_SYSTEM_PROMPT = "你是一个简洁可靠的助手。";
 
@@ -74,7 +97,7 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt) {
         this(baseUrl, apiKey, model, systemPrompt, DEFAULT_RETRY_MAX_ATTEMPTS,
                 DEFAULT_RETRY_INITIAL_BACKOFF_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, false,
-                DELIVERY_INLINE, PROVIDER_OPENAI_COMPAT, List.of());
+                DELIVERY_INLINE, PROVIDER_OPENAI_COMPAT, List.of(), DEFAULT_EFFORT);
     }
 
     /** 兼容构造：vision 显式、投递 inline。 */
@@ -83,7 +106,17 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
                      long streamIdleTimeoutMs, boolean vision) {
         this(baseUrl, apiKey, model, systemPrompt, retryMaxAttempts,
                 retryInitialBackoffMs, streamIdleTimeoutMs, vision, DELIVERY_INLINE,
-                PROVIDER_OPENAI_COMPAT, List.of());
+                PROVIDER_OPENAI_COMPAT, List.of(), DEFAULT_EFFORT);
+    }
+
+    /** 兼容构造：effort 取缺省 medium（工单 10 前的 11 组件调用形态）。 */
+    public LlmConfig(String baseUrl, String apiKey, String model, String systemPrompt,
+                     int retryMaxAttempts, long retryInitialBackoffMs,
+                     long streamIdleTimeoutMs, boolean vision, String imageDelivery,
+                     String provider, List<String> models) {
+        this(baseUrl, apiKey, model, systemPrompt, retryMaxAttempts,
+                retryInitialBackoffMs, streamIdleTimeoutMs, vision, imageDelivery,
+                provider, models, DEFAULT_EFFORT);
     }
 
     /** 投递形态与 provider 归一（校验在 load 处 fail-loud）；models 防御性拷贝（null 归空表）。 */
@@ -99,6 +132,11 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
             provider = provider.strip().toLowerCase(java.util.Locale.ROOT);
         }
         models = models == null ? List.of() : List.copyOf(models);
+        if (effort == null || effort.isBlank()) {
+            effort = DEFAULT_EFFORT;
+        } else {
+            effort = effort.strip().toLowerCase(java.util.Locale.ROOT);
+        }
     }
 
     /** 模型切换（/model 执行绑定，M24 工单 09）：仅换模型名（strip 归一），其余配置原样保留（同 provider 约束由调用方把关）。 */
@@ -106,7 +144,38 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
         String stripped = java.util.Objects.requireNonNull(newModel, "newModel").strip();
         return new LlmConfig(baseUrl, apiKey, stripped,
                 systemPrompt, retryMaxAttempts, retryInitialBackoffMs, streamIdleTimeoutMs,
-                vision, imageDelivery, provider, models);
+                vision, imageDelivery, provider, models, effort);
+    }
+
+    /** 思考等级切换（/effort 执行绑定，M24 工单 10）：仅换档位（strip 归一），其余配置原样保留。 */
+    public LlmConfig withEffort(String newEffort) {
+        String stripped = java.util.Objects.requireNonNull(newEffort, "newEffort").strip();
+        return new LlmConfig(baseUrl, apiKey, model,
+                systemPrompt, retryMaxAttempts, retryInitialBackoffMs, streamIdleTimeoutMs,
+                vision, imageDelivery, provider, models, stripped);
+    }
+
+    /** 思考等级是否为合法四档之一（/effort 切换前校验）。 */
+    public static boolean effortAllowed(String candidate) {
+        return candidate != null && EFFORT_LEVELS.contains(
+                candidate.strip().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * 档位在当前 provider 下的映射说明（M24 工单 10「永不静默」）：/effort 无参展示与
+     * 切换响应携带——不支持参数的 provider 显式降级标注，不静默。
+     */
+    public static String effortNote(String provider) {
+        String normalized = provider == null ? PROVIDER_OPENAI_COMPAT
+                : provider.strip().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case PROVIDER_ANTHROPIC -> "Anthropic：thinking+budget（off 关闭；low "
+                    + ANTHROPIC_BUDGET_LOW + " / medium " + ANTHROPIC_BUDGET_MEDIUM
+                    + " / high " + ANTHROPIC_BUDGET_HIGH + " budget_tokens）";
+            case PROVIDER_DEEPSEEK -> "DeepSeek 不支持思考等级参数，档位不生效——思考请切 reasoner 模型（/model）";
+            case PROVIDER_GLM -> "GLM 仅 thinking 开关：off=关闭，low/medium/high 均=开启（档位细粒度不生效）";
+            default -> "reasoning_effort 直传（off 即不带该参数）";
+        };
     }
 
     /** 当前模型是否在 /model 可切白名单内（空白名单 = 全部不可切）。 */
@@ -135,7 +204,9 @@ public record LlmConfig(String baseUrl, String apiKey, String model, String syst
     /**
      * 加载：文件 {@code llm} 段为基线，env 逐项覆盖，最终三项缺一即点名。
      *
-     * @param configFile config.yml 路径（不存在时按空配置处理，env 可兜底）
+     * @param configFile config.yml 路径（不存在时按空配置处理，env 可兜底）。
+     *                   注意：思考等级（effort）不在 yml 解析面——恒为缺省 medium 的运行时态，
+     *                   仅经 /effort 切换（M24 工单 10；写 yml 亦被忽略，此处显式声明防「永不静默」缺口）
      * @param env        环境变量（测试注入用）
      * @return 加载并校验后的 LLM 配置
      * @throws PluginException 关键项缺失（消息含重配指引）或 YAML 解析失败
