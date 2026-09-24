@@ -28,6 +28,8 @@
 
 ### Changed
 
+- **《技能写作规范》本体（C1-04，M25 起技能写作前置约束）**：新增 `docs/05-参考/技能写作规范.md`——五支柱条款化（上下文指针与 description 三规则及预算 / 完成判据与证据先行 / 检查点阻塞化 / 领先词与词汇一致 / 否定收敛与剪枝）+ 失败路径 fail-fast + 体量治理 + 保留资产清单，每条款配 duo 真实正反例（正例：acceptance 判据、trim-cot-leakage 保留规则、doc-standards 对账命令、release-workflow 红线不抄录等；反例：workflow 箭头链、code-review 弱指针与三重否定、bug-ledger 反模式节等），附录 M1–M15 机制面覆盖对照表供新技能收尾自查；同 diff 落地词汇治理首批——术语表新增「技能写作域」8 词条（工单/收口/验收/完成判据/上下文指针/领先词/证据先行/渐进式披露，首选+_Avoid_ 格式），domain.md 补 SKILL 用词约束；sidebar 与 index 导航同步，docs:build 通过
+
 - **ADR-0027 技能写作规范移植与调用权分流（C1 决策段，含 harness 能力探测）**：立 `docs/adr/0027-技能写作规范移植与调用权分流.md`——①移植 writing-for-agents 五支柱为中文《技能写作规范》（工单 04 交付，附 duo 正反例池，与 duo-prose-standard 分工不改）；②调用权分流探测结论记档：ZCode skills frontmatter 白名单五键（`adapters/src/skills/index.ts:21-27`，锚点 872ad96）不含 `disable-model-invocation`，技能清单全量注入无过滤（`sections/skills.ts:17-37`），写入该字段唯一副作用是 safeToAutoLoad=false 且其唯一消费方是 /skills 展示——**硬隔离不具备条件，按语义兜底落地**（AGENTS.md 显式命令表唯一门禁面 + 技能 frontmatter 禁写该字段防误加 + 流程门禁强制力改判据承担），ZCode 未来支持时按记档升级；③改写组纪律（description 与路由表同 diff、显式调用形态、保留资产清单、变更历史迁出）；sidebar 补 0027 条目，导航对账 27+1 全绿
 
 - **C1-02 duo 侧逐技能对照与对比报告 + 讲义**：以 C1-01 机制清单 15 主题为对照系，一手通读 duo 侧 16 技能（15 duo-* 共 1458 行 + release-notes），落 `docs/research/mattpocock-skills/对比报告.md`——逐技能 gap 对照（每条带双方行号锚点）+ 15 机制覆盖矩阵（duo 侧 3 项 ✓：brief 填空模板/模板文化/状态机自发长出；9 项 ◐；3 项 ✗：调用权分流/显式调用/词汇治理全缺）+ Downloads 轻量分析三态终审（采纳 7/修正 6——含 description 均值实测 163 字为 Matt model 档 4-5 倍、部分推翻"体量治理有自觉无制度"——doc-standards 对账命令已是制度形态，缺的是剪枝方向制度）；随报告交付 4 课讲义（指针与调用权/完成判据与领先词/否定措辞与体量治理/中文补偿策略），每课双方原文对照
