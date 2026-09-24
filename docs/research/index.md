@@ -72,4 +72,4 @@
 | DSH+ZCode | 子代理派发与提示词生成对照 | [subagent-派发与提示词对照.md](subagent-派发与提示词对照.md) | DSH c291e796；ZCode app.asar + ~/.zcode/cli/agents 实证 | DSH 侧锚点已陈旧（现行 ddefc45f，引用建议核对）；ZCode 侧已源码级复核（见 子代理.md） |
 | DSH | 沙箱与权限 | [DSH/沙箱与权限.md](DSH/沙箱与权限.md) | ddefc45f | 当前（2026-09-21）；原 DSH+ZCode 合并对照文档按项目分家拆出（用户裁定：研究文档不合并落盘） |
 | ZCode | 沙箱与权限 | [ZCode/沙箱与权限.md](ZCode/沙箱与权限.md) | 872ad96 | 当前（2026-09-21）；同上 |
-| mattpocock | 技能写作机制清单（C1-01 底稿） | [mattpocock-skills/机制清单.md](mattpocock-skills/机制清单.md) | 插件 mattpocock-skills **1.2.3** 插件缓存（非 git 检出，版本目录核对代替拉取；C1 spec 裁定） | 当前（2026-09-24 C1-01：37 SKILL.md + 4 元文档一手通读，15 机制主题带行号锚点；C1-02 对比报告/讲义以它为底册） |
+| mattpocock | 技能写作机制分析三件套（C1-01/02） | [mattpocock-skills/机制清单.md](mattpocock-skills/机制清单.md)、[对比报告.md](mattpocock-skills/对比报告.md)、[讲义.md](mattpocock-skills/讲义.md) | Matt 侧 = 插件 mattpocock-skills **1.2.3** 插件缓存（非 git 检出，版本目录核对代替拉取）；duo 侧 = main 工作树 | 当前（2026-09-24 C1-01/02：37+4 一手通读 15 机制主题 → 16 技能逐个 gap 对照 + 背景线索三态重验 → 4 课讲义；C1 改写组 05-11 以对比报告 §2/§5 为直接输入） |

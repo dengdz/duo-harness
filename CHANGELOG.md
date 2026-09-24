@@ -28,6 +28,8 @@
 
 ### Changed
 
+- **C1-02 duo 侧逐技能对照与对比报告 + 讲义**：以 C1-01 机制清单 15 主题为对照系，一手通读 duo 侧 16 技能（15 duo-* 共 1458 行 + release-notes），落 `docs/research/mattpocock-skills/对比报告.md`——逐技能 gap 对照（每条带双方行号锚点）+ 15 机制覆盖矩阵（duo 侧 3 项 ✓：brief 填空模板/模板文化/状态机自发长出；9 项 ◐；3 项 ✗：调用权分流/显式调用/词汇治理全缺）+ Downloads 轻量分析三态终审（采纳 7/修正 6——含 description 均值实测 163 字为 Matt model 档 4-5 倍、部分推翻"体量治理有自觉无制度"——doc-standards 对账命令已是制度形态，缺的是剪枝方向制度）；随报告交付 4 课讲义（指针与调用权/完成判据与领先词/否定措辞与体量治理/中文补偿策略），每课双方原文对照
+
 - **C1 技能写作体系改造开工：Matt 侧机制级精读清单（C1-01 底稿）**：全量一手通读 mattpocock-skills 插件 1.2.3（37 个 SKILL.md + 4 份元文档，2639 行），落 `docs/research/mattpocock-skills/机制清单.md`——15 个机制主题（调用权分流/显式工具调用/完成判据/检查点/领先词/否定治理/信息层级/剪枝/词汇治理/fail-fast/子代理纪律/路由分层/模板防陈旧/格式纪律/状态机并发）每条带原文行号锚点；含与 Downloads 两份轻量分析的逐条比对（核心结论印证成立，8 处事实修正——含 user-invoked 实为 22 个而非 8 个）与 Matt 自家 5 处例外张力点。工单 C1-02 对比报告与讲义以它为机制底册
 
 - **M24（0.19.0）启动规划落盘：grill 二十问收敛 + ADR-0026 六裁定（spec 期对账增补决策七）+ spec 与 11 张工单**：`docs/adr/0026-M24权限与安全深化六裁定.md`——①权限规则引擎（项目 `.duo/settings.json` permissions 段 + 会话事件两级、`Bash(prefix:*)` 词边界、deny 恒优先、高危十根命令生成+运行时双拦）②只读 bash 免审批（38 命令 + git 四件套、复合结构 fail-closed、capability seam 接入）③计划模式硬禁（注入收缩 + pre-execute deny 兜底，M7#1 销账）④MCP 命名哈希防坍缩 + 重连耗尽终态通知⑤Web 鉴权令牌 + 标签级会话绑定最小版（M8#4 销账）⑥/model 白名单切换 + /effort 四行映射（保存意图/执行绑定分离、辅助请求降档）⑦Anthropic-messages 适配器 + `llm.provider` 显式声明（spec 对账裁定从 1.0 后菜单提进本期）；spec `.scratch/m24-permission-security/spec.md` + 11 张工单（02/03 依赖 01 地基、04 复用 03 判定器、06 先于 07 串行减冲突、11 收尾）；术语表 10 词条增改（新增权限规则/只读命令/鉴权令牌/标签会话绑定/思考等级/模型切换/工具名规范化/provider 声明，计划模式改写硬禁口径，审批小队列扩四值）；backlog 三条销账于收口（/model 运行时切换、Web 鉴权令牌、Anthropic-messages 适配），新增跨 provider 路由与 git 破坏子命令排除两条挂账
