@@ -6,7 +6,7 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 
 | 你说 | 走 |
 |---|---|
-| 开发一个功能 / 修 bug / 大需求 / 调整页面 / 实现效果 | duo-workflow（三级分流） |
+| 开发一个功能 / 修 bug / 大需求 / 实现效果 / 调整页面 / 微调 | duo-workflow（三级分流 L1/L2/L3） |
 | 提交一下代码 | duo-workflow 的提交前核对 → git-commit-gen |
 | 推一下 / 推送前检查 | duo-pre-push-checks |
 | 审查一下改动 | duo-code-review |
