@@ -275,3 +275,14 @@
   3. **「每标签一份」改造的端点清单要按「读体」「写体」分派**——GET（status/sessions/page/export/attachment-read）与 POST（message/stop/answer/new/switch）的 resolveTab 时机不同：POST 必须先排空请求体再解析标签（keep-alive 复用正确性），本次审查抓到两处逆序。
   4. **回调型装配的返回值化**——Consumer 回调承载不了「产物归谁」（WebPlugin 的 setAgent 全局单槽即分脑），Function 化让产物回流到正确的宿主；改回调签名是多宿主化的标志性动作。
 - **收口**：`mvn test` 全量 BUILD SUCCESS（935 用例 0 失败，2 既有 skip）；报告全文并入 `.scratch/m24-permission-security/issues/07-标签级会话绑定.md`。
+
+### 2026-09-24 · C1-01 审查（main 工作树，四轴制：Matt 侧机制清单底稿）
+
+- **范围与轮次**：四轴（Standards / Spec 新上下文子代理并行；行级轴与 Java 规范轴按轴定义为空集执行——4 文件全为文档不入行级名单、Java diff = 0，非豁免；基点 = 工作树 vs HEAD）→ 修复 → docs:build 收口。
+- **计数**：Standards 8（事实错误 3 + 文字 2 + 一致性 2 + 轻微 1）；Spec 4（与 Standards 重叠 3 + 独立核清单一揽子通过）。处置：修 8 / 记档 3。零阻断，Spec 轴正确性清单全过。
+- **最重的发现**：①初稿 §17.5 断言 hitl-loop.template.sh「插件内无该文件」——两轴独立实测文件存在于 diagnosing-bugs/scripts/，负向断言无证据；②loop-me 锚点 45-47 系持久化输出文件的行号冒充 SKILL.md 行号（该文件仅 32 行，附表自己都写了 32）。
+- **模式化问题（本次新识别）**：
+  1. **从持久化输出转录锚点必须逐条带文件名前缀核对**——批量 cat -n 多文件输出被 persist 后再读时，log 自身行号与 SKILL.md 行号在同屏出现，转录时极易串行号；跨文件批读的锚点要在写死前抽查「行号 ≤ 文件总行数」这一廉价不变量。
+  2. **负向断言（不存在/无此文件/未实现）与正向断言同价，需同价证据**——断言「插件内无此文件」前必须 find 全插件；「我没找到」≠「它不存在」。
+  3. **计数类陈述（「七词条」「两条 on-ramp」）落笔时重数一遍**——本次 3 处计数/数量词错误全是照感觉写数；被引对象自身的枚举与其数量词冲突时（ask-matt two on-ramps 列三项），按实际枚举记录并标注原文矛盾。
+- **收口**：`npm run docs:build` 通过（1.21s，无死链）；零 Java 触碰不触发全量回归；报告全文并入 `.scratch/c1-skill-writing/issues/01-matt侧机制精读与机制清单.md` 审查轮小节。
