@@ -28,6 +28,8 @@
 
 ### Changed
 
+- **ADR-0027 技能写作规范移植与调用权分流（C1 决策段，含 harness 能力探测）**：立 `docs/adr/0027-技能写作规范移植与调用权分流.md`——①移植 writing-for-agents 五支柱为中文《技能写作规范》（工单 04 交付，附 duo 正反例池，与 duo-prose-standard 分工不改）；②调用权分流探测结论记档：ZCode skills frontmatter 白名单五键（`adapters/src/skills/index.ts:21-27`，锚点 872ad96）不含 `disable-model-invocation`，技能清单全量注入无过滤（`sections/skills.ts:17-37`），写入该字段唯一副作用是 safeToAutoLoad=false 且其唯一消费方是 /skills 展示——**硬隔离不具备条件，按语义兜底落地**（AGENTS.md 显式命令表唯一门禁面 + 技能 frontmatter 禁写该字段防误加 + 流程门禁强制力改判据承担），ZCode 未来支持时按记档升级；③改写组纪律（description 与路由表同 diff、显式调用形态、保留资产清单、变更历史迁出）；sidebar 补 0027 条目，导航对账 27+1 全绿
+
 - **C1-02 duo 侧逐技能对照与对比报告 + 讲义**：以 C1-01 机制清单 15 主题为对照系，一手通读 duo 侧 16 技能（15 duo-* 共 1458 行 + release-notes），落 `docs/research/mattpocock-skills/对比报告.md`——逐技能 gap 对照（每条带双方行号锚点）+ 15 机制覆盖矩阵（duo 侧 3 项 ✓：brief 填空模板/模板文化/状态机自发长出；9 项 ◐；3 项 ✗：调用权分流/显式调用/词汇治理全缺）+ Downloads 轻量分析三态终审（采纳 7/修正 6——含 description 均值实测 163 字为 Matt model 档 4-5 倍、部分推翻"体量治理有自觉无制度"——doc-standards 对账命令已是制度形态，缺的是剪枝方向制度）；随报告交付 4 课讲义（指针与调用权/完成判据与领先词/否定措辞与体量治理/中文补偿策略），每课双方原文对照
 
 - **C1 技能写作体系改造开工：Matt 侧机制级精读清单（C1-01 底稿）**：全量一手通读 mattpocock-skills 插件 1.2.3（37 个 SKILL.md + 4 份元文档，2639 行），落 `docs/research/mattpocock-skills/机制清单.md`——15 个机制主题（调用权分流/显式工具调用/完成判据/检查点/领先词/否定治理/信息层级/剪枝/词汇治理/fail-fast/子代理纪律/路由分层/模板防陈旧/格式纪律/状态机并发）每条带原文行号锚点；含与 Downloads 两份轻量分析的逐条比对（核心结论印证成立，8 处事实修正——含 user-invoked 实为 22 个而非 8 个）与 Matt 自家 5 处例外张力点。工单 C1-02 对比报告与讲义以它为机制底册
