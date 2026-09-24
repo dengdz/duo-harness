@@ -28,6 +28,8 @@
 
 ### Changed
 
+- **M24（0.19.0）启动规划落盘：grill 二十问收敛 + ADR-0026 六裁定（spec 期对账增补决策七）+ spec 与 11 张工单**：`docs/adr/0026-M24权限与安全深化六裁定.md`——①权限规则引擎（项目 `.duo/settings.json` permissions 段 + 会话事件两级、`Bash(prefix:*)` 词边界、deny 恒优先、高危十根命令生成+运行时双拦）②只读 bash 免审批（38 命令 + git 四件套、复合结构 fail-closed、capability seam 接入）③计划模式硬禁（注入收缩 + pre-execute deny 兜底，M7#1 销账）④MCP 命名哈希防坍缩 + 重连耗尽终态通知⑤Web 鉴权令牌 + 标签级会话绑定最小版（M8#4 销账）⑥/model 白名单切换 + /effort 四行映射（保存意图/执行绑定分离、辅助请求降档）⑦Anthropic-messages 适配器 + `llm.provider` 显式声明（spec 对账裁定从 1.0 后菜单提进本期）；spec `.scratch/m24-permission-security/spec.md` + 11 张工单（02/03 依赖 01 地基、04 复用 03 判定器、06 先于 07 串行减冲突、11 收尾）；术语表 10 词条增改（新增权限规则/只读命令/鉴权令牌/标签会话绑定/思考等级/模型切换/工具名规范化/provider 声明，计划模式改写硬禁口径，审批小队列扩四值）；backlog 三条销账于收口（/model 运行时切换、Web 鉴权令牌、Anthropic-messages 适配），新增跨 provider 路由与 git 破坏子命令排除两条挂账
+
 - **Web 停止入口并入发送按钮（工单 07 验收反馈）**：发送/思考中/停止一钮三态——受理后同钮转【停止】（危险色，点按协作式中断，收口后复位【发送】），运行中注入保持停止态；移除独立停止按钮，键盘回车始终为发送（执行中即注入）
 
 ### Fixed

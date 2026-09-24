@@ -53,7 +53,7 @@
 
 - [ ] **Web 斜杠命令执行异步化**：/compact 等命令同步执行于 HTTP 线程，LLM 摘要无超时兜底可长挂（CLI 同步可接受）；方向 = 202 受理 + 结果经既有 command/done 事件流呈现。来源：M19 双轴审查 P2（2026-09-19）。
 - [x] （已销账）**CLI 运行中 steer 入口**：来源 ADR-0020 决策 9（2026-09-19）。→ 已于 M23-01 落地销账（ADR-0025 决策一）：CLI 事件驱动主循环 + 两级收件箱，执行期键入注入 next-step 并回显「已插队」（2026-09-21）
-- [x] （已排期）**/model 运行时切换** → M24 搭车（ADR-0024 修订，随 /effort 同批）：同 provider 换模型名 + 会话事件 + resume 保存意图/执行绑定分离；跨 provider 需 yml 预声明。销账于 M24 收口
+- [x] （已销账）**/model 运行时切换**：来源 ADR-0024 修订 / ADR-0026 决策六。→ 已于 M24-09 落地销账：`llm.models` 白名单 + `/model` 切换落 `model/intent` 会话事件 + resume 意图横幅不自动切（2026-09-23 验收）；跨 provider 路由维持 1.0 后菜单
 
 ## 1.0 后菜单（DSH 全景复审补充，2026-09-17，ADR-0016 拒绝项对应池）
 
@@ -72,9 +72,9 @@
 ## M22 探测里程碑对账（2026-09-21，ADR-0023）
 
 （已销账）**glob/grep .gitignore 语义**（M12#2）：来源 ADR-0024。→ 已于 M23-08 落地销账（ADR-0025 决策三，红线 4 拒捆绑 rg）：自研忽略判定器，glob/grep/@file 三消费点同口径（2026-09-22）
-（已排期）**Web 鉴权令牌 + bind** → M24 正式范围（ADR-0024，含标签级会话绑定最小版），本条销账于 M24 收口
+（已销账，bind 半边除外）**Web 鉴权令牌 + 标签级会话绑定最小版**：来源 ADR-0024 / ADR-0026 决策五。→ 令牌已于 M24-06 落地销账（启动随机 token、全端点 403 fail-closed、`web.auth: none` 显式关闭横幅警示）；标签绑定已于 M24-07 落地销账（tabId 多会话并存、卡片按标签路由）；bind（绑定地址配置化）未入本期，挂 limitations M8#1 保留（2026-09-24）
 
 ## M24 对账（2026-09-22，ADR-0026）
 
-（已排期）**Anthropic-messages 协议适配** → M24 正式范围（ADR-0026 决策七，spec 期对账裁定：/effort Anthropic 行 thinking+budget 需真适配器落地，原 1.0 后菜单提进），随实现销账于 M24
+（已销账）**Anthropic-messages 协议适配**：来源 ADR-0026 决策七。→ 已于 M24-08 落地销账：AnthropicMessagesAdapter（SSE 流式、tool_use/tool_result 块映射、x-api-key 鉴权头）+ `llm.provider` 四值声明；DeepSeek Anthropic 网关真端点实测通过（2026-09-23）
 - [ ] **参考项目工程化探测**（原探测批 B11）：DSH/ZCode 测试哲学/CI 门禁/打包分发（SEA/electron-builder）/更新通道的机制级探查。来源：ADR-0023 裁定砍出探测范围。→ 1.0 后菜单；DSH 测试哲学已见 docs/research/DSH/总览.md §3
