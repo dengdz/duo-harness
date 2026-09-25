@@ -9,7 +9,7 @@
 01
 
 ## Status
-in-progress（实现与自动化验证完成；验收 seam 为自动化 + 可复跑命令，手动演示见 Comments）
+done（2026-09-25 用户实测验收通过——滚动裁剪两次触发、原始日志可回放、零 summary 烧钱）
 
 ## Checklist
 - [x] 裁剪机制落地（触发阈值 + 保最近 N 组，缺省值实现期定并在配置可见）
@@ -24,7 +24,7 @@ in-progress（实现与自动化验证完成；验收 seam 为自动化 + 可复
 - 2026-09-25：**TDD seam**（自主模式按 spec Testing Decisions 定）：①选择器纯函数矩阵 8 用例（白名单/失败豁免/媒体豁免/分组保留/组数不足/过短/最小节省/顺序）②投影 4 用例（占位替换/名单累积/压缩点重置/重放恢复）③治理挂点 3 用例（触发+事件痕+替换/开关/放弃后压缩照常）。15 用例先行，实现期两遍法修正一处流式遍历缺陷（测试抓到）。
 - 2026-09-25：**留 05 的接口现状**：micro 先于 compaction 的顺序已定（ZCode 同序）；熔断计数、rapid-refill、summary 请求预算隔离未动（05 范围）；microApplied 时 compaction 计量口径切换（usage→本地估算）请 05 复核。
 - 2026-09-25：全量 969 用例 0 失败（2 既有 skip）。
-- **待用户手动验收（可复跑命令）**：触发需超微缩阈值（缺省 92k tokens），人工触发用小窗口配置——agent-demo.yml 的 cli 行临时加 `governance: {contextWindowTokens: 3000, microcompactKeepRecent: 2}`（micro 阈值降为 ~400 tokens），启动 CLI 连聊几轮带工具调用的对话（如"读一下 pom.xml"×4），然后终端 `grep -c "context/microcompacted" ~/.duo/agent-sessions/<最新会话>.jsonl` ≥ 1 且 `grep "旧工具结果已清除"` 可见占位；验收后还原 yml。或直接信任自动化证据（15 用例三 seam）跳过手动演示。
+- **验收通过（2026-09-25，用户实测 + 日志证据核对，会话 20260925-180850-9f21）**：小窗口配置（窗口 3000 / keepRecent 2）触发滚动裁剪——第 3 轮请求清第 1 组 read 结果（freedTokens=699）、第 4 轮请求清第 2 组（freedTokens=475），两次 `context/microcompacted` 事件落盘；模型行为判据过：明确说"第一轮读 pom.xml 的原始工具结果已被 microcompact 清除、无法凭记忆逐字引用"，但仍记得自己第一轮的总结（assistant 文本保留语义精确命中）；原始 JSONL 原文完整（可回放）；`context/compacted` 零次——零 summary 烧钱。验收用临时 yml 配置已还原。
 
 ## 审查轮（2026-09-25·第 1 轮·四轴）
 
