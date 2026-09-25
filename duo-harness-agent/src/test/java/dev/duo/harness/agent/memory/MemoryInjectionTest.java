@@ -36,7 +36,7 @@ class MemoryInjectionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：MemoryInjectionTest —— 记忆注入：消息序列最前、不落会话、降级零注入（3 用例） ===");
+        System.out.println("\n=== 套件：MemoryInjectionTest —— 记忆注入：消息序列最前、不落会话、降级零注入、事件痕（4 用例） ===");
     }
 
     @TempDir
@@ -112,6 +112,78 @@ class MemoryInjectionTest {
         assertTrue(session.deriveMessages().stream()
                         .noneMatch(m -> String.valueOf(m.content()).contains("用户偏好中文回复")),
                 "记忆段不得进会话日志");
+        session.close();
+    }
+
+    @Test
+    void 写入走agent循环留会话事件痕() throws IOException {
+        // checklist「写入留会话事件」：memory_write 经 agent 循环执行时，事件流
+        // 成对落 tool/call + tool/result（可回放可审计）；文件同步落盘
+        Path file = tempDir.resolve("MEMORY.md");
+        Session session = newSession();
+        dev.duo.harness.agent.prompt.PromptRegistry prompts =
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示");
+        MemoryBook memory = new MemoryBook(file, MemoryBook.DEFAULT_BUDGET_CHARS);
+        ToolsService singleTool = new ToolsService() {
+            @Override
+            public dev.duo.harness.core.api.Disposable register(
+                    dev.duo.harness.core.api.Context registrant, ToolDefinition definition) {
+                throw new UnsupportedOperationException("测试不走 register");
+            }
+
+            @Override
+            public dev.duo.harness.core.api.Disposable guard(
+                    dev.duo.harness.core.api.Context registrant,
+                    dev.duo.harness.tools.GuardCheck check) {
+                throw new UnsupportedOperationException("测试不走 guard");
+            }
+
+            @Override
+            public java.util.List<ToolDefinition> list() {
+                return java.util.List.of(new MemoryWriteTool(memory));
+            }
+
+            @Override
+            public ToolResult execute(String toolName, com.fasterxml.jackson.databind.JsonNode args) {
+                try {
+                    return ToolResult.of(new MemoryWriteTool(memory).execute(
+                            new dev.duo.harness.tools.ToolExecution(toolName, args)));
+                } catch (Exception e) {
+                    return ToolResult.error(String.valueOf(e.getMessage()));
+                }
+            }
+        };
+        List<ChatRequest> captured = new ArrayList<>();
+        ToolCallingAgent agent = new ToolCallingAgent(
+                new LlmAdapter() {
+                    private int turn;
+
+                    @Override
+                    public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                        throw new UnsupportedOperationException("测试主循环走 streamTurn");
+                    }
+
+                    @Override
+                    public LlmTurn streamTurn(ChatRequest request, java.util.function.Consumer<String> textSink) {
+                        captured.add(request);
+                        if (turn++ == 0) {
+                            return new LlmTurn("好", List.of(new dev.duo.harness.llm.ToolCallRequest(
+                                    "call-1", "memory_write",
+                                    "{\"content\":\"记住：事件痕验证\"}")));
+                        }
+                        textSink.accept("已记住");
+                        return new LlmTurn("已记住", List.of());
+                    }
+                }, singleTool, session, prompts, 10, 1,
+                null, null, null, false, null, null, memory);
+
+        agent.send("记住：事件痕验证", AgentListener.NONE);
+
+        List<String> types = session.events().stream()
+                .map(dev.duo.harness.session.SessionEvent::type).toList();
+        assertTrue(types.contains(dev.duo.harness.session.SessionEvent.TOOL_CALL), "事件流含 tool/call: " + types);
+        assertTrue(types.contains(dev.duo.harness.session.SessionEvent.TOOL_RESULT), "事件流含 tool/result: " + types);
+        assertTrue(memory.read().contains("记住：事件痕验证"), "工具执行落盘");
         session.close();
     }
 

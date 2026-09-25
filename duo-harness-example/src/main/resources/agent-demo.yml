@@ -54,9 +54,10 @@ plugins:
     name: dev.duo.harness.agent.prompt.AgentsMdPlugin
     config: {}
 
-  # 记忆本（M25 工单 02）：项目根 .duo/MEMORY.md（不入 git）跨会话记忆——每轮
+  # 记忆本（M25 工单 02/03）：项目根 .duo/MEMORY.md（不入 git）跨会话记忆——每轮
   # 请求以 <memory> 段注入（预算截尾，16KB 缺省），缺席/为空静默降级零感知；
-  # memory-guide 规范段随记忆本在场注册进 prompt 注册表。budgetChars 可省
+  # memory-guide 规范段（读路径 + 写协议）随功能可用注册；tools 行在场时挂
+  # memory_write 写入工具（会话中"记住 X"落盘，追加式不吞手改）。budgetChars 可省
   - id: memory
     name: dev.duo.harness.agent.memory.MemoryPlugin
     config: {}

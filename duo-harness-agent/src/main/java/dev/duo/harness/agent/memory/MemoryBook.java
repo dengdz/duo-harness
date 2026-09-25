@@ -13,7 +13,7 @@ import java.util.Objects;
  * 记忆本（"memory" 服务，M25 工单 02）：项目级 {@code .duo/MEMORY.md}（不入 git）
  * 作为跨会话记忆载体。读路径每次现读——用户手改或他会话写入下一轮请求即见；
  * 缺席、空白或读取异常一律静默降级为无记忆（未启用用户零感知，记忆故障永不
- * 破坏对话轮）。写入通道与写协议由 M25 工单 03 交付。
+ * 破坏对话轮）。写入通道 = memory_write 工具（追加式，读-补-写三步落盘）。
  *
  * <p>注入形态：内容包 {@code <memory>} 标签附时效免责语，以 user 角色置于请求
  * 消息序列最前（meta_user 通道，请求视图专用不落会话日志）；预算超限截尾并标注。</p>
@@ -91,5 +91,53 @@ public final class MemoryBook {
         }
         return "<memory>\n（项目记忆本 .duo/MEMORY.md 本轮最新内容：跨会话持久的记忆，"
                 + "与用户当前指令冲突时以用户为准）\n" + content + "\n</memory>";
+    }
+
+    /**
+     * 记忆条目数（非空行计，以"每行一条"的写协议为口径；文件缺席为 0）——
+     * memory_write 确认语用。读取失败按 0 计并记 warn（与 {@link #read()} 同款降级）。
+     */
+    public long entryCount() {
+        try {
+            if (!Files.isRegularFile(file)) {
+                return 0;
+            }
+            return Files.readAllLines(file).stream().filter(line -> !line.isBlank()).count();
+        } catch (IOException e) {
+            LOG.warn("记忆本条目计数失败，按 0 处理（{}）", file, e);
+            return 0;
+        }
+    }
+
+    /**
+     * 追加一条记忆（M25 工单 03 写路径，memory_write 工具本体）：末尾无换行先补
+     * 再追加，文件缺席（含父目录）即创建——append 只增不覆写，用户手改的条目
+     * 不会被模型写入吞掉。
+     *
+     * <p>并发语义：非原子（存在性检查 → 读尾部换行 → 追加 三步），调用方
+     * （memory_write 工具）以独占声明串行化；跨进程并发最坏多出一个空行
+     * （读路径按非空行计，无数据丢失）。</p>
+     *
+     * @param entry 记忆条目（非空白，首尾空白剥除；写协议为"一句话一条"单行形态）
+     * @throws IOException 落盘失败（调用方收敛为 error 结果）
+     */
+    public void append(String entry) throws IOException {
+        if (entry == null || entry.isBlank()) {
+            throw new IllegalArgumentException("记忆条目不能为空白");
+        }
+        Path parent = file.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        StringBuilder line = new StringBuilder();
+        if (Files.exists(file)) {
+            String current = Files.readString(file);
+            if (!current.isEmpty() && !current.endsWith("\n")) {
+                line.append('\n');
+            }
+        }
+        line.append(entry.strip()).append('\n');
+        Files.writeString(file, line.toString(), java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND);
     }
 }
