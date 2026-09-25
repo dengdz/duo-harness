@@ -32,11 +32,11 @@ public final class MemoryPlugin implements Plugin<JsonNode> {
     /** 配置键：注入预算字符数。 */
     private static final String BUDGET_CHARS_CONFIG = "budgetChars";
 
-    /** 规范段文本（读路径语义；写协议文本随工单 03 增补）。 */
+    /** 规范段文本（读路径语义；指令形态——BUG-20260925-02：信息性表述不约束模型行为。写协议随工单 03 增补）。 */
     static final String GUIDE_TEXT = """
             ## memory 记忆本（.duo/MEMORY.md）
 
-            本项目维护跨会话记忆本：项目根 `.duo/MEMORY.md`（个人记忆，不入 git）。其当前内容每轮请求以 <memory> 段注入——条目为用户与既往会话沉淀的持久记忆，可能过时；与用户当前指令冲突时，以用户当前指令为准。""";
+            本项目维护跨会话记忆本：项目根 `.duo/MEMORY.md`（个人记忆，不入 git）。其内容每轮请求以 <memory> 段注入——回答与记忆本相关的问题时，直接引用本轮 <memory> 段作答：它是当前最新内容，无需再读取该文件（除非用户明确要求查看文件本身）。条目为用户与既往会话沉淀的持久记忆，可能滞后于项目现状；与用户当前指令冲突时，以用户当前指令为准。""";
 
     @Override
     public Set<String> inject() {

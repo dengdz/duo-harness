@@ -23,6 +23,8 @@ in-progress
 - 2026-09-25：实现完成。**TDD seam 选择**（spec 授权工单期定，自主模式按既有先例定）：①MemoryBook 纯函数（读载/预算截尾/三态降级）②ToolCallingAgent.buildRequest 注入（捕获式适配器断言请求视图）③Boot.from 装配（服务发布 + 规范段注册 + 预算配置）。11 用例先行红后绿。
 - 2026-09-25：**交付形态**：`agent.memory` 新包（MemoryBook "memory" 服务 / MemoryPlugin / package-info）；meta_user 通道 = 现读内容包 `<memory>` 标签附时效免责语，以 user 角色置于消息序列最前（请求视图专用不落会话日志，治理投影之后组装不被压缩吞）；预算 16KB 缺省（budgetChars 可配）截尾+标注；规范段 memory-guide 随记忆本在场注册（读路径语义，写协议文本随工单 03 增补）。CLI/Web/headless 三消费位接线（optionalInject + hasService + 视图接口，服务名与视图方法名逐字一致）；子代理走旧重载零注入（任务域隔离，符合 ZCode 同构）。测试 948 全绿（0 失败，2 既有 skip）。
 - 2026-09-25：**Status 停 in-progress（缺用户手动验证）**。手动验收件（复跑命令，跑完可删）：`mkdir -p .duo && printf '- 这个项目用 Maven 构建，回复保持中文\n' > .duo/MEMORY.md`，按运行Demo.md 命令块**整块复制**启动 CLI，新会话问「记忆本里记了什么」——模型应直接答出两条内容（注入生效）；`rm .duo/MEMORY.md` 清场。端到端的自动化覆盖在共享执行链层（MemoryInjectionTest 断言请求视图含 `<memory>` 段、MemoryPluginTest 断言装配发布），CLI/Web 模块级重复测试不另设（spec Testing Decisions 的 web/CLI 端到端由本手动验收承担）。
+- 2026-09-25：**用户手动验收（第一轮）记录**：注入通道与现读语义**得证**——次问"最喜欢的数字"模型零工具调用、直接引用"本轮注入的 `<memory>` 段"答出另终端刚改的 42（未重启即生效）；负例（空文件）无报错静默降级通过。同时暴露 **BUG-20260925-02**：首问模型先 `[调工具] read` 文件再答——guide 信息性措辞不构成采信约束、header"可能过时"被模型反向归因到本轮新鲜注入段。已修（guide 增指令句 + header 锚定"本轮最新内容"，Memory 三套件回归绿），档案 `.scratch/bugs/BUG-20260925-02.md`。验收步骤缺陷记档：rm 清场应明示"在终端执行"（用户在 CLI 输入被模型接手走审批，文件被清空未删除）。
+- **待复验（采信层，mock 原理上锁不住）**：恢复记忆内容 → 重启 CLI → `/new` → 问"我的记忆本里记了什么？"→ 判据 = **不出现 `[调工具] read`**，直接作答。通过即工单转 done + bug 转 done。Status 维持 in-progress。
 - 2026-09-25：**审查记档（第 1 轮·四轴，报告见下）**。挂账/豁免处置：①guide 规范段=装配时快照判定 vs 注入=每请求现读的不对称已 JavaDoc 记档，工单 03 写路径落地时收敛时机；②budgetChars 非法值静默回退缺省（与呈现位 parse* 抛错惯例相悖，但与直接先例 AgentsMdPlugin 逐字同款）——仓库级统一化议题不本单翻案；③budget 解析/截尾逻辑与 AgentsMd 同形重复——第 3 消费方出现时提取共享；④装配 13/15 参线性增长——工单 03 前评估装配参数对象。
 
 ## 审查轮（2026-09-25·第 1 轮·四轴）

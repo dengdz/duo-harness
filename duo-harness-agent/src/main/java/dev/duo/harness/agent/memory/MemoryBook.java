@@ -80,15 +80,16 @@ public final class MemoryBook {
     }
 
     /**
-     * meta_user 请求段：记忆内容包 {@code <memory>} 标签 + 时效免责语；无记忆
-     * （{@link #read()} 为 null）→ null，调用方零注入。
+     * meta_user 请求段：记忆内容包 {@code <memory>} 标签 + 采信指令（header 锚定
+     * "本轮最新内容"防历史读取结果反向归因，配 guide 指令句约束模型直接引用）；
+     * 无记忆（{@link #read()} 为 null）→ null，调用方零注入。
      */
     public String metaUserSection() {
         String content = read();
         if (content == null) {
             return null;
         }
-        return "<memory>\n（项目记忆本 .duo/MEMORY.md：跨会话持久的记忆，可能过时；"
+        return "<memory>\n（项目记忆本 .duo/MEMORY.md 本轮最新内容：跨会话持久的记忆，"
                 + "与用户当前指令冲突时以用户为准）\n" + content + "\n</memory>";
     }
 }
