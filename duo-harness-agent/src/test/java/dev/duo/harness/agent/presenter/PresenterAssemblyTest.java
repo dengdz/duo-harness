@@ -339,7 +339,7 @@ class PresenterAssemblyTest {
         // 装配消费断言：Tuning 注入治理器后阈值生效——压缩触发阈值 = 窗口 × 比例（occupancy 可观测）
         ContextGovernance governance = PresenterAssembly.governance(
                 scriptedAdapter("占位"),
-                new ContextGovernance.Tuning(null, null, 0.5, 32000L, null, null));
+                new ContextGovernance.Tuning(null, null, 0.5, 32000L, null, null, null, null));
 
         assertEquals(16000L, governance.occupancyThresholdTokens(), "压缩阈值 = 32000 × 0.5");
         assertEquals(32000L, governance.occupancyWindowTokens(), "状态面窗口取生效配置");

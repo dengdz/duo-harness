@@ -477,6 +477,17 @@ public final class Session {
     public List<Message> deriveMessages() {
         List<Message> messages = new ArrayList<>();
         List<AttachmentRef> pending = new java.util.ArrayList<>();
+        // microcompact 裁剪名单（M25 工单 04）：裁剪点落痕于结果之后，作用回溯到
+        // 之前的 tool/result（callId 全局唯一）——先预扫描全名单再投影。压缩点总结
+        // 已涵盖此前历史：其之前的名单作废（旧 callId 不复存在，防压缩后同名调用误伤）
+        java.util.Set<String> microcompacted = new java.util.HashSet<>();
+        for (SessionEvent event : events()) {
+            if (SessionEvent.MICROCOMPACT.equals(event.type())) {
+                microcompacted.addAll(microcompactClearedIds(event));
+            } else if (SessionEvent.COMPACTION.equals(event.type())) {
+                microcompacted.clear();
+            }
+        }
         for (SessionEvent event : events()) {
             if (SessionEvent.USER_ATTACHMENT.equals(event.type())) {
                 // 附件引用（M21，ADR-0022）：挂到紧随其后的 user 消息（多部件投影）
@@ -507,10 +518,16 @@ public final class Session {
                                 event.toolCallId(), event.toolName(), event.text())), event.reasoning()));
                 case SessionEvent.TOOL_RESULT -> {
                     var images = readImageRef(event);
-                    messages.add(images == null
-                            ? Message.tool(event.toolCallId(), event.text())
-                            : Message.toolWithAttachments(event.toolCallId(), event.text(),
-                                    List.of(images)));
+                    if (microcompacted.contains(event.toolCallId())) {
+                        // 已被 microcompact 裁剪（M25 工单 04）：占位标记替换（原文在日志）
+                        messages.add(Message.tool(event.toolCallId(),
+                                SessionEvent.MICROCOMPACT_CLEARED_MARKER));
+                    } else if (images == null) {
+                        messages.add(Message.tool(event.toolCallId(), event.text()));
+                    } else {
+                        messages.add(Message.toolWithAttachments(event.toolCallId(), event.text(),
+                                List.of(images)));
+                    }
                 }
                 case SessionEvent.SUBAGENT_COMPLETED ->
                         messages.add(new Message(Message.Role.USER, event.text()));
@@ -586,6 +603,22 @@ public final class Session {
             }
         }
         return out;
+    }
+
+    /** microcompact 事件名单解析（text = {"cleared":[...],"freedTokens":n}）；坏 JSON 降级为空名单——裁剪事件只做减法，坏数据不阻断投影。 */
+    private static java.util.List<String> microcompactClearedIds(SessionEvent event) {
+        try {
+            var root = JSON.readTree(event.text());
+            var cleared = root.get("cleared");
+            if (cleared == null || !cleared.isArray()) {
+                return java.util.List.of();
+            }
+            java.util.List<String> ids = new java.util.ArrayList<>();
+            cleared.forEach(n -> ids.add(n.asText()));
+            return ids;
+        } catch (Exception e) {
+            return java.util.List.of();
+        }
     }
 
     /** 投影判定：该事件是否入对话消息列表（与 {@link #deriveMessages} 同一语义，尾部窗口映射复用）。 */
@@ -906,6 +939,10 @@ public final class Session {
                     .put("completionTokens", event.usage().completionTokens())
                     .put("totalTokens", event.usage().totalTokens());
         }
+        if (event.error()) {
+            // 失败标志（M25 工单 04）：仅 true 落盘——旧日志缺字段即 false，日志更瘦
+            node.put("error", true);
+        }
         return JSON.writeValueAsString(node);
     }
 
@@ -923,11 +960,14 @@ public final class Session {
                     usageNode.path("promptTokens").asLong(0),
                     usageNode.path("completionTokens").asLong(0),
                     usageNode.path("totalTokens").asLong(0));
+            // error 失败标志（M25 工单 04）：旧日志无此字段 = false（非已知失败，可裁）
+            JsonNode errorNode = node.get("error");
+            boolean error = errorNode != null && errorNode.asBoolean(false);
             return new SessionEvent(type, at, text,
                     idNode == null || idNode.isNull() ? null : idNode.asText(),
                     nameNode == null || nameNode.isNull() ? null : nameNode.asText(),
                     reasoningNode == null || reasoningNode.isNull() ? null : reasoningNode.asText(),
-                    usage);
+                    usage, error);
         } catch (IOException e) {
             throw new PluginException("会话事件解析失败: " + line, e);
         }

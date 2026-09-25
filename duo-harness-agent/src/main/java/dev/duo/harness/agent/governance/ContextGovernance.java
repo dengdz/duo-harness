@@ -14,18 +14,22 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 上下文治理管线（M9，ADR-0007 v3 具名整期）：模型上下文构造时刻的读侧转换——
- * spill（超大工具结果卸载）→ 修剪（次长结果头尾收窄）→ 计量 → compaction（远端
- * 历史折叠为摘要）。**第一性约束：治理只影响"模型看到什么"，不影响"日志记了
- * 什么"**——入参出参都是投影消息，JSONL 日志永远完整，回放与审计语义不动摇。
+ * spill（超大工具结果卸载）→ 修剪（次长结果头尾收窄）→ microcompact（免模型本地
+ * 裁剪旧工具结果，M25 工单 04）→ 计量 → compaction（远端历史折叠为摘要）。
+ * **第一性约束：治理只影响"模型看到什么"，不影响"日志记了什么"**——入参出参都是
+ * 投影消息，JSONL 日志永远完整，回放与审计语义不动摇。
  *
- * <p>顺序即协同（DSH 经验）：spill 先卸能卸的 → pruner 收窄次长的 → 计量判断 →
- * 仍超预算才触发 compaction——修剪前置可能让压缩不必发生。六个行为阈值经
- * {@link Tuning} 注入（web/cli 装配的 yml {@code governance} 段），字段缺省
- * 回退本类常量——不配置即缺省行为。summary 生成复用 {@link LlmAdapter} 直答形态。</p>
+ * <p>顺序即协同（DSH 经验）：spill 先卸能卸的 → pruner 收窄次长的 → microcompact
+ * 在逼近窗口时先试免模型裁剪 → 仍超预算才触发 compaction——前置环节可能让后置
+ * 不必发生。行为阈值经 {@link Tuning} 注入（web/cli 装配的 yml {@code governance}
+ * 段），字段缺省回退本类常量——不配置即缺省行为。summary 生成复用
+ * {@link LlmAdapter} 直答形态。</p>
  *
  * <p>线程约定：实例非线程安全——随 agent 循环串行使用。</p>
  */
@@ -51,6 +55,21 @@ public final class ContextGovernance {
     /** compaction 触发的最小远端消息数：太少没有折叠价值（近端之外寥寥数条）。 */
     static final int MIN_REMOTE_MESSAGES = 4;
 
+    /**
+     * microcompact 完整保留的最近组数（M25 工单 04，组 = 一条用户消息起的段落）——
+     * ZCode keepRecent=5 同构：最近 N 组什么都不动，更早的只清白名单工具结果。
+     */
+    static final int MICROCOMPACT_KEEP_RECENT_GROUPS = 5;
+
+    /**
+     * microcompact 触发缓冲（token）：microcompact 阈值 = min(0.9 × 压缩阈值，
+     * 压缩阈值 − 本值)——ZCode 同构公式，本地裁剪先于模型压缩触发，留出裁剪量的余地。
+     */
+    static final long MICROCOMPACT_BUFFER_TOKENS = 2_000;
+
+    /** microcompact 触发比例（对压缩阈值的折让系数）。 */
+    static final double MICROCOMPACT_RATIO = 0.9;
+
     /** spill 预览头长（字符）。 */
     static final int SPILL_PREVIEW_HEAD = 1_000;
 
@@ -74,10 +93,13 @@ public final class ContextGovernance {
      * @param keepRecentRatio          （已停用）事件化压缩总结压缩点之前全部历史，无"近端保留"概念
      *                                 ——字段保留解析兼容既有 yml，值被忽略
      * @param minRemoteMessages        compaction 触发的最小远端消息数（正）
+     * @param microcompactEnabled      microcompact 本地裁剪开关（M25 工单 04；缺省 true）
+     * @param microcompactKeepRecent   microcompact 完整保留的最近组数（正；缺省 5）
      */
     public record Tuning(Integer spillThresholdChars, Integer pruneThresholdChars,
                          Double compactionThresholdRatio, Long contextWindowTokens,
-                         Double keepRecentRatio, Integer minRemoteMessages) {
+                         Double keepRecentRatio, Integer minRemoteMessages,
+                         Boolean microcompactEnabled, Integer microcompactKeepRecent) {
     }
 
     /**
@@ -100,6 +122,8 @@ public final class ContextGovernance {
     private final double compactionThresholdRatio;
     private final long contextWindowTokens;
     private final int minRemoteMessages;
+    private final boolean microcompactEnabled;
+    private final int microcompactKeepRecent;
 
     public ContextGovernance(LlmAdapter llm) {
         this(llm, null);
@@ -117,13 +141,18 @@ public final class ContextGovernance {
                 ? CONTEXT_WINDOW_TOKENS : tuning.contextWindowTokens();
         this.minRemoteMessages = tuning == null || tuning.minRemoteMessages() == null
                 ? MIN_REMOTE_MESSAGES : tuning.minRemoteMessages();
+        this.microcompactEnabled = tuning == null || tuning.microcompactEnabled() == null
+                ? true : tuning.microcompactEnabled();
+        this.microcompactKeepRecent = tuning == null || tuning.microcompactKeepRecent() == null
+                ? MICROCOMPACT_KEEP_RECENT_GROUPS : tuning.microcompactKeepRecent();
     }
 
     /**
      * 治理管线入口：投影消息进、投影消息出——出参即"模型本轮看到的会话"。
      *
      * @param messages 会话投影（deriveMessages 产物，不可变列表）
-     * @param session  所属会话（spill 落盘目录来源；仅读取元信息不写入事件）
+     * @param session  所属会话（spill 落盘目录来源；microcompact 裁剪点与 compaction
+     *                 压缩点经其 append 落痕）
      * @return 治理后的投影（可能原样返回——未触发任何治理时零开销透传）
      */
     public List<Message> govern(List<Message> messages, dev.duo.harness.session.Session session) {
@@ -134,16 +163,78 @@ public final class ContextGovernance {
         long contextTokens = usage != null
                 ? usage.promptTokens() + usage.completionTokens()
                 : estimate;
-        List<Message> governed = compact(
-                spillAndPrune(messages, session),
-                contextThreshold(),
-                contextTokens, usage != null, session);
+        List<Message> governed = spillAndPrune(messages, session);
+        // microcompact（M25 工单 04）：逼近窗口时先试免模型本地裁剪（事件痕 + 投影替换），
+        // 降不动仍超压缩阈值才走 summary 压缩——裁剪零成本，先给免费的机会
+        boolean microApplied = false;
+        if (microcompactEnabled && contextTokens >= microcompactThreshold()) {
+            List<Message> afterMicro = microcompact(governed, session);
+            // 未触发时 microcompact 原引用透出（同引用 = 未生效信号，见其 javadoc）
+            microApplied = afterMicro != governed;
+            governed = afterMicro;
+        }
+        // compaction 计量：micro 生效时本轮改用裁剪后估算——usage 是裁剪前口径，
+        // 沿用会让刚裁剪的会话立刻再触发一次昂贵的 summary 压缩（下轮真实 usage 自然接管）
+        long compactionMeasure = microApplied
+                ? ContextBudget.estimateMessageTokens(governed) : contextTokens;
+        governed = compact(governed, contextThreshold(),
+                compactionMeasure, !microApplied && usage != null, session);
         long after = ContextBudget.estimateMessageTokens(governed);
         if (after != estimate) {
             log(messages.size() + " 条消息：估算 "
                     + estimate + " → " + after + " tokens（会话 " + session.id() + "）");
         }
         return governed;
+    }
+
+    /**
+     * microcompact 执行：选名单（豁免过滤见 {@link Microcompact}）→ 落裁剪点事件
+     * （可回放可审计——JSONL 原文不动）→ 本轮投影立即替换（后续轮经投影层复现）。
+     * 名单为空（低于最小节省）返回原引用不落事件——调用方以引用同一性判定是否生效。
+     */
+    private List<Message> microcompact(List<Message> messages, dev.duo.harness.session.Session session) {
+        List<String> cleared = Microcompact.select(messages, toolMeta(session), microcompactKeepRecent);
+        if (cleared.isEmpty()) {
+            return messages;
+        }
+        long freedChars = 0;
+        for (Message message : messages) {
+            if (Message.Role.TOOL == message.role() && cleared.contains(message.toolCallId())) {
+                freedChars += message.content() == null ? 0 : message.content().length();
+            }
+        }
+        long freedTokens = freedChars / ContextBudget.CHARS_PER_TOKEN;
+        session.append(SessionEvent.microcompact(cleared, freedTokens));
+        log("microcompact：清除 " + cleared.size() + " 条旧工具结果，估算释放 " + freedTokens
+                + " tokens（会话 " + session.id() + "）");
+        List<Message> replaced = new ArrayList<>(messages);
+        for (int i = 0; i < replaced.size(); i++) {
+            Message message = replaced.get(i);
+            if (Message.Role.TOOL == message.role() && cleared.contains(message.toolCallId())) {
+                replaced.set(i, new Message(Message.Role.TOOL,
+                        SessionEvent.MICROCOMPACT_CLEARED_MARKER, message.toolCallId(), null, null));
+            }
+        }
+        return replaced;
+    }
+
+    /** callId → 工具元数据（名 + 失败标志；会话事件流单遍扫描）。 */
+    private static Map<String, Microcompact.ToolMeta> toolMeta(dev.duo.harness.session.Session session) {
+        Map<String, Microcompact.ToolMeta> meta = new HashMap<>();
+        for (SessionEvent event : session.events()) {
+            if (event.toolCallId() == null) {
+                continue;
+            }
+            if (SessionEvent.TOOL_CALL.equals(event.type())) {
+                meta.put(event.toolCallId(), new Microcompact.ToolMeta(event.toolName(), false));
+            } else if (SessionEvent.TOOL_RESULT.equals(event.type()) && event.error()) {
+                // 失败标志以结果事件为准（覆盖调用侧预置的 false）
+                meta.put(event.toolCallId(), new Microcompact.ToolMeta(
+                        meta.containsKey(event.toolCallId())
+                                ? meta.get(event.toolCallId()).toolName() : event.toolName(), true));
+            }
+        }
+        return meta;
     }
 
     /**
@@ -161,6 +252,16 @@ public final class ContextGovernance {
     /** compaction 触发阈值（窗口 × 触发比例；窗口/比例均取生效调优值）。 */
     long contextThreshold() {
         return (long) (compactionThresholdRatio * contextWindowTokens);
+    }
+
+    /**
+     * microcompact 触发阈值（M25 工单 04）：min(0.9 × 压缩阈值, 压缩阈值 − 2000)
+     * ——ZCode 同构，本地裁剪恒先于模型压缩触发（裁剪零成本，先给免费的机会）。
+     */
+    long microcompactThreshold() {
+        long base = contextThreshold();
+        return Math.max(1, Math.min((long) (MICROCOMPACT_RATIO * base),
+                base - MICROCOMPACT_BUFFER_TOKENS));
     }
 
     /** 压缩触发阈值（生效调优观测，仅装配断言用——状态面经 {@link #occupancy} 读取，不经此方法）。 */

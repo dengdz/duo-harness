@@ -88,6 +88,8 @@ public final class PresenterAssembly {
         Long window = null;
         Double keep = null;
         Integer minRemote = null;
+        Boolean microcompactEnabled = null;
+        Integer microcompactKeepRecent = null;
         var fieldNames = new java.util.LinkedHashSet<String>();
         node.fieldNames().forEachRemaining(fieldNames::add);
         for (String name : fieldNames) {
@@ -99,6 +101,8 @@ public final class PresenterAssembly {
                 case "contextWindowTokens" -> window = longField(name, value);
                 case "keepRecentRatio" -> keep = doubleField(name, value);
                 case "minRemoteMessages" -> minRemote = intField(name, value);
+                case "microcompactEnabled" -> microcompactEnabled = boolField(name, value);
+                case "microcompactKeepRecent" -> microcompactKeepRecent = intField(name, value);
                 default -> throw new PluginException("governance 段存在未知字段: " + name);
             }
         }
@@ -106,13 +110,24 @@ public final class PresenterAssembly {
         requirePositive("pruneThresholdChars", prune == null ? null : prune.longValue());
         requirePositive("contextWindowTokens", window);
         requirePositive("minRemoteMessages", minRemote == null ? null : minRemote.longValue());
+        requirePositive("microcompactKeepRecent",
+                microcompactKeepRecent == null ? null : microcompactKeepRecent.longValue());
         if (ratio != null && (ratio <= 0 || ratio > 1)) {
             throw new PluginException("governance.compactionThresholdRatio 须在 (0,1] 区间: " + ratio);
         }
         if (keep != null && (keep < 0 || keep >= 1)) {
             throw new PluginException("governance.keepRecentRatio 须在 [0,1) 区间: " + keep);
         }
-        return new ContextGovernance.Tuning(spill, prune, ratio, window, keep, minRemote);
+        return new ContextGovernance.Tuning(spill, prune, ratio, window, keep, minRemote,
+                microcompactEnabled, microcompactKeepRecent);
+    }
+
+    /** 布尔字段严格绑定：仅接受 JSON 布尔字面量（true/false），其余点名拒绝。 */
+    private static boolean boolField(String name, JsonNode value) {
+        if (!value.isBoolean()) {
+            throw new PluginException("governance." + name + " 必须是布尔值: " + value);
+        }
+        return value.asBoolean();
     }
 
     /** 整数字段严格绑定：非整数值点名拒绝（"5.0"式小数与字符串一律不放行）。 */

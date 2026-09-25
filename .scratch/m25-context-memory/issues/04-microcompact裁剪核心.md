@@ -9,11 +9,46 @@
 01
 
 ## Status
-ready-for-agent
+in-progress（实现与自动化验证完成；验收 seam 为自动化 + 可复跑命令，手动演示见 Comments）
 
 ## Checklist
-- [ ] 裁剪机制落地（触发阈值 + 保最近 N 组，缺省值实现期定并在配置可见）
-- [ ] 媒体引用与错误信息豁免保留
-- [ ] 裁剪落会话事件（可回放可审计）
-- [ ] tdd 红绿循环（裁剪算法 + 豁免用例，seam 先与用户确认）
-- [ ] 术语表「microcompact」词条同 diff
+- [x] 裁剪机制落地（触发阈值 + 保最近 N 组，缺省值实现期定并在配置可见）
+- [x] 媒体引用与错误信息豁免保留
+- [x] 裁剪落会话事件（可回放可审计）
+- [x] tdd 红绿循环（裁剪算法 + 豁免用例，seam 见 Comments 记档）
+- [x] 术语表「microcompact」词条同 diff
+
+## Comments
+- 2026-09-25：**机制裁定（探测工单 11 同构）**：裁剪粒度 = 「最近 5 组完整对话之外的可压缩白名单工具结果」替换占位标记——用户/助手文本不动（早期约束不丢，token 大头在工具输出）；分组锚 = USER 消息（ZCode 按 assistant 轮，语义等价、投影层更稳健，已记 javadoc）。触发 = 治理计量 ≥ min(0.9×压缩阈值, 压缩阈值−2000)（ZCode 公式）；豁免 = 白名单外/失败结果/媒体附件/短于 500 字符；minSaving 256 token 放弃。N=5、开关、阈值公式均在 governance 段/常量可见。
+- 2026-09-25：**关键机制**：裁剪 = 落 `context/microcompacted` 事件（被清 callId 名单 + 释放估算）+ 投影层替换——JSONL 原文完整（模型视角不可恢复、审计视角可回放，spec 风险记档满足）；名单跨裁剪点累积、压缩点重置（防压缩后同名调用误伤）。tool/result 事件新落 `error` 失败标志（豁免依据；旧日志缺省 false 语义兼容，序列化仅 true 落盘）。micro 生效当轮 compaction 计量改用裁剪后估算——避免刚省钱又立刻烧 summary（Spec 轴判定属 04 合理范围，05 复核计量语义）。
+- 2026-09-25：**TDD seam**（自主模式按 spec Testing Decisions 定）：①选择器纯函数矩阵 8 用例（白名单/失败豁免/媒体豁免/分组保留/组数不足/过短/最小节省/顺序）②投影 4 用例（占位替换/名单累积/压缩点重置/重放恢复）③治理挂点 3 用例（触发+事件痕+替换/开关/放弃后压缩照常）。15 用例先行，实现期两遍法修正一处流式遍历缺陷（测试抓到）。
+- 2026-09-25：**留 05 的接口现状**：micro 先于 compaction 的顺序已定（ZCode 同序）；熔断计数、rapid-refill、summary 请求预算隔离未动（05 范围）；microApplied 时 compaction 计量口径切换（usage→本地估算）请 05 复核。
+- 2026-09-25：全量 969 用例 0 失败（2 既有 skip）。
+- **待用户手动验收（可复跑命令）**：触发需超微缩阈值（缺省 92k tokens），人工触发用小窗口配置——agent-demo.yml 的 cli 行临时加 `governance: {contextWindowTokens: 3000, microcompactKeepRecent: 2}`（micro 阈值降为 ~400 tokens），启动 CLI 连聊几轮带工具调用的对话（如"读一下 pom.xml"×4），然后终端 `grep -c "context/microcompacted" ~/.duo/agent-sessions/<最新会话>.jsonl` ≥ 1 且 `grep "旧工具结果已清除"` 可见占位；验收后还原 yml。或直接信任自动化证据（15 用例三 seam）跳过手动演示。
+
+## 审查轮（2026-09-25·第 1 轮·四轴）
+
+**覆盖**：14 文件 = 已审 14 + 跳过 0（行级轴主代码 6 文件 100%）
+
+### 阻断
+- **`docs/05-参考/插件配置参考.md:154`** [Standards]：插入行吞掉 `### subagent 段` 标题且表格体裁与段内 yaml 块不齐 → **已修**：恢复标题，新字段改 yaml 注释体裁入块
+- **`docs/05-参考/术语表.md`** [Standards]：microcompact 词条重复两条且落错域（挂在 memory 域，姊妹词条「压缩点」在会话体验域）→ **已修**：去重，移至压缩点词条后并补姊妹指针
+- **`SessionEvent.java:152`** [Standards/行级]：MICROCOMPACT javadoc 称"数组 JSON"实为对象载荷（同契约双表述）→ **已修**：改述对象形态；类 javadoc 补 `@param error`
+- **`Microcompact.java:60`** [行级]：`Set.of.contains(null)` NPE（手改日志 toolName 缺失场景）→ **已修**：null 前置判
+- **`MemoryBook` 同类问题回看**：无（03 已修）
+
+### 建议
+- **`/4` 魔数** [Java C-01/行级] → **已修**：两处改 `ContextBudget.CHARS_PER_TOKEN`
+- **static 常量可见性** [Java O-18] → **已修**：Microcompact 三常量收 private、KEEP_RECENT 降包私有
+- **循环内 new ObjectMapper** [Java CTRL-08/行级] → **已修**：microcompactClearedIds 复用 Session 共享 JSON（SessionEvent 工厂内一处为低频 append 路径，记档沿 SkillTool 先例）
+- **测试 Object 可变参数** [Java O-03] → **已修**：重构为显式 Map.of + meta 工厂
+- **阈值可为负** [行级] → **已修**：Math.max(1, …) 钳制
+- **govern javadoc `@param session` 失实 + 类 javadoc 管线缺 microcompact** [Standards] → **已修**
+- **事件类型表字段表缺 error 行** [Standards] → **已修**（usage 既有缺口一并补；tool/result 行补 error 语义）
+- **缺"micro 节省不足仍正确触发 compaction"用例** [Spec] → **已修**：短结果用例补断言（无裁剪痕 + summary 照常发起 + 压缩点落盘）
+- **microApplied 引用同一性判定** [行级] → **已修**：javadoc 点明契约
+- 记档不修：SessionEvent 工厂 try-catch（SkillTool 同款先例）/ 坏 JSON 静默降级零日志（session 模块零日志设施 + 投影热路径防刷屏，javadoc 已述）/ 白名单硬编码（与工具目录对账指引记档，改名漂移靠 ToolCatalog 式对账可兜）/ 组锚 USER 与 assistant 轮偏差（等价语义，javadoc 已记）
+
+### 测试覆盖
+- 三 seam 15 用例：选择器矩阵 8、投影 4（含重放恢复）、治理挂点 3（含放弃后压缩照常、压缩计量隔离）
+- 既有 compaction 测试全部兼容（Tuning 构造补位）；实现期两遍法修正由投影用例抓回（先写测试后调实现的实际红绿）

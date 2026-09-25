@@ -21,9 +21,11 @@ import java.util.Objects;
  *                   携带命令名；其余为 null）
  * @param reasoning  思考内容（仅 tool/call 携带，其余为 null）
  * @param usage      真实 token 用量（仅 assistant/message 携带，provider 未报告为 null）
+ * @param error      工具结果失败标志（仅 tool/result 携带，microcompact 豁免判定依据；
+ *                   旧日志无此字段反序列化为 false——「非已知失败，可裁」）
  */
 public record SessionEvent(String type, long at, String text, String toolCallId, String toolName,
-                           String reasoning, TokenUsage usage) {
+                           String reasoning, TokenUsage usage, boolean error) {
 
     /** 用户消息（每轮用户输入的完整文本）。 */
     public static final String USER_MESSAGE = "user/message";
@@ -149,6 +151,23 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     public static final String COMPACTION_SUMMARY_HEADER =
             "[以下是本会话早期历史的压缩摘要，原文已归档在会话日志中]\n\n";
 
+    /**
+     * microcompact 裁剪点（M25 工单 04；text = {@code {"cleared":[callId…],
+     * "freedTokens":n}} 载荷 JSON）——
+     * 免模型本地裁剪的落痕：治理判定逼近窗口时把「最近 N 组之外的可压缩工具结果」
+     * 名单落盘，投影据此把对应 tool/result 替换为 {@link #MICROCOMPACT_CLEARED_MARKER}
+     * 占位（JSONL 原文完整保留——模型视角不可恢复，审计视角可回放）。多次裁剪名单
+     * 累积；投影遇压缩点（{@link #COMPACTION}）即清空名单（总结已涵盖，旧 callId 不复存在）。
+     */
+    public static final String MICROCOMPACT = "context/microcompacted";
+
+    /**
+     * microcompact 清除占位（M25 工单 04）：治理替换与投影替换共用的逐字同文标记
+     * ——单一事实来源（与 {@link #COMPACTION_SUMMARY_HEADER} 同款防线）。
+     */
+    public static final String MICROCOMPACT_CLEARED_MARKER =
+            "[旧工具结果已清除（microcompact）：完整原文在会话日志中]";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");
@@ -168,10 +187,16 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         this(type, at, text, toolCallId, toolName, null, null);
     }
 
-    /** 兼容构造：工具事件 + 思考内容。 */
+    /** 兼容构造：工具事件 + 思考内容（error = false——旧调用点语义不变）。 */
     public SessionEvent(String type, long at, String text, String toolCallId, String toolName,
                         String reasoning) {
-        this(type, at, text, toolCallId, toolName, reasoning, null);
+        this(type, at, text, toolCallId, toolName, reasoning, null, false);
+    }
+
+    /** 兼容构造：带用量事件（error = false——旧调用点语义不变）。 */
+    public SessionEvent(String type, long at, String text, String toolCallId, String toolName,
+                        String reasoning, TokenUsage usage) {
+        this(type, at, text, toolCallId, toolName, reasoning, usage, false);
     }
 
     /**
@@ -224,7 +249,18 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
 
     /** 便捷工厂：工具调用结果（id 关联模型发起的调用）。 */
     public static SessionEvent toolResult(String toolCallId, String toolName, String resultText) {
-        return new SessionEvent(TOOL_RESULT, System.currentTimeMillis(), resultText, toolCallId, toolName);
+        return toolResult(toolCallId, toolName, resultText, false);
+    }
+
+    /**
+     * 便捷工厂：工具结果（携失败标志，M25 工单 04）——error = 工具本体报告的失败
+     * （isError），microcompact 豁免判定的依据（排障依据不被裁剪清除）。旧日志无本
+     * 字段反序列化为 false，语义 = 「非已知失败」可裁，与既有行为一致。
+     */
+    public static SessionEvent toolResult(String toolCallId, String toolName, String resultText,
+                                          boolean error) {
+        return new SessionEvent(TOOL_RESULT, System.currentTimeMillis(), resultText,
+                toolCallId, toolName, null, null, error);
     }
 
     /** 便捷工厂：审批请求（工具调用被声明需审批、交由回答者作答前）。 */
@@ -248,6 +284,21 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"）。 */
     public static SessionEvent approvalDecided(String toolName, String decisionText) {
         return new SessionEvent(APPROVAL_DECIDED, System.currentTimeMillis(), decisionText, null, toolName, null);
+    }
+
+    /**
+     * 便捷工厂：microcompact 裁剪点（M25 工单 04；callIds = 本次清除的 toolCallId
+     * 名单，freedTokens = 释放的估算 token）——名单序列化为 JSON 进 text。
+     */
+    public static SessionEvent microcompact(java.util.List<String> callIds, long freedTokens) {
+        String json;
+        try {
+            json = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(java.util.Map.of("cleared", callIds, "freedTokens", freedTokens));
+        } catch (Exception e) {
+            throw new IllegalStateException("microcompact 名单序列化失败", e);
+        }
+        return new SessionEvent(MICROCOMPACT, System.currentTimeMillis(), json);
     }
 
     /** 便捷工厂：会话标题（生成器一次写入；重写即投影 latest-wins 自然覆盖）。 */

@@ -530,7 +530,8 @@ public final class ToolCallingAgent implements ChatAgent {
                 turn.reasoningContent()));
         listener.onToolCall(call.name(), call.argumentsJson());
         String resultText = String.valueOf(result.value());
-        session.append(SessionEvent.toolResult(call.id(), call.name(), resultText));
+        // 失败标志随事件落盘（M25 工单 04）：microcompact 豁免判定的依据——排障依据不被裁剪
+        session.append(SessionEvent.toolResult(call.id(), call.name(), resultText, result.isError()));
         invocations.add(new ToolInvocation(call.name(), call.argumentsJson(),
                 resultText, result.isError()));
         listener.onToolResult(call.name(), resultText, result.isError());
