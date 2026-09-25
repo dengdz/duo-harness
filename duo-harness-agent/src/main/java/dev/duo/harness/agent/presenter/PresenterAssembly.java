@@ -207,6 +207,20 @@ public final class PresenterAssembly {
     }
 
     /**
+     * 对话执行者（M25 工单 02 记忆注入版，headless 单次任务形态）：{@code memory}
+     * 非 null 时每轮请求把记忆本内容以 user 角色置于消息序列最前；null = 未装配，
+     * 零注入。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      ContextGovernance governance, String presenterId,
+                                      dev.duo.harness.agent.memory.MemoryBook memory) {
+        return chatAgent(llm, tools, session, prompts, maxIterations,
+                ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance, presenterId,
+                null, false, null, null, memory);
+    }
+
+    /**
      * 对话执行者（M21 工单 05 视觉版，ADR-0022）：{@code variants} 非空且
      * {@code vision=true} 时，消息附件引用解析为请求变体并以 base64 图片部件进请求。
      */
@@ -248,9 +262,27 @@ public final class PresenterAssembly {
                                       boolean vision,
                                       dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
                                       dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector) {
+        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
+                governance, presenterId, variants, vision, fileDelivery, planBashDetector, null);
+    }
+
+    /**
+     * 对话执行者（M25 工单 02 记忆注入版）：{@code memory} 非 null 时每轮请求把
+     * 记忆本内容以 user 角色置于消息序列最前（meta_user 通道，请求视图专用）；
+     * null = 未装配，零注入。
+     */
+    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
+                                      PromptRegistry prompts, int maxIterations,
+                                      int maxParallelToolCalls, ContextGovernance governance,
+                                      String presenterId,
+                                      dev.duo.harness.attachment.RequestVariants variants,
+                                      boolean vision,
+                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
+                                      dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
+                                      dev.duo.harness.agent.memory.MemoryBook memory) {
         return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
                 maxParallelToolCalls, governance, presenterId, variants, vision, fileDelivery,
-                planBashDetector);
+                planBashDetector, memory);
     }
 
     /**

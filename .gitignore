@@ -14,6 +14,9 @@ target/
 .env
 *.env.local
 
+# 个人记忆本（M25）：项目级记忆不入库——spec 决策四
+/.duo/MEMORY.md
+
 # 日志
 logs/
 *.log

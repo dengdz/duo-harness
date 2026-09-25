@@ -35,6 +35,12 @@ public final class HeadlessRunner {
                            Session session, PrintStream out, PrintStream err) {
     }
 
+    /** memory 服务的视图接口（方法名即服务名 "memory"，M25 工单 02）。 */
+    interface HeadlessMemoryView {
+
+        dev.duo.harness.agent.memory.MemoryBook memory();
+    }
+
     private HeadlessRunner() {
     }
 
@@ -63,8 +69,13 @@ public final class HeadlessRunner {
                     () -> s.session(), new HeadlessAnswerer(
                             message -> out.println(NdjsonFrames.frame("error",
                                     NdjsonFrames.fields("message", message))))));
+            // 记忆本可选依赖（M25 工单 02）：与 CLI/Web 呈现位同款判存接线——
+            // agent-demo.yml 声明了 memory 行即注入，缺席（未挂行）零感降级
+            dev.duo.harness.agent.memory.MemoryBook memory =
+                    s.root().hasService(dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME)
+                            ? s.root().as(HeadlessMemoryView.class).memory() : null;
             ChatAgent agent = PresenterAssembly.chatAgent(s.llm(), s.tools(), s.session(),
-                    s.prompts(), maxIterations, governance, HeadlessAnswerer.PRESENTER_ID);
+                    s.prompts(), maxIterations, governance, HeadlessAnswerer.PRESENTER_ID, memory);
             AgentReply reply = agent.send(prompt, projector.listener());
             var endFields = NdjsonFrames.fields("phase", "turn_end");
             if (projector.lastUsage() != null) {

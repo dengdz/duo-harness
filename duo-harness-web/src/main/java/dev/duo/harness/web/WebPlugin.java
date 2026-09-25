@@ -71,7 +71,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
                 dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME,
                 dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME,
-                dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME);
+                dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME,
+                dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME);
     }
 
     @Override
@@ -137,6 +138,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
                         ? new dev.duo.harness.tools.fs.ReadOnlyBashDetector(
                                 ctx.as(WebWorkspaceView.class).workspace().root())
                         : null;
+        // 记忆本可选依赖（M25 工单 02）：memory 行缺席零感降级（零注入）
+        dev.duo.harness.agent.memory.MemoryBook memory =
+                ctx.hasService(dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME)
+                        ? ctx.as(WebMemoryView.class).memory() : null;
 
         // Web 面自建全新会话（BUG-20260923-01）：不再续接目录最新——web 行先于 cli 行
         // 装配（回答者路由契约：审批/提问 Web 卡片优先），latest 会抢走 CLI 的续接目标，
@@ -156,7 +161,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(
                 adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector);
+                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector,
+                memory);
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -227,7 +233,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
             }
             return PresenterAssembly.chatAgent(
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector);
+                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector,
+                    memory);
         });
         SessionTitles.attach(session, adapter);
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重
@@ -314,6 +321,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebPromptsView {
 
         PromptRegistry prompts();
+    }
+
+    /** memory 服务的视图接口（方法名即服务名 "memory"，M25 工单 02）。 */
+    interface WebMemoryView {
+
+        dev.duo.harness.agent.memory.MemoryBook memory();
     }
 
     /** 交互服务的视图接口（方法名即服务名 "answers"）。 */

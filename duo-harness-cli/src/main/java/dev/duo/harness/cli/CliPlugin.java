@@ -150,7 +150,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 dev.duo.harness.attachment.AttachmentStore.SERVICE_NAME,
                 dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME,
                 dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME,
-                dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME);
+                dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME,
+                dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME);
     }
 
     @Override
@@ -169,6 +170,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // hasService 判存接线，缺席即 null，/permission 走降级提示
         WorkspacePolicy workspacePolicy = ctx.hasService(WorkspacePolicy.SERVICE_NAME)
                 ? ctx.as(CliWorkspaceView.class).workspace() : null;
+        // 记忆本可选依赖（M25 工单 02）：memory 行缺席零感降级（零注入）
+        dev.duo.harness.agent.memory.MemoryBook memory =
+                ctx.hasService(dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME)
+                        ? ctx.as(CliMemoryView.class).memory() : null;
 
         LlmAdapter llm = llmOverride != null ? llmOverride : loadLlm();
         if (llm instanceof dev.duo.harness.llm.SwappableLlmAdapter swappable) {
@@ -234,7 +239,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionHolder holder = new SessionHolder(session);
         ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
                 maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy));
+                requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy),
+                memory);
         ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out, resolvePermissionRules(ctx));
         this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
@@ -303,7 +309,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
         registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
                 maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
-                workspacePolicy, agentBusy, interruptArmed);
+                workspacePolicy, agentBusy, interruptArmed, memory);
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
         // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
         PresenterAssembly.restorePermissionMode(
@@ -522,7 +528,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                                   int maxParallelToolCalls, Path sessionsDir,
                                   SessionHolder holder, AgentHolder agentHolder,
                                   PlanHolder plan, WorkspacePolicy workspacePolicy,
-                                  AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
+                                  AtomicBoolean agentBusy, AtomicBoolean interruptArmed,
+                                  dev.duo.harness.agent.memory.MemoryBook memory) {
         commands.register(ctx, new CommandDefinition("exit", "结束终端对话（会话锁释放，插件保持挂载）",
                 CommandScope.CLI, false, context -> {
                 context.requestEnd();
@@ -544,7 +551,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 holder.session = Session.create(sessionsDir);
                 agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
                         maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                        requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy));
+                        requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy),
+                        memory);
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
@@ -1187,6 +1195,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliPromptsView {
 
         PromptRegistry prompts();
+    }
+
+    /** memory 服务的视图接口（方法名即服务名 "memory"，M25 工单 02）。 */
+    interface CliMemoryView {
+
+        dev.duo.harness.agent.memory.MemoryBook memory();
     }
 
     /** 交互服务的视图接口（方法名即服务名 "answers"）。 */
