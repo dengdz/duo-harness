@@ -1,6 +1,6 @@
 ---
 name: duo-prose-standard
-description: 管理 duo-harness 文档和注释的写作质量——JavaDoc 完整性、注释解释 Why not What、契约保留、命题完整性。覆盖 Markdown、JavaDoc、代码注释、测试注释。用户说"审查文档质量"、"JavaDoc 写得对吗"、"注释规范"时触发。位置由 duo-doc-standards 管，泄漏清理由 duo-trim-cot-leakage 管。
+description: 文档与注释写作质量：JavaDoc 完整性、注释 Why not What、契约保留、命题完整。触发：审查文档质量 / JavaDoc 写得对吗 / 注释规范。
 ---
 
 # duo-harness 文档写作规范
@@ -11,13 +11,13 @@ description: 管理 duo-harness 文档和注释的写作质量——JavaDoc 完�
 
 ## 输入与排除
 
-必须有明确的 `scope`。缺失时报告缺少什么输入然后停下；不要自行推断范围，也不要反过来盘问用户。
+必须有明确的 `scope`。缺失时：报告缺少的输入并停止（fail-fast——范围推断与反向盘问都属越权）。
 
 接受 `mode: automatic | interactive`，默认 `automatic`。仅当用户明确要求提问或校准时进入交互模式。
 
 `mode` 只控制是否提问，不控制写入权限：审查和审计类任务只报告发现、不动文件；用户明确要求写入、修复或修剪时才执行修改。
 
-始终排除 `target/` 等构建产物，不跟随指向它们的符号链接。排除 glob 要放在包含 glob 之后，避免后面的包含规则把排除项又放回来。如果范围内只有构建产物，直接报告"没有符合条件的文件"。
+排除 `target/` 等构建产物，不跟随指向它们的符号链接；排除 glob 放在包含 glob 之后（避免后面的包含规则把排除项又放回来）。范围内只有构建产物时：报告"没有符合条件的文件"并结束。
 
 生成的 API 目录、快照、测试夹具（fixture）都是衍生品：先改源头（所属源码或场景），再重新生成，不直接编辑生成物。
 
@@ -139,3 +139,4 @@ void awaitStartup();
 
 - **duo-doc-standards**：管理文档的位置和层次结构
 - **duo-trim-cot-leakage**：清理推理过程泄露（审查痕迹、决策过程）
+- **技能写作规范**（[docs/05-参考/技能写作规范.md](../../docs/05-参考/技能写作规范.md)）：管理技能（SKILL.md 与 AGENTS.md）的写作机制层——指针措辞、判据写法、调用权表达、剪枝纪律；本 skill 管 prose 质量层，两规范按文档类型分工（ADR-0027）

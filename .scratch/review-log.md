@@ -363,3 +363,14 @@
   2. **description 三连犯后的流程修正**：英文锚与 name 重复问题连犯三次（C1-06/07/08），本轮已在写 description 前先删锚再 wc——流程记忆已形成，但"写前预算"仍未内建：下票起 description 起草即按"≤80 字含触发句"模板起笔，不靠事后压。
   3. **审查轴误判的单点核对成本**：Standards 轴一处"失对齐"误判（description 实含"台账"词）——轴报告的负向断言主审也要抽查原文（轴是独立视角非免检权威）。
 - **收口**：`npm run docs:build` 通过；终值 bug-ledger 72 字·判据 4·禁令 0 / pre-push 73 字·判据 5·硬护栏 1 / research 75 字·判据 3；BUG-20260925-01 Status=done；报告全文并入 `.scratch/c1-skill-writing/issues/08-bug-ledger与pre-push与research改写.md` 审查轮小节。
+
+### 2026-09-25 · C1-09 审查（main 工作树，四轴制：tracker / doc-standards / prose-standard / project-structure 四技能改写）
+
+- **范围与轮次**：四轴（第 0 步预检 SHA 7382b93 + stat 4 文件 → Standards/Spec 双子代理；行级/Java 空集）→ 修复 → docs:build 收口。三 seam：手写工单 13（tracker"顺手记"分支）、归属咨询（doc-standards 上站范围条款）、结构评审（.scratch/c1 归属判定）。
+- **计数**：Standards 8 + Spec 5（重叠 2）→ 合并 8 项。处置：修 8（含阻断 1）。保命题逐分句全过（四技能"不推倒"边界经 git diff 逐行核验——prose/structure 两技能 diff 仅限授权范围）。
+- **阻断级发现**：prose-standard 缺《技能写作规范》指针行——ADR-0027 决策一明确"改写段同 diff"，工单 04 审查正确留给改写段，本单首轮漏加，Spec 轴按 ADR 追溯抓回。**教训：ADR 决策条目是改写票的验收清单来源，开工前逐条对照本票涉及的技能**（与"保留资产清单"同权重）。
+- **模式化问题（本次新识别）**：
+  1. **ADR 决策条目 = 改写票验收清单**：每张改写票开工时把 ADR-0027 中涉及本票技能的决策条目逐条列 checklist（本票：决策一 prose 指针行）——遗漏即阻断，不靠审查轴兜底。
+  2. **写死数值在"防过期"审视下全部换成关系判据**：doc-standards 对账"N=24 份"改"差值=1"——凡随仓库增长的计数（ADR 数/技能数/词条数），机械判据写成关系式（差值/比值/单调性），不写具体值。
+  3. **file 末尾换行是 Write 工具的静默回归点**（prose-standard 141→140 行）——改写票终检加 `tail -c | od` 或 `git diff` 查 `\ No newline` 标记。
+- **收口**：`npm run docs:build` 通过；终值四 description 72/77/80/79；对账 27+1=28 ✓；报告全文并入 `.scratch/c1-skill-writing/issues/09-*.md` 审查轮小节。
