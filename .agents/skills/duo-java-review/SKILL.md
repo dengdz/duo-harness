@@ -1,6 +1,6 @@
 ---
 name: duo-java-review
-description: Java 代码规范审查技能，基于阿里巴巴 Java 开发手册（嵩山版）逐条对照审查，输出 BLOCKER/CRITICAL/MAJOR 分级发现。当需要按阿里规范审查 Java 代码、检查命名/OOP/集合/并发/异常/日志等规约、或作为 duo-code-review 的 Java 规范轴时使用。
+description: Java 规范审查：按阿里巴巴 Java 开发手册逐条对照，输出分级发现。触发：按阿里规范审 Java 代码 / Java 规范轴审查。
 ---
 
 # Java代码审查技能 - 阿里巴巴Java开发手册
@@ -10,6 +10,8 @@ description: Java 代码规范审查技能，基于阿里巴巴 Java 开发手�
 本技能基于《阿里巴巴Java开发手册》（嵩山版）对Java代码进行全面审查。审查时需逐条对照规范，发现违规项后给出明确的违规等级、违规位置和修复建议。
 
 本文件（SKILL.md）是技能的入口和索引，仅包含工作流和文件加载策略。**完整的规则细则、示例和模板按需从附属文件加载**，避免一次性占用过多上下文。
+
+与 duo-code-review 的衔接：作为其四轴流水线的 **Java 规范轴**被调用——`Call the Skill tool with "duo-java-review"`（其 brief 携 L1 按需清单与三条约束：子集裁剪 / 反条款倾销 / 只报规则编号+条款原文类发现）。
 
 ## 违规等级定义
 
