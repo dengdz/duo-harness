@@ -16,8 +16,8 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 | 写 spec / 建工单 / 记 ADR / 更新术语表 | duo-tracker |
 | 看一看 DSH / ZCode 某功能 / 看看某项目怎么做的 | duo-research（两家对照为默认） |
 | 这个文档放哪 / 整理文档 / 审计文档 | duo-doc-standards + duo-prose-standard |
-| 验收 / 手动验证 / 跑给我看 | duo-acceptance |
-| 想了解一下 / 熟悉阶段内容 / 讲讲这次改动 | duo-comprehension |
+| 验收 / 手动验证 / 跑给我看 / 实现后提交前 | duo-acceptance |
+| 想了解一下 / 熟悉阶段内容 / 讲讲这次改动 / 阶段收尾关卡 | duo-comprehension |
 | 发布版本 / 开分支 / 合并推送 | duo-release-workflow |
 
 ## 显式命令（模型不能自动触发，由你调用）

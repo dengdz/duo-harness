@@ -341,3 +341,14 @@
   2. **重放 seam 设计先对照 spec 决策 5**：凡验收对象是元技能自身（code-review 审 code-review 的 diff），行为验收必须另取外部 diff 或挂账收口演练，自审只保文风。
   3. **description 预算的三轮压缩路径**（本次 102→88→71）：删与 name 字段重复的英文锚 → 删口语变体触发 → 砍触发列举的冗余字——写完必 wc，禁自估。
 - **收口**：`npm run docs:build` 通过；终值 71 字/判据 10/禁令 1/显式调用 3/92 行；报告全文并入 `.scratch/c1-skill-writing/issues/06-duo-code-review改写.md` 审查轮小节。
+
+### 2026-09-25 · C1-07 审查（main 工作树，四轴制：acceptance + comprehension"补缺口不推倒"改写）
+
+- **范围与轮次**：四轴（第 0 步预检 SHA 654e01d + stat 3 文件出示 → Standards/Spec 双子代理；行级/Java 空集）→ 修复 → docs:build 收口。双重放 seam 在收尾输出完成（acceptance 三件套文档工单形态 + comprehension 课程清单阻塞点）。
+- **计数**：Standards 7 + Spec 3（重叠 3）→ 合并 7 项。处置：修 4 / 边界记档 2 / 判定不修 1。零阻断；保命题逐分句全过，"不推倒"度核验（改动全落授权五类）。
+- **最重的发现**：AGENTS.md 路由行 19/20 未随 description 触发词同 diff（两轴同抓）——本单动了触发侧却只改了技能文件，规范 1.4"两个视图同一 diff"再次被现实检验：**凡 description 触发词有增删，AGENTS.md 行必须进同一 git add**。
+- **模式化问题（本次新识别）**：
+  1. **路由行与 description 的"口语实录 vs 概念收敛"分工**：路由行"你说"列收用户真实口语（可比 description 宽，如"熟悉阶段内容"），description 按概念收敛（不镜像罗列）——一致性判据是概念级对齐而非逐词相等；但 description 新增的触发概念必须在路由行出现。
+  2. **自造领先词不配英文锚**（边界案例记档）：领先词中英并列的前提是英文侧有预训练先验可招募；"三件套/理解关卡"无英文对应，硬配英文反而错——豁免无需声明，机制本身（招募先验）即裁决依据。
+  3. **旧版计数词残留**（"这两条操作"实列三条）——改写保留段落时单独核对数量词与清单的一致性（计数教训的第 4 个变种：正文内数量词 vs 自身清单）。
+- **收口**：`npm run docs:build` 通过；终值 acc 79 字·判据 5·阻塞 1·硬护栏 1 / comp 69 字·判据 6·阻塞 1·硬护栏 1；报告全文并入 `.scratch/c1-skill-writing/issues/07-duo-acceptance与comprehension改写.md` 审查轮小节。
