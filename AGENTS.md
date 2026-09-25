@@ -18,7 +18,7 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 | 这个文档放哪 / 整理文档 / 审计文档 | duo-doc-standards + duo-prose-standard |
 | 验收 / 手动验证 / 跑给我看 / 实现后提交前 | duo-acceptance |
 | 想了解一下 / 熟悉阶段内容 / 讲讲这次改动 / 阶段收尾关卡 | duo-comprehension |
-| 发布版本 / 开分支 / 合并推送 | duo-release-workflow |
+| 发布版本 / 开分支 / 合并推送 / 准备发布 | duo-release-workflow |
 
 ## 显式命令（模型不能自动触发，由你调用）
 
@@ -41,3 +41,4 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 6. CHANGELOG.md 是版本唯一锚点，用户可见变更同 diff 记账
 7. 开发提交不落 main，main 只收验收后的版本合并（M9 起严格执行：里程碑启动第一步切版本分支如 `0.3.0`；M3-M8 直落 main 为既成历史不追改，见 duo-workflow 版本号规范）
 8. duo- 技能任务收尾必须先调用 `duo-skill-evolution` 复盘，再输出最终总结——无进化点也要走完快速判断并明确说"无需进化"，不得静默跳过；执行任何 duo- 技能前先读该技能 `references/experience.md`（复盘维度在文件头部"复盘维度"段）
+9. SKILL.md 与根 AGENTS.md 的用词受术语表「技能写作域」约束——跨技能协作词汇（工单/收口/验收/完成判据等）使用首选词，不引入词汇表 _Avoid_ 清单中的同义词（表见 docs/agents/domain.md「技能用词」节）
