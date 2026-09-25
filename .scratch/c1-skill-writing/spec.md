@@ -1,6 +1,6 @@
 # C1 · 技能写作体系改造：mattpocock-skills 机制级对比分析与 duo 技能全量改写
 
-Status: drafted（2026-09-24，grill 六裁定收敛后落 spec；裁决来源见 Implementation Decisions 逐条标注）
+Status: done（2026-09-25 用户终验确认收官——13 张工单全 done、机械核对全绿、统一推送完成；行为层路由/收口观察按 ADR-0027 Consequences ④ 持续，异常走 bug-ledger）
 
 ## Problem Statement
 
