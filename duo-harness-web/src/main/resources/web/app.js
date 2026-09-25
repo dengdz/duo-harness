@@ -1412,8 +1412,10 @@ const app = (() => {
     }
     const pct = context.windowTokens > 0 ? (context.tokens * 100 / context.windowTokens).toFixed(1) : '0';
     const source = context.fromProvider ? '实测' : '估算';
+    // 压缩熔断态（M25 工单 05）：true = 自动压缩暂停（会话照常，/compact 不受限）
+    const tripped = context.compactionTripped ? ' · ⚠ 压缩已熔断（自动压缩暂停）' : '';
     line.textContent = fmt(context.tokens) + ' / ' + fmt(context.windowTokens)
-        + ' tokens（' + pct + '%，压缩阈值 ' + fmt(context.thresholdTokens) + ' · ' + source + '）';
+        + ' tokens（' + pct + '%，压缩阈值 ' + fmt(context.thresholdTokens) + ' · ' + source + tripped + '）';
     line.classList.toggle('near-threshold', context.tokens >= context.thresholdTokens);
   }
 

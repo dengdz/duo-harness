@@ -9,7 +9,9 @@ package dev.duo.harness.agent.governance;
  * @param thresholdTokens compaction 触发阈值（窗口 × 触发比例）
  * @param windowTokens    模型上下文窗口
  * @param fromProvider    tokens 是否来自 provider 真实用量（false = 估算兜底，展示须标注口径）
+ * @param compactionTripped 压缩熔断态（M25 工单 05）：summary 连续失败达阈值后为 true——
+ *                         自动压缩暂停、会话照常可用；状态面据此可见（/compact 不受限）
  */
 public record ContextOccupancy(long tokens, long thresholdTokens, long windowTokens,
-                               boolean fromProvider) {
+                               boolean fromProvider, boolean compactionTripped) {
 }

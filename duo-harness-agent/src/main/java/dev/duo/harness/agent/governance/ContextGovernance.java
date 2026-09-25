@@ -70,6 +70,13 @@ public final class ContextGovernance {
     /** microcompact 触发比例（对压缩阈值的折让系数）。 */
     static final double MICROCOMPACT_RATIO = 0.9;
 
+    /**
+     * 压缩熔断阈值（M25 工单 05）：summary 压缩连续失败达本次数即熔断——自动压缩
+     * 暂停（防"失败→重试→再失败"每轮空烧），会话照常可用；仅成功压缩清零，
+     * manual /compact 不受熔断约束（ZCode 同构）。
+     */
+    static final int COMPACTION_FAILURE_TRIP_THRESHOLD = 3;
+
     /** spill 预览头长（字符）。 */
     static final int SPILL_PREVIEW_HEAD = 1_000;
 
@@ -124,6 +131,10 @@ public final class ContextGovernance {
     private final int minRemoteMessages;
     private final boolean microcompactEnabled;
     private final int microcompactKeepRecent;
+    /** 压缩连续失败计数（M25 工单 05 熔断）；成功压缩清零。volatile：occupancy 自 HTTP 线程读。 */
+    private volatile int compactionConsecutiveFailures;
+    /** 压缩熔断态：true = 自动压缩暂停（manual /compact 与 microcompact 不受限）。 */
+    private volatile boolean compactionTripped;
 
     public ContextGovernance(LlmAdapter llm) {
         this(llm, null);
@@ -246,7 +257,8 @@ public final class ContextGovernance {
         long tokens = usage != null
                 ? usage.promptTokens() + usage.completionTokens()
                 : ContextBudget.estimateMessageTokens(session.deriveMessages());
-        return new ContextOccupancy(tokens, contextThreshold(), contextWindowTokens, usage != null);
+        return new ContextOccupancy(tokens, contextThreshold(), contextWindowTokens,
+                usage != null, compactionTripped);
     }
 
     /** compaction 触发阈值（窗口 × 触发比例；窗口/比例均取生效调优值）。 */
@@ -276,15 +288,19 @@ public final class ContextGovernance {
 
     /**
      * 最近一次带用量的 assistant/message 事件（倒查即得；续接的历史会话同样天然可取）。
-     * 压缩感知（M19，ADR-0020 决策 6）：倒查先遇压缩点即返回 null——该实测值反映的是
-     * 压缩**前**的请求上下文，已不代表压缩后的下一次请求（占用与计量回退本地估算，
-     * 新一轮真实请求的用量事件落盘后自然恢复实测口径）。
+     * 治理感知（M19，ADR-0020 决策 6 + M25 工单 05 扩展）：倒查先遇压缩点或
+     * microcompact 裁剪点即返回 null——该实测值反映的是治理**前**的请求上下文，已
+     * 不代表治理后的下一次请求（占用与计量回退本地估算，新一轮真实请求的用量事件
+     * 落盘后自然恢复实测口径）。
      */
     private static TokenUsage latestUsage(dev.duo.harness.session.Session session) {
         List<SessionEvent> events = session.events();
         for (int i = events.size() - 1; i >= 0; i--) {
             SessionEvent event = events.get(i);
-            if (SessionEvent.COMPACTION.equals(event.type())) {
+            // 压缩点与裁剪点同为计量断点（M25 工单 05）：两事件之后、新实测落盘之前，
+            // 旧 usage 反映的是治理前口径——回退本地估算，防按虚高占用误触发
+            if (SessionEvent.COMPACTION.equals(event.type())
+                    || SessionEvent.MICROCOMPACT.equals(event.type())) {
                 return null;
             }
             if (SessionEvent.ASSISTANT_MESSAGE.equals(event.type()) && event.usage() != null) {
@@ -383,7 +399,9 @@ public final class ContextGovernance {
      * 替换头单条——与投影语义（最后压缩点之前以总结替换、之后照常）严格一致，当轮请求
      * 与后续轮重放模型视角无差别。事件化后不再每轮重复总结（旧请求期纯变换每轮重复
      * 调用 LLM）。session 为 null 时退化为纯变换（不落盘）。历史不足最小折叠量时放弃；
-     * LLM 失败或空摘要原样透出（降级不冒险、不落事件——空摘要落盘会令投影坍缩为空）。
+     * 熔断态静默跳过；LLM 失败或空摘要计一次连续失败并原样透出（降级不冒险、不落
+     * 事件——空摘要落盘会令投影坍缩为空），连续失败达
+     * {@link #COMPACTION_FAILURE_TRIP_THRESHOLD} 即熔断。
      *
      * @param measuredTokens       计量值：provider 真实用量或本地估算（由 measuredFromProvider 标注口径）
      * @param measuredFromProvider 计量是否来自 provider 真实用量（日志口径标注）
@@ -395,10 +413,17 @@ public final class ContextGovernance {
         if (measuredTokens <= thresholdTokens || messages.size() < minRemoteMessages) {
             return messages;
         }
+        if (compactionTripped) {
+            // 熔断态（M25 工单 05）：自动压缩静默跳过，会话照常——状态面经 occupancy 可见
+            log("压缩熔断中，跳过自动压缩（已连续失败 " + compactionConsecutiveFailures + " 次）");
+            return messages;
+        }
         try {
             String summary = summarize(messages);
+            // 空摘要与异常同计入失败（M25 工单 05 审查修复）：LLM 可达但持续返空白
+            // 同样是"每轮空烧"路径，熔断必须覆盖
             if (summary.isBlank()) {
-                return messages;
+                return compactionFailed(messages, null);
             }
             log((measuredFromProvider ? "实测" : "估算") + " "
                     + measuredTokens + " tokens 超阈值 " + thresholdTokens
@@ -406,11 +431,30 @@ public final class ContextGovernance {
             if (session != null) {
                 session.append(SessionEvent.compaction(summary, TRIGGER_AUTO));
             }
+            compactionConsecutiveFailures = 0;
+            compactionTripped = false;
             return List.of(summaryHead(summary));
         } catch (Exception e) {
-            logger.warn("压缩摘要生成失败，本次请求原样透出", e);
-            return messages;
+            return compactionFailed(messages, e);
         }
+    }
+
+    /**
+     * 压缩失败的统一收敛：计连续失败数、达阈值置熔断（warn 留痕一次）、原样透出。
+     * 熔断置位后自动路径不再触达本方法（{@code compact()} 入口早退）。
+     */
+    private List<Message> compactionFailed(List<Message> messages, Exception cause) {
+        compactionConsecutiveFailures++;
+        if (compactionConsecutiveFailures >= COMPACTION_FAILURE_TRIP_THRESHOLD) {
+            compactionTripped = true;
+            logger.warn("压缩连续失败 {} 次，熔断：自动压缩暂停（会话照常，"
+                    + "manual /compact 不受限，成功压缩后自动恢复）",
+                    compactionConsecutiveFailures, cause);
+        } else {
+            logger.warn("压缩摘要生成失败（{}/{}），本次请求原样透出",
+                    compactionConsecutiveFailures, COMPACTION_FAILURE_TRIP_THRESHOLD, cause);
+        }
+        return messages;
     }
 
     /**
@@ -433,7 +477,11 @@ public final class ContextGovernance {
             log("手动压缩放弃：摘要生成为空，不落压缩点");
             return "摘要生成失败（LLM 返回为空），未压缩——请稍后重试。";
         }
+        // manual /compact 不受熔断约束（ZCode 同构）：用户显式指令优先于熔断保护，
+        // 成功即清计数并解除熔断
         session.append(SessionEvent.compaction(summary, TRIGGER_MANUAL));
+        compactionConsecutiveFailures = 0;
+        compactionTripped = false;
         long after = ContextBudget.estimateMessageTokens(List.of(summaryHead(summary)));
         log("手动压缩：历史 " + projected.size() + " 条折叠为摘要，估算 "
                 + before + " → " + after + " tokens（会话 " + session.id() + "）");

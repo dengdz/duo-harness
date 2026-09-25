@@ -1611,7 +1611,9 @@ public final class WebFace {
                         .put("tokens", occupancy.tokens())
                         .put("thresholdTokens", occupancy.thresholdTokens())
                         .put("windowTokens", occupancy.windowTokens())
-                        .put("fromProvider", occupancy.fromProvider());
+                        .put("fromProvider", occupancy.fromProvider())
+                        // 压缩熔断态（M25 工单 05）：状态面可见——自动压缩暂停、会话照常
+                        .put("compactionTripped", occupancy.compactionTripped());
             }
             // 后台任务区块（M23 工单 06）：注册表在场时列出本位发起（或无归属）的任务
             // （id/命令/状态/退出码），终态保留呈现（收敛可见）——CLI 侧任务不串显
