@@ -1165,7 +1165,15 @@ public final class WebFace {
             respondText(exchange, 400, "缺少检索词 q");
             return;
         }
-        List<SessionHit> hits = sessionQuery.search(q.strip(), SEARCH_LIMIT);
+        List<SessionHit> hits;
+        try {
+            hits = sessionQuery.search(q.strip(), SEARCH_LIMIT);
+        } catch (RuntimeException e) {
+            // 检索是读放大路径，不炸穿面（栈进日志、面收 500 而非空响应）
+            log.error("会话检索失败 q={}", q, e);
+            respondText(exchange, 500, "会话检索失败（见服务端日志）");
+            return;
+        }
         var root = JSON.createObjectNode();
         root.put("query", q.strip());
         var arr = root.putArray("hits");

@@ -9,7 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -130,7 +129,12 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
     }
 
     private Connection openConnection() throws SQLException {
-        Connection opened = DriverManager.getConnection("jdbc:sqlite:" + dbFile);
+        // 绕开 DriverManager：其驱动自动发现按系统 classloader 扫描（且 JVM 内只跑一次），
+        // 在 exec:java / 插件 realm 等 classloader 形态下找不到 org.sqlite.JDBC——
+        // SQLiteDataSource 直连不经过 DriverManager，任何装载形态一致
+        var ds = new org.sqlite.SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + dbFile);
+        Connection opened = ds.getConnection();
         exec(opened, "PRAGMA journal_mode=WAL");
         return opened;
     }
