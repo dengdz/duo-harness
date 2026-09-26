@@ -7,7 +7,11 @@
 决策依据：[ADR-0028](../../../docs/adr/0028-M26会话数据与检索立项决策.md) 决策二（读时识别，磁盘永不重写）。spec：`.scratch/m26-session-data-search/spec.md`。
 
 ## Status
-ready-for-agent
+in-progress
+
+## Comments
+
+- 2026-09-26 开工（0.21.0 分支）。
 
 ## Checklist
 - [ ] `Session.create` 新会话首行落版本头，会话元信息落 cwd 字段；旧文件保持无头
