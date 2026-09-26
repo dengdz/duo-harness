@@ -7,7 +7,7 @@ microcompact 的两张安全网：① 压缩熔断计数——summary 压缩连�
 04
 
 ## Status
-in-progress（实现与自动化验证完成；验收件 = 熔断状态机测试套件，用户亲手跑过即转 done）
+done（2026-09-26 用户亲手跑 ContextGovernanceFuseTest 验收通过——熔断状态机 5 用例全绿，WARN 轨迹与状态机预期逐一对应）
 
 ## Checklist
 - [x] 压缩熔断计数（连续失败阈值 + 熔断后行为：会话继续、状态可见）
@@ -19,7 +19,7 @@ in-progress（实现与自动化验证完成；验收件 = 熔断状态机测试
 - 2026-09-25：**TDD seam**（自主模式按 spec Testing Decisions 定，ContextGovernanceFuseTest 5 用例）：①短结果夹具连败 3 次熔断 + 熔断后投影照常（calls 冻结）②成功清零恢复 + 清零后重计数（压缩点后补新历史再验，审查修掉断言虚过）③熔断后 manual 照常且成功清零④熔断态 micro 照常裁剪（keepRecent=2 配置下新组落窗口外，calls 冻结证明互不牵连）⑤裁剪点作废旧 usage（fromProvider 翻转）。实现期两处夹具/断言缺陷由测试运行抓回修正。
 - 2026-09-25：**rapid-refill 有意不做**（spec 决策五未点名，工单 Checklist 无此项）：ZCode 的"3 工具轮内连环压缩中止 turn"防的是压缩成功后急速回涨——duo 的 compaction 事件化投影（摘要替换后不重触发）+ microcompact 先行卸载已天然缓解；挂账 backlog 观察，若实测出现连环压缩再立项。
 - 2026-09-25：全量 975 用例 0 失败（2 既有 skip）。
-- **待用户验收（转 done 前最后一步）**：人工无法低成本构造"压缩连续失败"（需 LLM 对摘要请求定向故障），验收件 = 熔断状态机测试套件，亲手跑：`./mvnw -q -pl duo-harness-agent -am test -Dtest=ContextGovernanceFuseTest`——5 用例全绿即确认（触发/状态可见/清零恢复/manual 不受限/并存互不干扰）。
+- **验收通过（2026-09-26，用户亲手跑熔断套件）**：5 用例全绿；WARN 轨迹与状态机预期逐一对应（manual 用例 1/3→2/3→熔断、连续失败用例同轨迹、清零恢复用例 1/3→2/3→修复后清零）。首跑因验收命令漏 `-Dsurefire.failIfNoSpecifiedTests=false` 旗标报错（命令由 agent 提供，已修正重发）——记档：给用户的单测命令必须带该旗标（-am 拉起的上游模块无匹配测试时会报错退出）。工单转 done。
 
 ## 审查轮（2026-09-25·第 1 轮·四轴两路合并）
 
