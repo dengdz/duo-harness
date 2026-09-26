@@ -446,7 +446,7 @@
 - **范围与轮次**：四轴两路合并（Standards+Spec / 行级+Java）→ 合并修复 12 项 → 全量收口。单轮（修复均带回归用例，测试收口）。
 - **计数**：Standards 3 阻断 + 3 建议；Spec 2 项未做（术语表/CHANGELOG——CHANGELOG 与 05 复犯）+ 2 弱达标建议；行级 2 阻断（跨轮泄漏/断点挂错位）+ 3 建议；Java 0（全部合规）。修复 12（CHANGELOG/断点 3 挂 content 块/跨轮泄漏局部化/deepseek 双字段解析/孤儿 javadoc/术语表/分隔符还原/空 prefix 防御/边界记档/计数×3），记档 3。
 - **模式化问题（本次新识别）**：
-  1. **协议字段挂载位以官方文档为准，不凭类比推断**——cache_control 类断点字段在消息对象顶层与 content 块上是两种命运（忽略 vs 生效）；实现 provider 协议字段前先查官方文档的挂载位，mock server 只回显不校验——测不出挂错位。
+  1. **协议字段挂载位以官方文档为准，不凭类比推断**——cache_control 类断点字段在消息对象顶层与 content 块上是两种命运（忽略 vs 生效）；实现 provider 协议字段前先查官方文档的挂载位，mock server 只回显不校验——测不出挂错位。**升格（BUG-20260926-01 同族第二击）**：块判别字段（type 等）同受此条约束——组块后按官方 schema 自查；MockAnthropicServer 已升最小协议校验（content 块缺 type 测试内点名）；anthropic 行改动必跑真机 2 轮冒烟。
   2. **聚合态字段生命周期统一**——同一聚合方法里 promptTokens 是局部变量而 cacheReadTokens 是实例字段，适配器跨轮复用即泄漏；新增聚合字段默认跟同类局部变量同生命周期，实例化前先问"谁持有我、复用几次"。
   3. **provider 行映射的"异构字段名"要落解析**——deepseek 行写了"显式降级标注"却没接 prompt_cache_hit_tokens，透出事实落空；每行 provider 映射的验收判据 = 该行的字段名在解析代码里可见。
 - **收口**：llm 三套件 42 用例绿；全量 984 用例 0 失败（2 既有 skip）；Status 停 in-progress——验收件 = 测试套件亲手跑 + 可选真机缓存命中演示。

@@ -23,6 +23,7 @@ in-progress（实现与自动化验证完成；验收件 = 适配器断点/降�
 - 2026-09-26：**用量透出链**：adapter 解析（anthropic cache_read_input_tokens / openai-compat prompt_tokens_details.cached_tokens / deepseek prompt_cache_hit_tokens 取大防双报）→ llm.TokenUsage(4 参) → agent 映射 → session.TokenUsage(4 参，同构副本域间映射) → assistant/message 事件 JSONL（cachedTokens >0 落盘，旧日志缺字段读 0）→ headless NDJSON usage 帧（Jackson record 自动含新组件）。状态面暂不加呈现位（用量面在 JSONL/headless 两处已可见；Web 状态面加缓存行挂 07 或收尾单按需议）。
 - 2026-09-26：**TDD seam**（自主模式按 spec Testing Decisions 定）：①CacheControl.split 纯函数 + TokenUsage 四参形态（CacheControlTest 3 用例）②anthropic 请求体断点断言（两段组块断点 1/2 + 末条 content 块断点 3 + 中间消息干净 + 单段退字符串 + 跨轮缓存计数不泄漏）③openai-compat cached_tokens 透出 + 请求体零断点参数降级。适配器级用例走 mock server 请求体捕获（先例 effort 用例同款）。
 - 2026-09-26：全量 984 用例 0 失败（2 既有 skip）。
+- **真机验收第一轮（2026-09-26）抓到 BUG-20260926-01 并修复（acc15a0）**：anthropic 行对含历史会话一律 422（content 块缺判别字段 type——断点 3 组块 set("text") 捷径漏 type；mock 回显器测不出协议违约）。修复 = 组块补 `put("type","text")` + 用例块级 type 断言 + MockAnthropicServer 升级最小协议校验（同族第二击升结构化防线）。**真机冒烟守则记档**：anthropic 行改动后必跑真机 2 轮对话冒烟。
 - **待用户验收（转 done 前最后一步）**：
   1. 测试套件亲手跑（命令含旗标）：`./mvnw -q -pl duo-harness-llm -am test -Dtest='CacheControlTest,AnthropicMessagesAdapterTest,OpenAiCompatAdapterTest' -Dsurefire.failIfNoSpecifiedTests=false`——3 套件（3+16+23=42 用例）全绿；
   2. （可选，anthropic provider 用户）真机缓存命中演示：CLI 连聊 3+ 轮后终端 `F=$(ls -t ~/.duo/agent-sessions/*.jsonl | head 1) && grep -o '"cachedTokens":[0-9]*' "$F" | tail -3`——第 2 轮起应出现非零 cachedTokens（首轮为 0 正常——首次写缓存）。
