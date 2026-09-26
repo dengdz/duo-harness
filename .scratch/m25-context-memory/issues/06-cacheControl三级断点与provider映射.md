@@ -24,6 +24,20 @@ in-progress（实现与自动化验证完成；验收件 = 适配器断点/降�
 - 2026-09-26：**TDD seam**（自主模式按 spec Testing Decisions 定）：①CacheControl.split 纯函数 + TokenUsage 四参形态（CacheControlTest 3 用例）②anthropic 请求体断点断言（两段组块断点 1/2 + 末条 content 块断点 3 + 中间消息干净 + 单段退字符串 + 跨轮缓存计数不泄漏）③openai-compat cached_tokens 透出 + 请求体零断点参数降级。适配器级用例走 mock server 请求体捕获（先例 effort 用例同款）。
 - 2026-09-26：全量 984 用例 0 失败（2 既有 skip）。
 - **真机验收第一轮（2026-09-26）抓到 BUG-20260926-01 并修复（acc15a0）**：anthropic 行对含历史会话一律 422（content 块缺判别字段 type——断点 3 组块 set("text") 捷径漏 type；mock 回显器测不出协议违约）。修复 = 组块补 `put("type","text")` + 用例块级 type 断言 + MockAnthropicServer 升级最小协议校验（同族第二击升结构化防线）。**真机冒烟守则记档**：anthropic 行改动后必跑真机 2 轮对话冒烟。
+- **验收对照表（2026-09-26 备，duo-acceptance 工单级三件套；命令已自跑验证）**：
+  - **路径 A · 测试套件**（一条命令，42 用例）：
+    `./mvnw -q -pl duo-harness-llm -am test -Dtest='CacheControlTest,AnthropicMessagesAdapterTest,OpenAiCompatAdapterTest' -Dsurefire.failIfNoSpecifiedTests=false`
+    预期标志行（逐条对照）：
+    1. `=== 套件：OpenAiCompatAdapterTest —— ...流式空闲超时二分（23 用例） ===`
+    2. `=== 套件：AnthropicMessagesAdapterTest —— ...usage 双帧、错误呈现（16 用例） ===`
+    3. `=== 套件：CacheControlTest —— 缓存断点：三级划分、TokenUsage 缓存字段、provider 映射（3 用例） ===`
+    4. 全程无 `[ERROR]`、命令退出码 0
+  - **路径 B · 真机缓存命中**（anthropic provider；修复 422 后的复验）：
+    启动命令 = 运行Demo.md 命令块整块复制（AgentReplMain）；`/new` 后连聊 3 轮（每轮一个不同问题），`/exit` 后终端跑 `F=$(ls -t ~/.duo/agent-sessions/*.jsonl | head -1) && grep -o '"cachedTokens":[0-9]*' "$F" | tail -5`
+    预期标志行：
+    1. 三轮对话**全部正常回答、零 422**（BUG-20260926-01 修复判据——上轮 422 复现场景即此）
+    2. grep 第 2 轮起输出非零 `cachedTokens`（如 `"cachedTokens":5000` 量级；第 1 轮 0/缺席正常——首次写缓存）
+    3. （可选）`grep -o '"promptTokens":[0-9]*' "$F" | tail -5`——promptTokens 随轮增长，cachedTokens 同向增长
 - **待用户验收（转 done 前最后一步）**：
   1. 测试套件亲手跑（命令含旗标）：`./mvnw -q -pl duo-harness-llm -am test -Dtest='CacheControlTest,AnthropicMessagesAdapterTest,OpenAiCompatAdapterTest' -Dsurefire.failIfNoSpecifiedTests=false`——3 套件（3+16+23=42 用例）全绿；
   2. （可选，anthropic provider 用户）真机缓存命中演示：CLI 连聊 3+ 轮后终端 `F=$(ls -t ~/.duo/agent-sessions/*.jsonl | head 1) && grep -o '"cachedTokens":[0-9]*' "$F" | tail -3`——第 2 轮起应出现非零 cachedTokens（首轮为 0 正常——首次写缓存）。
