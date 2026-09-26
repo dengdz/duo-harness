@@ -561,9 +561,11 @@ const render = (() => {
     if (!ev.text) return; // 空结果（如 /exit）不渲染
     if (ev.toolName === 'export' && ev.text.startsWith('/api/session/export')) {
       // /export（M21 工单 09）：done 结果即下载端点 URL——触发下载流
-      // （Content-Disposition 命名，浏览器直接落盘）；URL 文本照常渲染可查
+      // （Content-Disposition 命名，浏览器直接落盘）；URL 文本照常渲染可查。
+      // 携带 tabId（M26 收口修复）：裸 URL 落匿名上下文=默认标签——切换会话后
+      // 导出的会是启动会话而非当前会话（用户验收实测发现）
       const a = document.createElement('a');
-      a.href = ev.text;
+      a.href = ev.text + '&tabId=' + encodeURIComponent(duoTabId);
       document.body.appendChild(a);
       a.click();
       a.remove();
