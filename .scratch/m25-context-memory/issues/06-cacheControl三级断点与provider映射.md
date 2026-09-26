@@ -9,7 +9,7 @@
 01
 
 ## Status
-in-progress（实现与自动化验证完成；验收件 = 适配器断点/降级/透出测试套件 + 可选真机缓存命中演示）
+done（2026-09-26 用户双路径验收通过——套件 42 用例绿 + 真机缓存命中实测 9088→10496 递增、零 422）
 
 ## Checklist
 - [x] 三级断点划分与请求装配（身份前缀 / 稳定身份 / 动态段）
@@ -38,6 +38,7 @@ in-progress（实现与自动化验证完成；验收件 = 适配器断点/降�
     1. 三轮对话**全部正常回答、零 422**（BUG-20260926-01 修复判据——上轮 422 复现场景即此）
     2. grep 第 2 轮起输出非零 `cachedTokens`（如 `"cachedTokens":5000` 量级；第 1 轮 0/缺席正常——首次写缓存）
     3. （可选）`grep -o '"promptTokens":[0-9]*' "$F" | tail -5`——promptTokens 随轮增长，cachedTokens 同向增长
+- **验收通过（2026-09-26，用户双路径实测）**：路径 A 套件——三行叙述精确出现、无 ERROR、42 用例绿；路径 B 真机（anthropic provider）——新会话四轮对话全部正常回答**零 422**（BUG-20260926-01 修复复验判据），grep 实测 `"cachedTokens":9088` → `"cachedTokens":10496`——非零且随对话增长单调上升，缓存命中真实发生、token 账单出现缓存命中项（用户故事 16 兑现）。工单转 done。
 - **待用户验收（转 done 前最后一步）**：
   1. 测试套件亲手跑（命令含旗标）：`./mvnw -q -pl duo-harness-llm -am test -Dtest='CacheControlTest,AnthropicMessagesAdapterTest,OpenAiCompatAdapterTest' -Dsurefire.failIfNoSpecifiedTests=false`——3 套件（3+16+23=42 用例）全绿；
   2. （可选，anthropic provider 用户）真机缓存命中演示：CLI 连聊 3+ 轮后终端 `F=$(ls -t ~/.duo/agent-sessions/*.jsonl | head 1) && grep -o '"cachedTokens":[0-9]*' "$F" | tail -3`——第 2 轮起应出现非零 cachedTokens（首轮为 0 正常——首次写缓存）。
