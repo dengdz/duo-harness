@@ -339,10 +339,18 @@ public final class OpenAiCompatAdapter implements LlmAdapter {
                 // 附在 finish chunk、有的独立成帧，两种形态统一为"最后一次出现为准"
                 JsonNode usageNode = frame.path("usage");
                 if (usageNode.isObject()) {
+                    // 缓存命中（M25 工单 06 用量透出）：openai-compat 形态
+                    // prompt_tokens_details.cached_tokens；deepseek 形态
+                    // prompt_cache_hit_tokens（同一适配器承载两 provider，取大者防双报）
+                    // ——provider 自动前缀缓存（无断点参数，静默享受）；字段缺席 = 0
+                    long cached = Math.max(
+                            usageNode.path("prompt_tokens_details").path("cached_tokens").asLong(0),
+                            usageNode.path("prompt_cache_hit_tokens").asLong(0));
                     usage = new TokenUsage(
                             usageNode.path("prompt_tokens").asLong(0),
                             usageNode.path("completion_tokens").asLong(0),
-                            usageNode.path("total_tokens").asLong(0));
+                            usageNode.path("total_tokens").asLong(0),
+                            cached);
                 }
             }
         }

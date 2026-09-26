@@ -293,7 +293,8 @@ public final class ToolCallingAgent implements ChatAgent {
                             turn.usage() == null ? null : new TokenUsage(
                                     turn.usage().promptTokens(),
                                     turn.usage().completionTokens(),
-                                    turn.usage().totalTokens())));
+                                    turn.usage().totalTokens(),
+                                    turn.usage().cachedTokens())));
                     completed = true;
                     break;
                 }

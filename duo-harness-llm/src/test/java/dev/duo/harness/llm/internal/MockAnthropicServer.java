@@ -98,9 +98,18 @@ final class MockAnthropicServer {
 
     /** 构造 message_start 帧（input_tokens）。 */
     static String messageStart(long inputTokens) {
+        return messageStart(inputTokens, 0);
+    }
+
+    /** 构造 message_start 帧（input_tokens + 缓存命中，M25 工单 06 用例）。 */
+    static String messageStart(long inputTokens, long cacheReadTokens) {
         ObjectNode root = JsonNodeFactory.instance.objectNode();
         root.put("type", "message_start");
-        root.putObject("message").putObject("usage").put("input_tokens", inputTokens);
+        var usage = root.putObject("message").putObject("usage");
+        usage.put("input_tokens", inputTokens);
+        if (cacheReadTokens > 0) {
+            usage.put("cache_read_input_tokens", cacheReadTokens);
+        }
         return root.toString();
     }
 

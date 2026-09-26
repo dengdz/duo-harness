@@ -29,7 +29,7 @@ class OpenAiCompatAdapterTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：OpenAiCompatAdapterTest —— OpenAI 兼容适配器：流式聚合与请求形态、"
-                + "usage 统计捕获、错误呈现、流式空闲超时二分（21 用例） ===");
+                + "usage 统计捕获、错误呈现、流式空闲超时二分（23 用例） ===");
     }
 
     private final ObjectMapper json = new ObjectMapper();
@@ -95,6 +95,34 @@ class OpenAiCompatAdapterTest {
 
         assertEquals(new TokenUsage(120, 34, 154), turn.usage(), "流末 usage 帧捕获进一轮结果");
         assertEquals("你好", turn.text(), "usage 帧不干扰文本聚合");
+    }
+
+    @Test
+    void cachedTokens透出进用量统计() throws Exception {
+        // M25 工单 06：provider 自动前缀缓存的命中计数透出（无断点参数，静默享受）
+        server.respondSse(List.of(
+                MockOpenAiServer.deltaChunk("你好"),
+                MockOpenAiServer.usageChunk(120, 34, 154, 96)));
+
+        LlmTurn turn = adapter().streamTurn(
+                new ChatRequest("你是助手", List.of(ChatMessage.user("打招呼"))), s -> { });
+
+        assertEquals(96, turn.usage().cachedTokens(), "缓存命中 96 透出");
+        assertEquals(new TokenUsage(120, 34, 154, 96), turn.usage(), "四参形态完整");
+    }
+
+    @Test
+    void 请求体零缓存断点参数() throws Exception {
+        // openai-compat 行映射 = 静默降级：无 cache_control 类参数（provider 自动缓存）
+        server.respondSse(List.of(MockOpenAiServer.deltaChunk("ok")));
+        collect(adapter(), new ChatRequest("你是助手", List.of(ChatMessage.user("问"))));
+        JsonNode body = json.readTree(server.lastRequestBody());
+        assertTrue(body.path("cache_control").isMissingNode(), "顶层无 cache_control");
+        assertTrue(body.path("prompt_cache").isMissingNode(), "无 glm 形态开关");
+        for (JsonNode message : body.path("messages")) {
+            assertTrue(message.path("cache_control").isMissingNode(),
+                    "消息级无断点: " + message);
+        }
     }
 
     @Test

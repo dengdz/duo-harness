@@ -165,12 +165,21 @@ final class MockOpenAiServer {
 
     /** 构造一条流末 usage 统计载荷（choices 空数组 + 顶层 usage——include_usage 的到达形态）。 */
     static String usageChunk(long promptTokens, long completionTokens, long totalTokens) {
+        return usageChunk(promptTokens, completionTokens, totalTokens, 0);
+    }
+
+    /** 带缓存命中（prompt_tokens_details.cached_tokens，M25 工单 06 用例）。 */
+    static String usageChunk(long promptTokens, long completionTokens, long totalTokens,
+                             long cachedTokens) {
         var root = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
         root.putArray("choices");
-        root.putObject("usage")
+        var usage = root.putObject("usage")
                 .put("prompt_tokens", promptTokens)
                 .put("completion_tokens", completionTokens)
                 .put("total_tokens", totalTokens);
+        if (cachedTokens > 0) {
+            usage.putObject("prompt_tokens_details").put("cached_tokens", cachedTokens);
+        }
         return root.toString();
     }
 

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.llm.ChatChunk;
+import dev.duo.harness.llm.CacheControl;
 import dev.duo.harness.llm.ChatMessage;
 import dev.duo.harness.llm.ChatRequest;
 import dev.duo.harness.llm.LlmAdapter;
@@ -153,14 +154,40 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
         return (base.endsWith("/") ? base.substring(0, base.length() - 1) : base) + "/v1/messages";
     }
 
-    /** 构造 messages 请求体：system 单列 + user/assistant 交替 + tool_use/tool_result 块映射。 */
+    /**
+     * 构造 messages 请求体：system 单列 + user/assistant 交替 + tool_use/tool_result 块映射。
+     * cacheControl（M25 工单 06）：system 按三级划分组块并逐块打 {@code cache_control:
+     * ephemeral} 断点（身份前缀/稳定身份），最后一条消息追加动态段断点——块数组与
+     * 字符串形态语义等价（单块无断点时保持字符串，兼容无缓存路径）。
+     */
     private String requestBody(ChatRequest request) throws IOException {
         ObjectNode root = JSON.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
         applyEffort(root, effortOf(request));
         if (!request.systemPrompt().isBlank()) {
-            root.put("system", request.systemPrompt());
+            CacheControl.Segments segments = CacheControl.split(request.systemPrompt());
+            ArrayNode systemBlocks = JSON.createArrayNode();
+            if (segments.stableBody() != null) {
+                // 两段形态（身份前缀 + 稳定身份）：块数组各打 ephemeral（断点 1/2），
+                // 块间以 \n\n 还原——与单段字符串逐字节等价（缓存键不受形态影响）。
+                // 单段形态退字符串——旧路径零变化（无断点比错误断点安全）
+                if (segments.identityPrefix() != null) {
+                    systemBlocks.addObject()
+                            .put("type", "text").put("text", segments.identityPrefix())
+                            .putObject("cache_control").put("type", "ephemeral");
+                }
+                String body = segments.stableBody();
+                if (segments.identityPrefix() != null) {
+                    body = "\n\n" + body;
+                }
+                systemBlocks.addObject()
+                        .put("type", "text").put("text", body)
+                        .putObject("cache_control").put("type", "ephemeral");
+                root.set("system", systemBlocks);
+            } else {
+                root.put("system", request.systemPrompt());
+            }
         }
         ArrayNode messages = root.putArray("messages");
         List<ChatMessage> history = request.messages();
@@ -185,6 +212,23 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
                 tool.put("name", spec.name());
                 tool.put("description", spec.description());
                 tool.set("input_schema", JSON.readTree(spec.parametersJson()));
+            }
+        }
+        // 动态段断点（三级之末）：末条消息的 content 块上打 ephemeral——会话历史逐轮
+        // 追加，末条断点让"到上一轮为止的对话"可缓存（M25 工单 06）。协议挂载位是
+        // content block：字符串 content 先组块再挂（字符串上挂顶层字段会被忽略）
+        if (!messages.isEmpty() && messages.get(messages.size() - 1).isObject()) {
+            ObjectNode last = (ObjectNode) messages.get(messages.size() - 1);
+            JsonNode content = last.get("content");
+            if (content != null && content.isTextual()) {
+                ArrayNode blocks = JSON.createArrayNode();
+                blocks.addObject().set("text", content);
+                last.set("content", blocks);
+            }
+            ArrayNode contentBlocks = last.withArray("content");
+            if (contentBlocks.size() > 0 && contentBlocks.get(contentBlocks.size() - 1).isObject()) {
+                ((ObjectNode) contentBlocks.get(contentBlocks.size() - 1))
+                        .putObject("cache_control").put("type", "ephemeral");
             }
         }
         return root.toString();
@@ -338,6 +382,7 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
         Map<Integer, String> names = new TreeMap<>();
         Map<Integer, StringBuilder> arguments = new TreeMap<>();
         long promptTokens = 0;
+        long cacheReadTokens = 0;
         long completionTokens = 0;
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
@@ -357,6 +402,8 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
                 }
                 if ("message_start".equals(type)) {
                     promptTokens = frame.path("message").path("usage").path("input_tokens").asLong(0);
+                    cacheReadTokens = frame.path("message").path("usage")
+                            .path("cache_read_input_tokens").asLong(0);
                     continue;
                 }
                 if ("message_delta".equals(type)) {
@@ -403,7 +450,8 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
                     arguments.getOrDefault(entry.getKey(), new StringBuilder()).toString()));
         }
         TokenUsage usage = promptTokens == 0 && completionTokens == 0 ? null
-                : new TokenUsage(promptTokens, completionTokens, promptTokens + completionTokens);
+                : new TokenUsage(promptTokens, completionTokens, promptTokens + completionTokens,
+                        cacheReadTokens);
         String reasoning = null;
         if (redactedBlockJson != null) {
             reasoning = redactedBlockJson;

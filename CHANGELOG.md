@@ -6,6 +6,8 @@
 
 ### Added
 
+- **cacheControl 三级断点与 provider 映射（M25 工单 06，ADR-0024 M25 节）**：对每轮重复携带的稳定前缀打 provider 缓存断点省钱提速——anthropic 形态 system 按三级组块（身份前缀 = yml 用户指令、稳定身份 = AGENTS.md/记忆指南/技能清单等静态片段）各打 `cache_control: ephemeral`、末条消息 content 块打动态段断点（块拼接与原 system 逐字节等价，缓存键稳定；单段 system 退字符串旧路径零变化）；openai-compat / glm / deepseek 无断点参数静默享受 provider 自动前缀缓存（不支持零报错）。缓存命中透出进用量统计：TokenUsage 新增 cachedTokens（anthropic `cache_read_input_tokens` / openai-compat `prompt_tokens_details.cached_tokens` / deepseek `prompt_cache_hit_tokens` 双字段兼容），随 assistant/message 会话事件落 JSONL（>0 落盘）、headless usage 帧与状态面计量同源；断点失效自然回源（provider 语义，无隐性成本）
+
 - **压缩熔断与状态可见（M25 工单 05，ADR-0024 M25 节）**：summary 压缩连续失败达 3 次（空摘要同计）即熔断——自动压缩静默暂停，会话照常可用（防"压缩失败→重试→再失败"每轮空烧卡死长会话）；状态面上下文占用行标注「⚠ 压缩已熔断」（`context.compactionTripped` 字段）；仅成功压缩清零计数解除熔断，manual /compact 不受熔断约束（用户显式指令优先）；microcompact 与 summary 压缩并存互不干扰——熔断只挡 summary，本地裁剪照常工作；microcompact 裁剪点同压缩点作废旧 usage 计量（治理后回退本地估算，防按虚高占用误触发）
 
 - **microcompact 本地裁剪（M25 工单 04，ADR-0024 M25 节）**：超长对话逼近窗口时的免模型降本——治理计量超微缩阈值（压缩阈值的 0.9 折让与 −2000 buffer 取小）即本地裁掉「最近 5 组完整对话之外的可压缩工具结果」（read/grep/bash/web_fetch 等白名单），替换为占位标记，**不发起任何模型调用**（省一次 summary 的钱与等待）；用户/助手文本与最近 5 组完整不动，失败结果（tool/result 事件新落 `error` 标志）与媒体附件结果豁免——排障依据与视觉上下文不丢；每次裁剪落 `context/microcompacted` 事件（被清名单 + 释放估算 token），JSONL 原文完整可回放。治理段新配置 `microcompactEnabled`（缺省开）/ `microcompactKeepRecent`（缺省 5）；裁剪生效的当轮压缩判定改用裁剪后估算，避免刚省钱又立刻烧一次 summary

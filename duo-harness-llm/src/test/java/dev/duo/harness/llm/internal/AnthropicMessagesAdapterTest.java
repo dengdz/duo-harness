@@ -34,7 +34,7 @@ class AnthropicMessagesAdapterTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：AnthropicMessagesAdapterTest —— Anthropic-messages 适配器：请求映射、"
-                + "SSE 聚合、usage 双帧、错误呈现（13 用例） ===");
+                + "SSE 聚合、usage 双帧、错误呈现（16 用例） ===");
     }
 
     private final ObjectMapper json = new ObjectMapper();
@@ -190,6 +190,82 @@ class AnthropicMessagesAdapterTest {
 
     private ChatRequest request() {
         return new ChatRequest("系统提示", List.of(ChatMessage.user("hi")), List.of());
+    }
+
+    @Test
+    void cacheControl三级断点打在system块与末条消息() throws Exception {
+        // M25 工单 06：system 按三级划分组块（身份前缀/稳定身份各打 ephemeral），
+        // 最后一条消息追加动态段断点；单段 system（无空行边界）退字符串形态
+        server.respondSse(List.of(MockAnthropicServer.messageStop()));
+        adapter().streamTurn(new ChatRequest(
+                "你是固定助手。\n\n## AGENTS.md 约定\n静态片段正文",
+                List.of(ChatMessage.user("hi"), ChatMessage.assistant("ok"),
+                        ChatMessage.user("go")), List.of()), text -> { });
+
+        JsonNode body = json.readTree(server.lastRequestBody());
+        JsonNode system = body.get("system");
+        assertTrue(system != null && system.isArray(), "多段 system 组块为数组: " + system);
+        assertEquals(2, system.size(), "身份前缀 + 稳定身份两块");
+        assertEquals("你是固定助手。", system.get(0).path("text").asText());
+        assertEquals("ephemeral", system.get(0).path("cache_control").path("type").asText(),
+                "断点 1：身份前缀");
+        // 块间 \n\n 还原：两块拼接 = 原 system 逐字节等价（缓存键不受组块影响）
+        // 分隔符并入 body 块头部：块[0] + 块[1] = 原 system 逐字节等价
+        assertEquals(system.get(0).path("text").asText()
+                + system.get(1).path("text").asText(),
+                "你是固定助手。\n\n## AGENTS.md 约定\n静态片段正文", "两块拼接逐字节还原");
+        assertEquals("ephemeral", system.get(1).path("cache_control").path("type").asText(),
+                "断点 2：稳定身份");
+
+        JsonNode messages = body.get("messages");
+        JsonNode last = messages.get(messages.size() - 1);
+        assertEquals("ephemeral",
+                last.path("content").get(last.path("content").size() - 1)
+                        .path("cache_control").path("type").asText(),
+                "断点 3：动态段（末条消息的 content 块）");
+        assertTrue(last.path("content").isArray(), "字符串 content 组块后挂断点");
+        // 非末条不打断点（中间消息保持干净——content 仍为字符串）
+        assertTrue(messages.get(0).path("content").isTextual(), "中间消息 content 不动");
+    }
+
+    @Test
+    void cacheControl单段system退字符串兼容() throws Exception {
+        server.respondSse(List.of(MockAnthropicServer.messageStop()));
+        adapter().streamTurn(request(), text -> { });
+
+        JsonNode body = json.readTree(server.lastRequestBody());
+        // "系统提示" 无空行边界 → 单块无断点 → 字符串形态（旧路径兼容）
+        assertTrue(body.get("system").isTextual(), "单段保持字符串: " + body.get("system"));
+        JsonNode messages = body.get("messages");
+        JsonNode lastContent = messages.get(messages.size() - 1).path("content");
+        assertEquals("ephemeral",
+                lastContent.get(lastContent.size() - 1).path("cache_control").path("type").asText(),
+                "动态段断点恒打（末条消息 content 块）");
+    }
+
+    @Test
+    void 缓存计数跨轮不泄漏() throws Exception {
+        // 行级审查阻断修复回归：第 1 轮命中 800 → 第 2 轮 provider 未报缓存 → 0
+        server.respondSse(List.of(
+                MockAnthropicServer.messageStart(1000, 800),
+                MockAnthropicServer.messageStop()));
+        adapter().streamTurn(request(), text -> { });
+        server.respondSse(List.of(
+                MockAnthropicServer.messageStart(900),
+                MockAnthropicServer.messageStop()));
+        LlmTurn second = adapter().streamTurn(request(), text -> { });
+        assertEquals(0, second.usage().cachedTokens(), "第二轮无缓存报告即 0（不残留 800）");
+    }
+
+    @Test
+    void usage透出缓存命中token() throws Exception {
+        // M25 工单 06：cache_read_input_tokens 进 TokenUsage.cachedTokens
+        server.respondSse(List.of(
+                MockAnthropicServer.messageStart(1000, 800),
+                MockAnthropicServer.messageStop()));
+        LlmTurn turn = adapter().streamTurn(request(), text -> { });
+        assertEquals(800, turn.usage().cachedTokens(), "缓存命中 800 进用量");
+        assertEquals(1000, turn.usage().promptTokens());
     }
 
     @Test

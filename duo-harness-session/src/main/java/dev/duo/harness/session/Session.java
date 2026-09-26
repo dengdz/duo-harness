@@ -934,10 +934,14 @@ public final class Session {
             node.put("reasoning", event.reasoning());
         }
         if (event.usage() != null) {
-            node.putObject("usage")
+            var usageNode = node.putObject("usage")
                     .put("promptTokens", event.usage().promptTokens())
                     .put("completionTokens", event.usage().completionTokens())
                     .put("totalTokens", event.usage().totalTokens());
+            if (event.usage().cachedTokens() > 0) {
+                // 缓存命中（M25 工单 06）：仅 >0 落盘——旧日志缺字段即 0，日志更瘦
+                usageNode.put("cachedTokens", event.usage().cachedTokens());
+            }
         }
         if (event.error()) {
             // 失败标志（M25 工单 04）：仅 true 落盘——旧日志缺字段即 false，日志更瘦
@@ -959,7 +963,8 @@ public final class Session {
             TokenUsage usage = usageNode == null || !usageNode.isObject() ? null : new TokenUsage(
                     usageNode.path("promptTokens").asLong(0),
                     usageNode.path("completionTokens").asLong(0),
-                    usageNode.path("totalTokens").asLong(0));
+                    usageNode.path("totalTokens").asLong(0),
+                    usageNode.path("cachedTokens").asLong(0));
             // error 失败标志（M25 工单 04）：旧日志无此字段 = false（非已知失败，可裁）
             JsonNode errorNode = node.get("error");
             boolean error = errorNode != null && errorNode.asBoolean(false);
