@@ -562,9 +562,11 @@ const render = (() => {
     if (ev.toolName === 'export' && ev.text.startsWith('/api/session/export')) {
       // /export（M21 工单 09）：done 结果即下载端点 URL——触发下载流
       // （Content-Disposition 命名，浏览器直接落盘）；URL 文本照常渲染可查。
-      // URL 自含 sessionId（M26-07 显式寻址）——导出跟随命令发起时的当前会话
+      // URL 自含 sessionId（M26-07 显式寻址）——导出跟随命令发起时的当前会话；
+      // 附加 token（M26-07 收口补）：a 点击是导航不走 fetch 头通道，鉴权开启时
+      // 缺 token 会被 fail-closed 栅栏 403（用户验收实测发现）
       const a = document.createElement('a');
-      a.href = ev.text;
+      a.href = ev.text + (duoToken ? '&token=' + encodeURIComponent(duoToken) : '');
       document.body.appendChild(a);
       a.click();
       a.remove();
