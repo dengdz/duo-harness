@@ -45,8 +45,10 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
 
     private static void writeEvent(Path jsonl, String type, long at, String text)
             throws Exception {
-        Files.writeString(jsonl, "{\"type\":\"" + type + "\",\"at\":" + at
-                        + ",\"text\":\"" + text + "\"}\n",
+        // ObjectMapper 正规序列化——text 含引号（如交付声明的路径数组 JSON）自动转义
+        var node = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("type", type).put("at", at).put("text", text);
+        Files.writeString(jsonl, node.toString() + "\n",
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
     }
 
@@ -189,6 +191,25 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
 
         try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             assertTrue(index.search("虞美人", 8).isEmpty(), "subagents/ 子目录不索引");
+        }
+    }
+
+    @Test
+    void deliverablePresentedSearchableByFileName() throws Exception {
+        // M26-04：交付声明入检索——按成果文件名反查会话可命中
+        Path sessions = liveDir.resolve("sessions");
+        Files.createDirectories(sessions);
+        Path jsonl = sessions.resolve("20260926-200000-0012.jsonl");
+        writeHeader(jsonl);
+        writeEvent(jsonl, "user/message", 1, "帮我出一份验收报告");
+        writeEvent(jsonl, "deliverable/presented", 2,
+                "[\"/tmp/proj/out/验收报告-v2.md\"]");
+
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
+            List<SessionHit> hits = index.search("验收报告", 8);
+            assertEquals(1, hits.size(), "按成果文件名反查会话: " + hits);
+            assertEquals("deliverable/presented", hits.get(0).eventType(),
+                    "最强匹配事件为交付声明本身: " + hits);
         }
     }
 

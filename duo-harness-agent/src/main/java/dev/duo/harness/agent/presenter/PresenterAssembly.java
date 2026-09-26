@@ -24,6 +24,7 @@ import dev.duo.harness.tools.fs.WorkspacePolicy;
 import dev.duo.harness.tools.ToolsService;
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.nio.file.Path;
 import java.util.function.Supplier;
 
 /**
@@ -536,6 +537,17 @@ public final class PresenterAssembly {
     public static void registerTodoWriteTool(Context ctx, ToolsService tools,
                                              Supplier<Session> currentSession) {
         registerIfAbsent(tools, ctx, TodoWriteTool.NAME, () -> new TodoWriteTool(currentSession));
+    }
+
+    /**
+     * present 注册（M26 工单 04，ADR-0028，查重先到先得）：交付声明工具随呈现位
+     * 装配注册——会话供给与 todo 同模式；cwd 为相对交付路径的解析基准（生产装配
+     * 与会话落盘 cwd 同源取进程工作目录）。
+     */
+    public static void registerPresentTool(Context ctx, ToolsService tools,
+                                           Supplier<Session> currentSession, Path cwd) {
+        registerIfAbsent(tools, ctx, dev.duo.harness.agent.deliverable.PresentTool.NAME,
+                () -> new dev.duo.harness.agent.deliverable.PresentTool(currentSession, cwd));
     }
 
     /** 同名已注册则跳过——多呈现位共存时先到方胜出。 */

@@ -8,7 +8,8 @@ import dev.duo.harness.session.SessionEvent;
  * <ul>
  *   <li>入：user/message、assistant/message 文本；tool/call 工具名+参数；
  *       tool/result 结果；todo/write 清单项内容；run/error（turn 错误，
- *       当前版本不落盘但类型保留——夹具用例钉住其入索引语义）；</li>
+ *       当前版本不落盘但类型保留——夹具用例钉住其入索引语义）；deliverable/
+ *       presented 交付文件路径（M26-04，按成果文件名反查会话）；</li>
  *   <li>入（消息语义）：subagent/completed——子代理最终回答投影为父上下文
  *       消息（Session.projectsToMessage 同判），属真实对话文本；</li>
  *   <li>不入：assistant/chunk（与完整消息重复的过程细节）、reasoning
@@ -35,6 +36,7 @@ public final class EventTextExtractor {
                     ? event.text() : event.toolName() + "\n" + event.text();
             case SessionEvent.TOOL_RESULT -> event.text();
             case SessionEvent.TODO_WRITE -> todoContent(event.text());
+            case SessionEvent.DELIVERABLE_PRESENTED -> deliverablePaths(event.text());
             default -> null;
         };
     }
@@ -60,6 +62,30 @@ public final class EventTextExtractor {
             return out.isEmpty() ? null : out.toString().strip();
         } catch (Exception e) {
             return todosJson;
+        }
+    }
+
+    /**
+     * 交付声明的路径抽取（M26-04）：路径数组 JSON 逐条换行拼接——路径字符串
+     * 含文件名，按成果文件名/目录名反查会话可命中；解析失败回退原文（present
+     * 工具产出的载荷是透明往返，坏形态按原文搜）。
+     */
+    private static String deliverablePaths(String filesJson) {
+        try {
+            var node = MAPPER.readTree(filesJson);
+            if (!node.isArray()) {
+                return filesJson;
+            }
+            StringBuilder out = new StringBuilder();
+            for (var item : node) {
+                String path = item.asText("");
+                if (!path.isBlank()) {
+                    out.append(path).append('\n');
+                }
+            }
+            return out.isEmpty() ? null : out.toString().strip();
+        } catch (Exception e) {
+            return filesJson;
         }
     }
 }

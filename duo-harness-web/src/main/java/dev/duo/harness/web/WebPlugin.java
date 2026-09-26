@@ -213,6 +213,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ctx, tools, answers, ChatAgent.PRESENTER_WEB, face::currentSession, () -> { });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, face::currentSession);
+        // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
+        PresenterAssembly.registerPresentTool(ctx, tools, face::currentSession,
+                java.nio.file.Path.of(System.getProperty("user.dir")));
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, adapter, governanceTuning, face::currentSession);

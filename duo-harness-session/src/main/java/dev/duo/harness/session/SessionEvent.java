@@ -168,6 +168,16 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     public static final String MICROCOMPACT_CLEARED_MARKER =
             "[旧工具结果已清除（microcompact）：完整原文在会话日志中]";
 
+    /**
+     * 交付声明（M26 工单 04，ADR-0028；语义对齐 DSH {@code deliverables/presented}）：
+     * 模型任务收尾时经 present 工具主动上报的成果文件清单（text = 绝对路径数组
+     * JSON——present 工具先校验文件真实存在才落此事件）。是"模型自报成果"的语义
+     * 源头：入会话检索索引（按成果文件名反查会话）、进导出报告交付清单章节
+     * （M26 工单 05），与系统视角的变更摘要互为印证；投影跳过——声明是元数据
+     * 不是对话消息。
+     */
+    public static final String DELIVERABLE_PRESENTED = "deliverable/presented";
+
     /** 构造时校验非空——错误前移到构造点。 */
     public SessionEvent {
         Objects.requireNonNull(type, "type");
@@ -371,5 +381,10 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：思考等级切换（四档档位词，M24 工单 10）。 */
     public static SessionEvent modelEffort(String level) {
         return new SessionEvent(MODEL_EFFORT, System.currentTimeMillis(), level);
+    }
+
+    /** 便捷工厂：交付声明（text = 校验通过的绝对路径数组 JSON；present 工具落盘）。 */
+    public static SessionEvent deliverablePresented(String filesJson) {
+        return new SessionEvent(DELIVERABLE_PRESENTED, System.currentTimeMillis(), filesJson);
     }
 }
