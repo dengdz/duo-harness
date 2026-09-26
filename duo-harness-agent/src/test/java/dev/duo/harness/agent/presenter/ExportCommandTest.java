@@ -88,7 +88,9 @@ class ExportCommandTest {
         PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export markdown", env(CommandScope.WEB), null);
         assertTrue(outcome.isCommand());
-        assertEquals("/api/session/export?format=markdown", outcome.text());
+        // M26-07 显式寻址：URL 自含 sessionId（导出跟随命令发起时的当前会话）
+        assertTrue(outcome.text().startsWith("/api/session/export?format=markdown&sessionId="),
+                outcome.text() + "）");
         // Web 分流不落盘
         try (var list = Files.list(tempDir)) {
             assertTrue(list.filter(p -> p.getFileName().toString().startsWith("duo-session-"))
@@ -111,7 +113,9 @@ class ExportCommandTest {
     void defaultArgumentIsMarkdown() {
         PresenterAssembly.registerExportCommand(root, commands, tempDir);
         CommandOutcome outcome = commands.dispatch("/export", env(CommandScope.WEB), null);
-        assertEquals("/api/session/export?format=markdown", outcome.text()); // 缺省 markdown
+        // M26-07 显式寻址：URL 自含 sessionId（导出跟随命令发起时的当前会话）
+        assertTrue(outcome.text().startsWith("/api/session/export?format=markdown&sessionId="),
+                outcome.text() + "）"); // 缺省 markdown
     }
 
     @Test

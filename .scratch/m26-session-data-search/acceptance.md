@@ -20,12 +20,13 @@ cd /tmp/duo-m26-accept/demo-repo && DUO_HOME=/tmp/duo-m26-accept/home \
 | 1 | 侧栏会话列表逐个点开 | 手造会话「交付与导出演示」正常打开（版本头 v1 会话，01） |
 | 2 | 搜索框搜「部署手册」 | 命中「交付与导出演示」——交付声明事件可按成果文件名反查（04，cwd 授权边界内） |
 | 3 | 终端另开一窗：`echo "changed during session" >> /tmp/duo-m26-accept/demo-repo/seed.txt` 再 `printf 'demo\nfiles\n' > /tmp/duo-m26-accept/demo-repo/demo-note.md`，然后页面 `/export`（markdown 下载） | 下载的报告含 **`## 变更摘要（系统对账）`** 表：`seed.txt`（tracked 修改）与 `demo-note.md`（新增未跟踪，Java 计行数）各一行（05 git 对账——与 LLM 无关，任何文件变化都入账） |
-| 4 | 侧栏切到手造会话 → 再 `/export` | 报告含 **`## 交付清单（模型声明）`** 章：列出部署手册.md 路径（04/05 联动） |
+| 4 | 页面输入 `/export` 回车（自动下载，链接自含 sessionId） | 文件名为 `duo-session-20260926-210000-c001.md`（当前会话），报告含 **`## 交付清单（模型声明）`** 章：列出部署手册.md 路径（04/05 联动）。**确定性寻址**：导出必带 sessionId，不再依赖标签绑定 |
 | 5 | `/new` 开新会话发一句话（404 预期）→ 侧栏切回手造会话 | 新会话不串入旧消息（06 复合游标——已在工单级验收过，此处回归） |
 
 ## agent 冒烟记录（2026-09-26）
 
 - 变更摘要表实测：`seed.txt +1/0`、`demo-note.md +2/0`（两源：numstat + 未跟踪差集 Java 计行）
 - 交付清单章实测：部署手册.md 路径列出（跨声明去重口径）
+- 显式 sessionId 寻址实测：按 id 导出未打开的会话 200、缺参 400、未知 id 404（WebSessionExportEndpointTest 6 用例）
 - 手造会话经 /switch 切换后导出正常（复合游标协议生效）
 - 测试路径：全仓 13 模块 `mvnw test` BUILD SUCCESS（收口审查修复后终态）

@@ -589,7 +589,9 @@ public final class PresenterAssembly {
                     String fileName = dev.duo.harness.session.SessionExport
                             .fileName(session.id(), format);
                     if (context.presenter() == CommandScope.WEB) {
-                        return "/api/session/export?format=" + format.argName;
+                        // 显式 sessionId（M26-07 收口采纳用户提案）——下载 URL 自含寻址
+                        return "/api/session/export?format=" + format.argName
+                                + "&sessionId=" + session.id();
                     }
                     java.nio.file.Path target = exportDir.resolve(fileName);
                     // 流式写盘（M26-05）：渲染核心直写 Writer，大会话不整包驻内存

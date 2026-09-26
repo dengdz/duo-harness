@@ -17,6 +17,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -25,8 +26,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * /export 下载流 HTTP 级测试（M21 工单 09）：markdown/json 附件下载
- * （Content-Disposition 命名）、非法格式 400。只导当前会话。
+ * /export 下载流 HTTP 级测试（M21 工单 09；M26-07 显式 sessionId 寻址）：
+ * markdown/json 附件下载（Content-Disposition 命名）、非法格式/缺参 400、
+ * 未知会话 404、未打开的会话按 id 可导。
  */
 class WebSessionExportEndpointTest {
 
@@ -65,8 +67,9 @@ class WebSessionExportEndpointTest {
                 return new AgentReply("好的", List.of(), true);
             }
         };
+        // sessionsDir 与会话夹具同目录（M26-07 显式寻址按 sessionsDir 解析会话文件）
         face = WebFace.start(0, ctx, ctx.as(ToolsView.class).tools(), session, stub,
-                null, null, tempDir.resolve("out"), 50, null, () -> false, null);
+                null, null, tempDir.resolve("sessions"), 50, null, () -> false, null);
         return face;
     }
 
@@ -79,7 +82,8 @@ class WebSessionExportEndpointTest {
     @Test
     void markdownDownloadsAsAttachment() throws Exception {
         WebFace f = start();
-        HttpResponse<byte[]> res = get(f, "/api/session/export?format=markdown");
+        HttpResponse<byte[]> res = get(f, "/api/session/export?format=markdown&sessionId="
+                + f.currentSession().id());
         assertEquals(200, res.statusCode());
         Optional<String> disposition = res.headers().firstValue("Content-Disposition");
         assertTrue(disposition.isPresent() && disposition.get().contains("attachment"));
@@ -92,7 +96,8 @@ class WebSessionExportEndpointTest {
     @Test
     void jsonDownloadsAsOriginalCopy() throws Exception {
         WebFace f = start();
-        HttpResponse<byte[]> res = get(f, "/api/session/export?format=json");
+        HttpResponse<byte[]> res = get(f, "/api/session/export?format=json&sessionId="
+                + f.currentSession().id());
         assertEquals(200, res.statusCode());
         assertTrue(res.headers().firstValue("Content-Disposition").orElse("")
                 .contains(".jsonl"));
@@ -104,7 +109,51 @@ class WebSessionExportEndpointTest {
     @Test
     void invalidFormatIs400() throws Exception {
         WebFace f = start();
-        HttpResponse<byte[]> res = get(f, "/api/session/export?format=xml");
+        HttpResponse<byte[]> res = get(f, "/api/session/export?format=xml&sessionId="
+                + f.currentSession().id());
         assertEquals(400, res.statusCode());
+    }
+
+    @Test
+    void missingSessionIdIs400() throws Exception {
+        // M26-07 显式寻址：缺 sessionId = 匿名导出不再受理（确定性——不猜你要哪个）
+        WebFace f = start();
+        HttpResponse<byte[]> res = get(f, "/api/session/export?format=markdown");
+        assertEquals(400, res.statusCode());
+    }
+
+    @Test
+    void unknownSessionIs404() throws Exception {
+        WebFace f = start();
+        HttpResponse<byte[]> res = get(f, "/api/session/export?format=markdown&sessionId=20260101-000000-0000");
+        assertEquals(404, res.statusCode(), "合法形态的不存在 id → 404（zzz 形态会被白名单 400 拒）");
+    }
+
+    @Test
+    void unopenedSessionExportableById() throws Exception {
+        // M26-07 新能力：未打开的会话按 id 直接导出（临时加载、导出后释放）——
+        // 不再需要先 /switch 打开；含交付声明事件则交付清单章随导出呈现
+        Path sessions = tempDir.resolve("sessions");
+        Files.createDirectories(sessions);
+        Path second = sessions.resolve("20260926-220000-0002.jsonl");
+        Files.write(second, List.of(
+                "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + tempDir + "\"}",
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"第二个会话的标记词风筝\"}",
+                "{\"type\":\"deliverable/presented\",\"at\":2,\"text\":\"[\\\"/tmp/p/风筝报告.md\\\"]\"}"),
+                StandardCharsets.UTF_8);
+        WebFace f = start();
+
+        HttpResponse<byte[]> res = get(f, "/api/session/export?format=markdown&sessionId=20260926-220000-0002");
+        assertEquals(200, res.statusCode());
+        assertTrue(res.headers().firstValue("Content-Disposition").orElse("")
+                .contains("duo-session-20260926-220000-0002.md"), "按 id 命名导出");
+        String body = new String(res.body(), StandardCharsets.UTF_8);
+        assertTrue(body.contains("风筝"), "未打开的会话内容可导出");
+        assertTrue(body.contains("## 交付清单（模型声明）"), "交付声明随导出呈现");
+        assertTrue(body.contains("风筝报告.md"));
+        // 导出后释放锁：会话可再被打开（无锁残留）
+        Session reopen = Session.load(second);
+        assertEquals(2, reopen.events().size());
+        reopen.close();
     }
 }

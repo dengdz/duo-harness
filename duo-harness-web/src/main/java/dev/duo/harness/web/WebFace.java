@@ -1193,10 +1193,12 @@ public final class WebFace {
     }
 
     /**
-     * 会话导出下载流（M21 工单 09，ADR-0022 决策 9）：
-     * {@code GET /api/session/export?format=markdown|json} → 附件下载
-     * （Content-Disposition 命名 duo-session-&lt;id&gt;.md/.jsonl，浏览器直接落盘）。
-     * 只导当前会话；非法格式 400 点名。
+     * 会话导出下载流（M21 工单 09，ADR-0022 决策 9；M26-07 收口采纳显式寻址——用户
+     * 验收实测提案，DSH 同款）：{@code GET /api/session/export?format=…&sessionId=<id>}
+     * → 附件下载（Content-Disposition 命名 duo-session-&lt;id&gt;.md/.jsonl）。
+     * sessionId 必带——导出不再依赖标签绑定状态，匿名/跨标签导出错会话的整类缺陷
+     * 就此消除，且解锁"导出未打开的会话"（临时加载、导出后释放；被他进程占用 409）。
+     * 非法格式/缺参/非法 id 400，未知会话 404。
      */
     private void handleSessionExport(HttpExchange exchange) throws IOException {
         try {
@@ -1207,15 +1209,33 @@ public final class WebFace {
                 respondText(exchange, 400, "未知格式: \"" + formatArg + "\"（可选 markdown | json）");
                 return;
             }
-            TabContext tab = resolveTab(exchange);
-            if (tab == null) {
+            String sessionId = queryParam(exchange, "sessionId");
+            if (sessionId.isEmpty() || !SESSION_ID.matcher(sessionId).matches()) {
+                respondText(exchange, 400, "缺少或非法的 sessionId 参数（显式寻址——M26-07 收口采纳）");
                 return;
             }
-            Session current = tab.session;
-            String fileName = dev.duo.harness.session.SessionExport.fileName(current.id(), parse);
+            java.nio.file.Path jsonl = sessionsDir.resolve(sessionId + ".jsonl");
+            if (!Files.isRegularFile(jsonl)) {
+                respondText(exchange, 404, "会话不存在: " + sessionId);
+                return;
+            }
+            // 活跃会话（本进程持锁）用内存实例；未打开的临时加载、导出后释放——
+            // 被他进程占用 409 点名（不静默改导别的会话）
+            Session target = dev.duo.harness.session.Session.heldSession(jsonl);
+            boolean borrowed = false;
+            if (target == null) {
+                try {
+                    target = dev.duo.harness.session.Session.load(jsonl);
+                    borrowed = true;
+                } catch (dev.duo.harness.session.SessionLockedException e) {
+                    respondText(exchange, 409, "会话被其他进程占用，无法导出: " + sessionId);
+                    return;
+                }
+            }
+            String fileName = dev.duo.harness.session.SessionExport.fileName(target.id(), parse);
             // 对账在发头之前（头已出便无法改状态码——report 异常仍可 500 送达）
             var report = parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
-                    ? dev.duo.harness.agent.deliverable.ChangeSummary.report(current) : null;
+                    ? dev.duo.harness.agent.deliverable.ChangeSummary.report(target) : null;
             exchange.getResponseHeaders().set("Content-Disposition",
                     "attachment; filename=\"" + fileName + "\"");
             exchange.getResponseHeaders().set("Content-Type",
@@ -1228,13 +1248,17 @@ public final class WebFace {
             try (var writer = new java.io.OutputStreamWriter(exchange.getResponseBody(),
                     StandardCharsets.UTF_8)) {
                 if (parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN) {
-                    dev.duo.harness.session.SessionExport.renderMarkdown(current, report, writer);
+                    dev.duo.harness.session.SessionExport.renderMarkdown(target, report, writer);
                 } else {
-                    dev.duo.harness.session.SessionExport.renderJsonl(current, writer);
+                    dev.duo.harness.session.SessionExport.renderJsonl(target, writer);
                 }
                 writer.flush();
             } catch (IOException e) {
                 log.error("/api/session/export 流式写出中断: {}", fileName, e);
+            } finally {
+                if (borrowed) {
+                    target.close(); // 临时加载的会话导出即释放（活跃实例归标签持有，不动）
+                }
             }
         } catch (Throwable t) {
             log.error("/api/session/export 处理失败", t);
