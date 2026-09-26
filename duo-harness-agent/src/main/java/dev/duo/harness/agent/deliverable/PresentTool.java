@@ -22,10 +22,14 @@ import java.util.function.Supplier;
  * 工作目录解析），通过后落 {@code deliverable/presented} 会话事件（可回放、入
  * 检索索引、进导出报告交付清单章节）。
  *
- * <p>校验失败的文件逐条点名、整次拒绝（不落事件）——交付清单只收全数验证过的
- * 路径，宁缺毋假。声明是 harness 内部数据（不写文件系统），不经 workspace 三档
- * 不声明审批（ADR-0022 决策 10 同款）。独占工具（不覆写 isConcurrencySafe，
- * fail-closed 默认）——声明落会话日志，并行写无意义。</p>
+ * <p>校验失败的文件逐条点名、整次拒绝（不落事件）——成果文件清单只收全数验证过的
+ * 路径，宁缺毋假（DSH 对照：失败粒度研究文档未载，duo 自选整拒并记档）。路径合法性
+ * 以「normalize 后为常规文件」为判据——形态非法（InvalidPathException）由工具管线
+ * 容错边界收敛为通用错误，不逐条点名。DSH 要求 open turn 内调用，duo 无 turn 状态
+ * 面向工具暴露——有意放宽，收尾时机靠 description 引导（记档）。声明是 harness 内部
+ * 数据（不写文件系统），不经 workspace 三档不声明审批（ADR-0022 决策 10 同款）。
+ * 独占工具（不覆写 isConcurrencySafe，fail-closed 默认）——声明落会话日志，并行写
+ * 无意义。</p>
  */
 public final class PresentTool implements ToolDefinition {
 
@@ -57,7 +61,7 @@ public final class PresentTool implements ToolDefinition {
     public String description() {
         return "声明本轮任务的交付文件。任务完成、成果文件已就绪时调用：传入 1-8 个"
                 + "交付文件的路径（相对当前工作目录或绝对路径），系统校验文件真实存在后"
-                + "记入会话的交付清单（导出报告与历史检索都能按它找到本次成果）。只声明"
+                + "记入会话的成果文件清单（导出报告与历史检索都能按它找到本次成果）。只声明"
                 + "真正交付给用户的成果文件——草稿、中间产物、临时文件不要声明。";
     }
 
@@ -89,13 +93,17 @@ public final class PresentTool implements ToolDefinition {
             return error("单次最多声明 " + MAX_FILES + " 个文件（收到 " + files.size() + " 个）");
         }
         // 校验 + 规范化：trim 非空、相对路径按 cwd 解析、必须真实存在的常规文件；
-        // 失败逐条收集一次点名（交付清单只收全数验证过的路径），去重保序
+        // 失败逐条收集一次点名（成果文件清单只收全数验证过的路径），去重保序
         Set<String> seen = new LinkedHashSet<>();
         List<String> failures = new ArrayList<>();
         for (JsonNode item : files) {
+            if (item.isNull()) {
+                failures.add("（null 元素——应为路径字符串）");
+                continue;
+            }
             String raw = item.asText("").strip();
             if (raw.isEmpty()) {
-                failures.add("(空路径)");
+                failures.add("（空路径）");
                 continue;
             }
             Path resolved = Path.of(raw);

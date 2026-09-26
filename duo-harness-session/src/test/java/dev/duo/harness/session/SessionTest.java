@@ -27,7 +27,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（51 用例 + M26-01 版本头 8 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（51 用例 + M26-01 版本头 9 用例） ===");
     }
 
     @TempDir
@@ -1040,6 +1040,22 @@ class SessionTest {
         appendRound(session, "问", "答");
         assertEquals(Files.readAllLines(session.jsonl()), session.jsonlLines());
         session.close();
+    }
+
+    @Test
+    void deliverablePresentedRoundTripsAndSkipsProjection() throws IOException {
+        // M26 工单 04：交付声明事件（deliverable/presented，text = 路径数组 JSON）——
+        // 往返一致、投影跳过（元数据不是对话消息）；text 含引号验证序列化转义
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.deliverablePresented("[\"/tmp/p/out/报告-v2.md\"]"));
+
+        session.close();
+        Session reloaded = Session.load(session.jsonl());
+        assertEquals(1, reloaded.events().size(), "交付声明随 JSONL 往返");
+        assertEquals(SessionEvent.DELIVERABLE_PRESENTED, reloaded.events().get(0).type());
+        assertTrue(reloaded.events().get(0).text().contains("报告-v2.md"));
+        assertTrue(reloaded.deriveMessages().isEmpty(), "交付声明不进对话投影");
+        reloaded.close();
     }
 
     @Test

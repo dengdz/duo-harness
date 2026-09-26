@@ -260,7 +260,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         PresenterAssembly.registerTodoWriteTool(ctx, tools, holder::current);
         // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
         PresenterAssembly.registerPresentTool(ctx, tools, holder::current,
-                java.nio.file.Path.of(System.getProperty("user.dir")));
+                Path.of(System.getProperty("user.dir")));
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重——
         // CLI 无补全 UI（一期文本直打），指南照常注入
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);

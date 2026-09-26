@@ -78,6 +78,9 @@ public final class EventTextExtractor {
             }
             StringBuilder out = new StringBuilder();
             for (var item : node) {
+                if (item.isNull()) {
+                    continue; // JSON null 元素跳过（asText 会产字符串 "null" 污染索引）
+                }
                 String path = item.asText("");
                 if (!path.isBlank()) {
                     out.append(path).append('\n');
