@@ -88,7 +88,7 @@ final class SessionTextMatcher {
         int i = 0;
         while (i < query.length()) {
             int codePoint = query.codePointAt(i);
-            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN) {
+            if (QueryTokenizer.isHan(codePoint)) {
                 run.appendCodePoint(codePoint);
             } else {
                 flushRun(run, runs);

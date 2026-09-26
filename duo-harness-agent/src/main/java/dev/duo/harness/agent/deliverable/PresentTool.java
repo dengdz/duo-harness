@@ -39,6 +39,11 @@ public final class PresentTool implements ToolDefinition {
     /** 单次申报上限（对齐 DSH present 形态）。 */
     static final int MAX_FILES = 8;
 
+    private static final String FIELD_FILES = "files";
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final Supplier<Session> currentSession;
     private final Path cwd;
 
@@ -68,7 +73,7 @@ public final class PresentTool implements ToolDefinition {
     @Override
     public JsonNode parameters() {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
+            return JSON.readTree("""
                     {"type":"object","properties":{
                       "files":{"type":"array","items":{"type":"string"},
                         "minItems":1,"maxItems":8,
@@ -85,7 +90,7 @@ public final class PresentTool implements ToolDefinition {
         if (session == null) {
             return error("present 需要一个归属会话（当前无活跃会话）");
         }
-        JsonNode files = exec.args().path("files");
+        JsonNode files = exec.args().path(FIELD_FILES);
         if (!files.isArray() || files.isEmpty()) {
             return error("参数 files 必须是非空数组（1-8 个交付文件路径）");
         }

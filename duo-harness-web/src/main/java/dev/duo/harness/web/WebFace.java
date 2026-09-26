@@ -71,6 +71,9 @@ public final class WebFace {
     /** 复合游标分隔符（M26-06）：帧 id「会话id#序号」——编码（dataFrameWithId）与
      * 解析（resolveReplayWindow）共用，协议级单一事实源。 */
     private static final String CURSOR_SEP = "#";
+    /** 复合游标协议参数与响应字段（M26-06）。 */
+    private static final String PARAM_SID = "sid";
+    private static final String FIELD_SESSION_ID = "sessionId";
     /** 首屏尾部窗口的消息数缺省（ADR-0013 常量起步；M19 起经 web 插件 config 可配）。 */
     static final int TAIL_WINDOW_MESSAGES = 50;
 
@@ -1378,7 +1381,7 @@ public final class WebFace {
         if (tab == null) {
             return;
         }
-        String sid = queryParam(exchange, "sid");
+        String sid = queryParam(exchange, PARAM_SID);
         if (sid.isEmpty()) {
             // 复合游标协议（M26-06）：分页请求必须绑定会话——旧形态裸 before 不再受理（同包发布一步切）
             respondEmpty(exchange, 400);
@@ -1404,7 +1407,7 @@ public final class WebFace {
         }
         Session.TailWindow window = bound.windowBefore(before, pageSize); // 首屏/每页同值（ADR-0013）
         var root = JSON.createObjectNode()
-                .put("sessionId", bound.id()) // 响应回带（M26-06）：前端第二道核对——不符即整页丢弃
+                .put(FIELD_SESSION_ID, bound.id()) // 响应回带（M26-06）：前端第二道核对——不符即整页丢弃
                 .put("startEvent", window.startEvent())
                 .put("hasMore", window.earlierMessages() > 0)
                 .put("earlierCount", window.earlierMessages());
@@ -1488,7 +1491,7 @@ public final class WebFace {
             log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
             var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
             // 响应回带会话 id（M26-06）：前端核对不符即丢弃——复合游标的第二道防线
-            header.put("sessionId", bound.id());
+            header.put(FIELD_SESSION_ID, bound.id());
             if (window.tailSnapshot()) {
                 header.put("hasMore", window.hasMore()).put("earlierCount", window.earlierCount());
             }

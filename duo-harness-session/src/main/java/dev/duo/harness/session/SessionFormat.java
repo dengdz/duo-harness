@@ -30,7 +30,7 @@ public final class SessionFormat {
     public static final int CURRENT_VERSION = 1;
 
     /** 版本头行的 type 值（非事件类型——头行不是 {@link SessionEvent}）。 */
-    public static final String HEADER_TYPE = "session";
+    private static final String HEADER_TYPE = "session";
 
     /** 头行 JSON 字段名（序列化与解析同源引用，不做字面量重复）。 */
     private static final String FIELD_TYPE = "type";
@@ -135,8 +135,8 @@ public final class SessionFormat {
         return lines;
     }
 
-    /** 迁移器基本校验（实现类构造时调用——错误前移到构造点）。 */
-    public static void requireValidMigration(int from, int to) {
+    /** 迁移器基本校验（实现类构造时调用——错误前移到构造点；包私有——本期链为空）。 */
+    static void requireValidMigration(int from, int to) {
         if (to != from + 1) {
             throw new IllegalArgumentException("迁移器必须相邻且升一版: v" + from + " → v" + to);
         }

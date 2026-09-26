@@ -462,7 +462,7 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
         int i = 0;
         while (i < raw.length()) {
             int codePoint = raw.codePointAt(i);
-            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN) {
+            if (QueryTokenizer.isHan(codePoint)) {
                 if (!out.isEmpty() && out.charAt(out.length() - 1) != ' ') {
                     out.append(' ');
                 }

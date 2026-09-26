@@ -42,13 +42,15 @@ public final class ChangeSummary {
 
     /** 文件写工具名（工具记录兜底的口径集合）。 */
     private static final Set<String> FILE_WRITE_TOOLS = Set.of("write", "edit");
-    /** 二进制嗅探字节数（前 8KB 含 NUL 判二进制）。 */
-    private static final int BINARY_SNIFF_BYTES = 8000;
     /** git 进程超时秒数。 */
     private static final int GIT_TIMEOUT_SECONDS = 10;
+    /** 行数计数的读缓冲字节。 */
+    private static final int COUNT_BUFFER_BYTES = 8192;
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
             new com.fasterxml.jackson.databind.ObjectMapper();
+
+    private static final String FIELD_PATH = "path";
 
     private static final Map<String, Base> BASES = new ConcurrentHashMap<>();
 
@@ -87,7 +89,11 @@ public final class ChangeSummary {
         if (!end.gitAvailable()) {
             return new ChangeReport(false, List.of(), toolPaths);
         }
-        return new ChangeReport(true, diffRows(base.cwd(), base, end), toolPaths);
+        List<ChangeRow> rows = diffRows(base.cwd(), base, end);
+        if (rows == null) {
+            return new ChangeReport(false, List.of(), toolPaths);
+        }
+        return new ChangeReport(true, rows, toolPaths);
     }
 
     // ---- 快照与对账 ----
@@ -105,6 +111,9 @@ public final class ChangeSummary {
             return new Base(true, cwd, ref,
                     Set.copyOf(gitLines(cwd, "ls-files", "--others", "--exclude-standard")));
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt(); // 中断位恢复——降级不得吞中断
+            }
             log.debug("git 快照不可用（非 git 目录或 git 失败）: {}", cwd, e);
             return new Base(false, cwd, null, Set.of());
         }
@@ -122,8 +131,12 @@ public final class ChangeSummary {
                 }
             }
         } catch (Exception e) {
-            log.warn("git 对账失败（退化为无行数不可用）: {}", cwd, e);
-            return List.of();
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            // 对账失败不得伪装成"无文件变更"——整体降级为工具记录形态（可观测）
+            log.warn("git 对账失败，变更摘要退化为工具记录: {}", cwd, e);
+            return null;
         }
         // 新增未跟踪文件 = 终态未跟踪 − 首拍未跟踪（行数 Java 计——stash 不含 untracked）
         Set<String> newUntracked = new LinkedHashSet<>(end.untracked());
@@ -152,7 +165,7 @@ public final class ChangeSummary {
     /** 行数流式计数（不整文件驻内存）；读取失败返回 "?"（渲染原样——可观测的降级标记）。 */
     private static String countLines(Path file) {
         try (var in = Files.newInputStream(file)) {
-            byte[] buf = new byte[8192];
+            byte[] buf = new byte[COUNT_BUFFER_BYTES];
             int lines = 0;
             long total = 0;
             boolean binary = false;
@@ -164,9 +177,6 @@ public final class ChangeSummary {
                             binary = true;
                             break;
                         }
-                    }
-                    if (!binary && total < BINARY_SNIFF_BYTES) {
-                        // 首窗内无 NUL 即按文本计（嗅探窗 = 前 BINARY_SNIFF_BYTES 字节）
                     }
                 }
                 if (!binary) {
@@ -202,7 +212,7 @@ public final class ChangeSummary {
             }
             try {
                 JsonNode args = JSON.readTree(event.text());
-                String path = args.path("path").asText("").strip();
+                String path = args.path(FIELD_PATH).asText("").strip();
                 if (!path.isEmpty()) {
                     paths.add(path);
                 }

@@ -217,25 +217,9 @@ public final class SessionExport {
         }
     }
 
-    /** 交付声明事件的路径数组 JSON 收集（坏形态条目跳过不炸导出；去重由调用方 Set 承担）。 */
+    /** 交付声明事件的路径收集（解析归 SessionEvent.jsonStringArray 单一实现）。 */
     private static void collectPaths(String filesJson, Set<String> out) {
-        try {
-            var node = JSON.readTree(filesJson);
-            if (!node.isArray()) {
-                return;
-            }
-            for (var item : node) {
-                if (item.isNull()) {
-                    continue;
-                }
-                String path = item.asText("").strip();
-                if (!path.isEmpty()) {
-                    out.add(path);
-                }
-            }
-        } catch (Exception ignored) {
-            // 坏形态声明（手改日志）跳过——导出不因单条坏数据失败
-        }
+        out.addAll(SessionEvent.jsonStringArray(filesJson));
     }
 
     private static void appendEvent(Appendable out, SessionEvent event,

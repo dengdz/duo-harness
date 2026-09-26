@@ -77,10 +77,14 @@ public final class Session {
             new AtomicBoolean(false);
     /** 本实例的锁注册键（绝对规范化路径；close 时注销）。 */
     private final Path lockKey;
-    /** 会话文件格式版本（M26 工单 01）：新会话 = {@link SessionFormat#CURRENT_VERSION}；无头旧文件 = 0。 */
-    private int formatVersion;
-    /** 会话工作目录（版本头元信息，检索授权过滤依据 ADR-0028 决策三；未记录为 null）。 */
-    private Path cwd;
+    /**
+     * 会话文件格式版本（M26 工单 01）：新会话 = {@link SessionFormat#CURRENT_VERSION}；
+     * 无头旧文件 = 0。volatile——HELD_LOCKS 在 lock() 内先于字段赋值发布实例（POSIX
+     * 闸门次序不可倒），检索 live 通道跨线程经 heldSession 读取需可见性保证。
+     */
+    private volatile int formatVersion;
+    /** 会话工作目录（版本头元信息，检索授权过滤依据 ADR-0028 决策三；未记录为 null）。volatile 同上。 */
+    private volatile Path cwd;
 
     private Session(String id, Path jsonl, FileChannel lockChannel,
                     FileLock fileLock, Path lockKey) {

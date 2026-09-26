@@ -1,5 +1,6 @@
 package dev.duo.harness.session;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -383,8 +384,41 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         return new SessionEvent(MODEL_EFFORT, System.currentTimeMillis(), level);
     }
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** 便捷工厂：交付声明（text = 校验通过的绝对路径数组 JSON；present 工具落盘）。 */
     public static SessionEvent deliverablePresented(String filesJson) {
         return new SessionEvent(DELIVERABLE_PRESENTED, System.currentTimeMillis(), filesJson);
+    }
+
+    /**
+     * 路径数组 JSON → 字符串列表（deliverable/presented 载荷语义的单一解析器——
+     * 检索抽取与导出渲染共用，防双实现口径分叉）：null 元素与空串跳过、去重保序；
+     * 坏形态返回空列表（消费方各有降级口径）。
+     */
+    public static List<String> jsonStringArray(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            var node = JSON.readTree(json);
+            if (!node.isArray()) {
+                return List.of();
+            }
+            java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+            for (var item : node) {
+                if (item.isNull()) {
+                    continue;
+                }
+                String path = item.asText("").strip();
+                if (!path.isEmpty()) {
+                    out.add(path);
+                }
+            }
+            return List.copyOf(out);
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 }

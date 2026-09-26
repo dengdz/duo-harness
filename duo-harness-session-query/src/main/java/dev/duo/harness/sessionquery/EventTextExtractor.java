@@ -2,6 +2,8 @@ package dev.duo.harness.sessionquery;
 
 import dev.duo.harness.session.SessionEvent;
 
+import java.util.List;
+
 /**
  * 索引内容抽取（ADR-0022 决策 8，DSH 清单对齐）：决定一个会话事件哪些文本
  * 进入检索索引。白名单语义——清单内的类型入索引，其余一律不入：
@@ -71,24 +73,11 @@ public final class EventTextExtractor {
      * 工具产出的载荷是透明往返，坏形态按原文搜）。
      */
     private static String deliverablePaths(String filesJson) {
-        try {
-            var node = MAPPER.readTree(filesJson);
-            if (!node.isArray()) {
-                return filesJson;
-            }
-            StringBuilder out = new StringBuilder();
-            for (var item : node) {
-                if (item.isNull()) {
-                    continue; // JSON null 元素跳过（asText 会产字符串 "null" 污染索引）
-                }
-                String path = item.asText("");
-                if (!path.isBlank()) {
-                    out.append(path).append('\n');
-                }
-            }
-            return out.isEmpty() ? null : out.toString().strip();
-        } catch (Exception e) {
-            return filesJson;
+        // 解析归 SessionEvent.jsonStringArray 单一实现（M26 收口：防双实现口径分叉）
+        List<String> paths = SessionEvent.jsonStringArray(filesJson);
+        if (paths.isEmpty()) {
+            return filesJson.isBlank() ? null : filesJson; // 坏形态回退原文（透明往返纪律）
         }
+        return String.join("\n", paths);
     }
 }

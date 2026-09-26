@@ -31,7 +31,7 @@ public final class QueryTokenizer {
         int i = 0;
         while (i < lower.length()) {
             int codePoint = lower.codePointAt(i);
-            if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN) {
+            if (isHan(codePoint)) {
                 flushWord(word, tokens);
                 tokens.add(String.valueOf(Character.toChars(codePoint)));
                 i += Character.charCount(codePoint);
@@ -51,6 +51,11 @@ public final class QueryTokenizer {
 
     private static boolean isWordChar(char c) {
         return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
+    /** 汉字码点判定（分词口径的单一事实源——tokenize/入库预分词/短语提取三处共用）。 */
+    static boolean isHan(int codePoint) {
+        return Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN;
     }
 
     private static void flushWord(StringBuilder word, Set<String> tokens) {
