@@ -275,3 +275,9 @@
 - **根因**：注入段与 guide 均为描述性提示不构成行为约束；header"可能过时"免责语被模型反向归因到本轮新鲜注入段（实际过时的是历史 read 结果）。
 - **修复**：GUIDE_TEXT 增指令句（直接引用本轮注入段、无需读文件）+ header 锚定"本段为本轮最新内容"（b8da62d）。
 - **防复发**：采信层 mock 锁不住——用户复验通过（首问零工具调用）；"提示词契约写指令形态不写信息形态"落 duo-workflow experience.md。
+
+### BUG-20260926-01 · anthropic 断点 3 组块漏 type 字段遭 422（mock 测不出）（2026-09-26，fixing）
+- **症状**：M25-06 真机验收，anthropic 行对含历史消息会话发请求一律 422 "messages[N].content: missing field `type`"。
+- **根因**：断点 3 把末条消息字符串 content 组块时用 set("text") 捷径漏了判别字段 type；mock server 只回显不校验协议，组块合法性落在测试盲区。
+- **修复**：组块补 put("type","text")；断点 3 用例补块级 type 断言；MockAnthropicServer 升级最小协议校验（content 块缺 type 即测试内点名）——同族第二击升结构化防线。
+- **防复发**：回归用例 + mock 基建校验 + "协议块组装按官方 schema 自查判别字段"经验升级。

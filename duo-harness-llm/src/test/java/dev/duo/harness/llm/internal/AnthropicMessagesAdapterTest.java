@@ -224,6 +224,10 @@ class AnthropicMessagesAdapterTest {
                         .path("cache_control").path("type").asText(),
                 "断点 3：动态段（末条消息的 content 块）");
         assertTrue(last.path("content").isArray(), "字符串 content 组块后挂断点");
+        for (JsonNode block : last.path("content")) {
+            assertEquals("text", block.path("type").asText(),
+                    "content 块必须带判别字段 type（BUG-20260926-01）");
+        }
         // 非末条不打断点（中间消息保持干净——content 仍为字符串）
         assertTrue(messages.get(0).path("content").isTextual(), "中间消息 content 不动");
     }

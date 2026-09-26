@@ -80,7 +80,36 @@ final class MockAnthropicServer {
         return "http://localhost:" + server.getAddress().getPort();
     }
 
+    /**
+     * 最近请求体（BUG-20260926-01 结构化防线）：附带最小协议校验——messages/system
+     * 的 content 数组每块必须携带判别字段 {@code type}，违约在此点名（mock 不再是
+     * 纯回显器，组块合法性在测试内暴露——真机 422 的离线等价物）。
+     */
     String lastRequestBody() {
+        try {
+            var root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(lastRequestBody);
+            java.util.List<com.fasterxml.jackson.databind.JsonNode> contentHolders =
+                    new java.util.ArrayList<>();
+            root.path("messages").forEach(contentHolders::add);
+            if (root.path("system").isArray()) {
+                root.path("system").forEach(contentHolders::add);
+            }
+            for (var holder : contentHolders) {
+                var content = holder.path("content");
+                if (content.isArray()) {
+                    for (var block : content) {
+                        if (block.path("type").isMissingNode()) {
+                            throw new IllegalStateException("mock 协议校验失败：content 块缺判别字段 type: "
+                                    + block);
+                        }
+                    }
+                }
+            }
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("mock 协议校验失败：请求体不是合法 JSON", e);
+        }
         return lastRequestBody;
     }
 

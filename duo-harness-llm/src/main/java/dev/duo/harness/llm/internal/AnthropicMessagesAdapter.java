@@ -221,8 +221,10 @@ public final class AnthropicMessagesAdapter implements LlmAdapter {
             ObjectNode last = (ObjectNode) messages.get(messages.size() - 1);
             JsonNode content = last.get("content");
             if (content != null && content.isTextual()) {
+                // 组块必须带判别字段 type（BUG-20260926-01：漏 type 遭 422——
+                // 协议块合法性按官方 schema 自查，mock 回显测不出）
                 ArrayNode blocks = JSON.createArrayNode();
-                blocks.addObject().set("text", content);
+                blocks.addObject().put("type", "text").set("text", content);
                 last.set("content", blocks);
             }
             ArrayNode contentBlocks = last.withArray("content");
