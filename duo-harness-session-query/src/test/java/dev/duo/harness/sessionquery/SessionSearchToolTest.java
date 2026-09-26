@@ -46,10 +46,11 @@ class SessionSearchToolTest {
     private SessionSearchTool toolOnFixture() throws Exception {
         Path jsonl = dir.resolve("20260919-100000-0001.jsonl");
         Files.write(jsonl, List.of(
+                "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + dir.getParent() + "\"}",
                 "{\"type\":\"user/message\",\"at\":1,\"text\":\"苹果的讨论\"}",
                 "{\"type\":\"assistant/message\",\"at\":2,\"text\":\"梨的讨论\"}"),
                 StandardCharsets.UTF_8);
-        return new SessionSearchTool(new FtsSessionIndex(dir), 8);
+        return new SessionSearchTool(new FtsSessionIndex(dir, dir.getParent()), 8);
     }
 
     private static String execute(SessionSearchTool tool, String query) throws Exception {

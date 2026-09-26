@@ -62,7 +62,9 @@ class WebSearchEndpointTest {
     private void writeFixture(String id, String text) throws Exception {
         Path sessions = tempDir.resolve("sessions");
         Files.createDirectories(sessions);
+        // M26-03：会话带头行（cwd=tempDir）才可被检索——授权边界内的可检索形态
         Files.write(sessions.resolve(id + ".jsonl"), List.of(
+                "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + tempDir + "\"}",
                 "{\"type\":\"user/message\",\"at\":1,\"text\":\"" + text + "\"}"),
                 StandardCharsets.UTF_8);
     }
@@ -94,7 +96,7 @@ class WebSearchEndpointTest {
     void searchReturnsHitsWithSnippet() throws Exception {
         writeFixture("20260919-100000-0001", "苹果的历史讨论");
         writeFixture("20260918-090000-0002", "梨的历史讨论");
-        WebFace f = start(new FtsSessionIndex(tempDir.resolve("sessions")));
+        WebFace f = start(new FtsSessionIndex(tempDir.resolve("sessions"), tempDir));
 
         HttpResponse<String> res = get(f, "/api/search?q=" + java.net.URLEncoder.encode("苹果", StandardCharsets.UTF_8));
         assertEquals(200, res.statusCode());
@@ -115,7 +117,7 @@ class WebSearchEndpointTest {
 
     @Test
     void missingQueryIs400() throws Exception {
-        WebFace f = start(new FtsSessionIndex(tempDir.resolve("sessions")));
+        WebFace f = start(new FtsSessionIndex(tempDir.resolve("sessions"), tempDir));
         assertEquals(400, get(f, "/api/search").statusCode());
     }
 }

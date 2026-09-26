@@ -28,7 +28,7 @@ abstract class SessionQueryServiceContractTest {
     Path tempDir;
 
     /** 被测实现工厂：子类提供（每个用例新建实例——懒构建契约从零验证）。 */
-    abstract SessionQueryService createIndex(Path sessionsDir);
+    abstract SessionQueryService createIndex(Path sessionsDir, Path cwd);
 
     private Path sessionsDir() {
         return tempDir.resolve("sessions");
@@ -53,9 +53,12 @@ abstract class SessionQueryServiceContractTest {
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
     }
 
+    /** 会话文件（M26-03 起带头行——cwd 授权边界是检索的默认形态，契约用例在其内验证）。 */
     private Path session(String id) throws IOException {
         Files.createDirectories(sessionsDir());
-        return sessionsDir().resolve(id + ".jsonl");
+        Path jsonl = sessionsDir().resolve(id + ".jsonl");
+        Files.writeString(jsonl, "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + tempDir + "\"}\n");
+        return jsonl;
     }
 
     @Test
@@ -65,7 +68,7 @@ abstract class SessionQueryServiceContractTest {
         Path b = session("20260926-160000-0002");
         appendEvent(b, "user/message", 2, "只有苹果没有另一种", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("苹果 梨", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("苹果 梨", 8);
         assertEquals(1, hits.size(), "两词 AND：只含一词的会话出局");
         assertEquals("20260926-160000-0001", hits.get(0).sessionId());
     }
@@ -77,7 +80,7 @@ abstract class SessionQueryServiceContractTest {
         Path b = session("20260926-160000-0004");
         appendEvent(b, "user/message", 2, "无关内容完全不搭", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("附件 库 硬链接", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("附件 库 硬链接", 8);
         assertEquals(1, hits.size(), "汉字逐字 AND 命中真说过这些字的会话");
         assertEquals("20260926-160000-0003", hits.get(0).sessionId());
         assertTrue(hits.get(0).snippet().contains("【附件库】"), "相邻命中合并为原词包裹: "
@@ -90,7 +93,7 @@ abstract class SessionQueryServiceContractTest {
         appendEvent(a, "user/message", 1, "部署部署部署的问题", null, null, null);
         appendEvent(a, "assistant/message", 2, "部署", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("部署", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("部署", 8);
         assertEquals(1, hits.size(), "每会话至多一条命中");
         assertEquals(0, hits.get(0).eventIndex(), "最强匹配 = 词频最高的事件（与 append 序号同义）");
         assertEquals("user/message", hits.get(0).eventType());
@@ -102,7 +105,7 @@ abstract class SessionQueryServiceContractTest {
         appendEvent(a, "user/message", 1, "附 件 库 三 字 散 落 的 长 文", null, null, null);
         appendEvent(a, "assistant/message", 2, "附件库", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("附件库", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("附件库", 8);
         assertEquals(1, hits.size());
         assertEquals(1, hits.get(0).eventIndex(), "真说过原词的事件压过单字散落的长文（短语加权）");
     }
@@ -119,7 +122,7 @@ abstract class SessionQueryServiceContractTest {
         Path strong = session("20260926-160000-0008");
         appendEvent(strong, "user/message", 2, "苹果苹果苹果", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("苹果", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("苹果", 8);
         assertEquals(2, hits.size());
         assertEquals("20260926-160000-0008", hits.get(0).sessionId(), "分数降序");
     }
@@ -137,7 +140,7 @@ abstract class SessionQueryServiceContractTest {
         Path newer = session("20260926-160000-0302");
         appendEvent(newer, "user/message", 2, "苹果", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("苹果", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("苹果", 8);
         assertEquals(2, hits.size());
         assertEquals("20260926-160000-0302", hits.get(0).sessionId(),
                 "分数并列时新会话排前（mtime 降序）");
@@ -148,7 +151,7 @@ abstract class SessionQueryServiceContractTest {
         Path a = session("20260926-160000-0105");
         appendEvent(a, "user/message", 1, "The MainClass uses PostgreSQL", null, null, null);
 
-        SessionQueryService index = createIndex(sessionsDir());
+        SessionQueryService index = createIndex(sessionsDir(), tempDir);
         assertEquals(1, index.search("mainclass", 8).size(), "大小写不敏感（小写查询命中文内驼峰）");
         assertEquals(1, index.search("PostgreSQL", 8).size(), "整词命中（查询原大小写亦可）");
         assertTrue(index.search("ostgres", 8).isEmpty(), "词中片段不命中（整词语义）");
@@ -162,7 +165,7 @@ abstract class SessionQueryServiceContractTest {
         text.append("后".repeat(200));
         appendEvent(a, "user/message", 1, text.toString(), null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("关键词", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("关键词", 8);
         assertEquals(1, hits.size());
         String snippet = hits.get(0).snippet();
         assertTrue(snippet.contains("【关键词】"), "命中词包裹: " + snippet);
@@ -176,16 +179,16 @@ abstract class SessionQueryServiceContractTest {
         Path a = session("20260926-160000-0010");
         appendEvent(a, "user/message", 1, "任意内容", null, null, null);
 
-        assertTrue(createIndex(sessionsDir()).search("！！！？？？", 8).isEmpty(),
+        assertTrue(createIndex(sessionsDir(), tempDir).search("！！！？？？", 8).isEmpty(),
                 "无有效词元的查询返回空列表");
-        assertTrue(createIndex(sessionsDir()).search("", 8).isEmpty(), "空查询返回空列表");
+        assertTrue(createIndex(sessionsDir(), tempDir).search("", 8).isEmpty(), "空查询返回空列表");
     }
 
     @Test
     void nonPositiveLimitRejected() throws IOException {
         Path a = session("20260926-160000-0011");
         appendEvent(a, "user/message", 1, "内容", null, null, null);
-        SessionQueryService index = createIndex(sessionsDir());
+        SessionQueryService index = createIndex(sessionsDir(), tempDir);
 
         assertThrows(IllegalArgumentException.class, () -> index.search("内容", 0));
         assertThrows(IllegalArgumentException.class, () -> index.search("内容", -1));
@@ -198,17 +201,18 @@ abstract class SessionQueryServiceContractTest {
             appendEvent(f, "user/message", i, "共同关键词第" + i + "条", null, null, null);
         }
 
-        assertEquals(3, createIndex(sessionsDir()).search("共同关键词", 8).size());
-        assertEquals(2, createIndex(sessionsDir()).search("共同关键词", 2).size(), "limit 截断");
+        assertEquals(3, createIndex(sessionsDir(), tempDir).search("共同关键词", 8).size());
+        assertEquals(2, createIndex(sessionsDir(), tempDir).search("共同关键词", 2).size(), "limit 截断");
     }
 
     @Test
     void badLinesSkippedWithoutFatal() throws IOException {
         Path a = session("20260926-160000-0101");
-        Files.writeString(a, "not-a-json-line\n");
+        Files.writeString(a, "not-a-json-line\n",
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         appendEvent(a, "user/message", 2, "好行内容雪莲花", null, null, null);
 
-        List<SessionHit> hits = createIndex(sessionsDir()).search("雪莲花", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("雪莲花", 8);
         assertEquals(1, hits.size(), "坏行跳过不炸穿搜索");
     }
 
@@ -218,9 +222,9 @@ abstract class SessionQueryServiceContractTest {
         appendEvent(a, "session/title", 1, "标题独有词栀子花", null, null, null);
         appendEvent(a, "user/message", 2, "正文内容风信子", null, null, null);
 
-        assertTrue(createIndex(sessionsDir()).search("栀子花", 8).isEmpty(),
+        assertTrue(createIndex(sessionsDir(), tempDir).search("栀子花", 8).isEmpty(),
                 "标题文本不入检索索引");
-        List<SessionHit> hits = createIndex(sessionsDir()).search("风信子", 8);
+        List<SessionHit> hits = createIndex(sessionsDir(), tempDir).search("风信子", 8);
         assertEquals(1, hits.size());
         assertEquals("标题独有词栀子花", hits.get(0).title(), "标题作呈现元数据随命中返回");
     }
@@ -232,13 +236,13 @@ abstract class SessionQueryServiceContractTest {
         appendEvent(a, "tool/call", 2, "{\"path\":\"src/Main.java\"}", "call1", "read",
                 "思考内容词葡萄柚");
 
-        assertTrue(createIndex(sessionsDir()).search("独角兽", 8).isEmpty(),
+        assertTrue(createIndex(sessionsDir(), tempDir).search("独角兽", 8).isEmpty(),
                 "chunk 是过程细节不入索引");
-        assertTrue(createIndex(sessionsDir()).search("葡萄柚", 8).isEmpty(),
+        assertTrue(createIndex(sessionsDir(), tempDir).search("葡萄柚", 8).isEmpty(),
                 "reasoning 物理不入索引管线");
-        assertEquals(1, createIndex(sessionsDir()).search("Main", 8).size(),
+        assertEquals(1, createIndex(sessionsDir(), tempDir).search("Main", 8).size(),
                 "tool/call 参数可搜");
-        assertEquals(1, createIndex(sessionsDir()).search("read", 8).size(),
+        assertEquals(1, createIndex(sessionsDir(), tempDir).search("read", 8).size(),
                 "tool/call 工具名可搜");
     }
 
@@ -249,15 +253,15 @@ abstract class SessionQueryServiceContractTest {
         appendEvent(a, "todo/write", 2,
                 "[{\"content\":\"实现准入校验\",\"status\":\"completed\"}]", null, null, null);
 
-        assertEquals(1, createIndex(sessionsDir()).search("class", 8).size(), "tool/result 可搜");
-        assertEquals(1, createIndex(sessionsDir()).search("准入", 8).size(), "todo content 可搜");
-        assertTrue(createIndex(sessionsDir()).search("completed", 8).isEmpty(),
+        assertEquals(1, createIndex(sessionsDir(), tempDir).search("class", 8).size(), "tool/result 可搜");
+        assertEquals(1, createIndex(sessionsDir(), tempDir).search("准入", 8).size(), "todo content 可搜");
+        assertTrue(createIndex(sessionsDir(), tempDir).search("completed", 8).isEmpty(),
                 "todo 状态字段不入（命中清单是噪音）");
     }
 
     @Test
     void absentDirectoryYieldsEmpty() {
-        assertTrue(createIndex(tempDir.resolve("no-such-dir")).search("苹果", 8).isEmpty(),
+        assertTrue(createIndex(tempDir.resolve("no-such-dir"), tempDir).search("苹果", 8).isEmpty(),
                 "目录缺席（首次启动未建）：空结果不炸");
     }
 
@@ -266,7 +270,7 @@ abstract class SessionQueryServiceContractTest {
         // 线程安全契约（工具侧并发声明依赖）：多线程并发搜索（含首建与增量路径）不炸、结果一致
         Path a = session("20260926-160000-0201");
         appendEvent(a, "user/message", 1, "并发安全的关键词雪莲", null, null, null);
-        SessionQueryService index = createIndex(sessionsDir());
+        SessionQueryService index = createIndex(sessionsDir(), tempDir);
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
         try {
             var futures = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();

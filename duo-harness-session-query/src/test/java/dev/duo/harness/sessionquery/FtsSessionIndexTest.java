@@ -29,18 +29,52 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
     }
 
     @Override
-    SessionQueryService createIndex(Path sessionsDir) {
-        return new FtsSessionIndex(sessionsDir);
+    SessionQueryService createIndex(Path sessionsDir, Path cwd) {
+        return new FtsSessionIndex(sessionsDir, cwd);
     }
 
     @TempDir
     Path liveDir;
+
+    /** 手造会话头行（cwd=liveDir——M26-03 授权边界内的可检索形态）。 */
+    private void writeHeader(Path jsonl) throws Exception {
+        Files.writeString(jsonl, "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + liveDir + "\"}\n",
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+    }
 
     private static void writeEvent(Path jsonl, String type, long at, String text)
             throws Exception {
         Files.writeString(jsonl, "{\"type\":\"" + type + "\",\"at\":" + at
                         + ",\"text\":\"" + text + "\"}\n",
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+    }
+
+    @Test
+    void legacyOrForeignCwdSessionsExcluded() throws Exception {
+        // M26-03 授权边界（ADR-0028 决策三）：仅同目录会话可搜——无头旧会话与
+        // 异目录会话（防跨项目上下文污染）不进结果；live 同边界
+        Path sessions = liveDir.resolve("sessions");
+        Files.createDirectories(sessions);
+        // 无头旧会话（M26 前）与异 cwd 会话与同 cwd 会话各一
+        Files.writeString(sessions.resolve("20260926-190000-0001.jsonl"),
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"无头旧会话关键词石斛\"}\n");
+        Files.writeString(sessions.resolve("20260926-190000-0002.jsonl"),
+                "{\"type\":\"session\",\"version\":1,\"cwd\":\"/other/project\"}\n"
+                        + "{\"type\":\"user/message\",\"at\":2,\"text\":\"异目录会话关键词石斛\"}\n");
+        Path own = sessions.resolve("20260926-190000-0003.jsonl");
+        writeHeader(own);
+        writeEvent(own, "user/message", 3, "本目录会话关键词石斛");
+        // live 异目录：持锁会话 cwd 与查询侧不同
+        Session foreign = Session.create(sessions, java.nio.file.Path.of("/other/project"));
+        foreign.append(SessionEvent.userMessage("异目录活跃会话关键词石斛"));
+
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
+            List<SessionHit> hits = index.search("石斛", 8);
+            assertEquals(1, hits.size(), "仅同 cwd 会话命中（persisted 三选一 + live 异目录排除）");
+            assertEquals("20260926-190000-0003", hits.get(0).sessionId());
+        } finally {
+            foreign.close();
+        }
     }
 
     @Test
@@ -53,7 +87,7 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         closed.append(SessionEvent.userMessage("已关闭会话的关键词月季"));
         closed.close();
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             List<SessionHit> liveHits = index.search("昙花", 8);
             assertEquals(1, liveHits.size(), "活跃会话可搜（live 供数）");
             assertEquals(live.id(), liveHits.get(0).sessionId());
@@ -74,6 +108,7 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         // 预置一个 user_version 不符的库（模拟旧版 schema）：搜索触发就地整库重建
         Path sessions = liveDir.resolve("sessions");
         Files.createDirectories(sessions);
+        writeHeader(sessions.resolve("20260926-170000-0001.jsonl"));
         writeEvent(sessions.resolve("20260926-170000-0001.jsonl"),
                 "user/message", 1, "重建后的关键词蒲公英");
         Path db = sessions.resolve("index.db");
@@ -83,7 +118,7 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
             st.execute("CREATE TABLE sessions(x)"); // 旧表结构（缺列）——版本不符即弃
         }
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             List<SessionHit> hits = index.search("蒲公英", 8);
             assertEquals(1, hits.size(), "schema 不符就地重建后正常检索");
         }
@@ -94,11 +129,12 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         // 库文件写垃圾字节（非 SQLite 格式）：派生层自愈——删库重建
         Path sessions = liveDir.resolve("sessions");
         Files.createDirectories(sessions);
+        writeHeader(sessions.resolve("20260926-170000-0002.jsonl"));
         writeEvent(sessions.resolve("20260926-170000-0002.jsonl"),
                 "user/message", 1, "自愈后的关键词油菜花");
         Files.writeString(sessions.resolve("index.db"), "这不是一个合法的 SQLite 库文件".repeat(10));
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             List<SessionHit> hits = index.search("油菜花", 8);
             assertEquals(1, hits.size(), "库损坏删文件重建，搜索恢复正常");
         }
@@ -110,10 +146,11 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         // OR/NEAR 等语法词按普通词元参与 AND——本例词元无全命中，空结果
         Path sessions = liveDir.resolve("sessions");
         Files.createDirectories(sessions);
+        writeHeader(sessions.resolve("20260926-170000-0003.jsonl"));
         writeEvent(sessions.resolve("20260926-170000-0003.jsonl"),
                 "user/message", 1, "普通内容梅花");
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             List<SessionHit> hits = index.search("梅\"花 OR (梅*) NEAR", 8);
             assertTrue(hits.isEmpty(),
                     "语法字符按字面处理：OR/NEAR 成普通词元参与 AND，本例无完整命中: " + hits);
@@ -128,9 +165,10 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         Path sessions = liveDir.resolve("sessions");
         Files.createDirectories(sessions);
         Path jsonl = sessions.resolve("20260926-170000-0010.jsonl");
+        writeHeader(jsonl);
         writeEvent(jsonl, "user/message", 1, "首轮内容马蹄莲");
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             assertEquals(1, index.search("马蹄莲", 8).size(), "首轮收录");
             writeEvent(jsonl, "user/message", 2, "次轮内容鹤望兰");
             assertEquals(1, index.search("鹤望兰", 8).size(), "mtime/size 戳变化 → 增量拾取新事件");
@@ -148,7 +186,7 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         writeEvent(sub.resolve("20260926-170000-0011.jsonl"),
                 "user/message", 1, "子代理目录里的独有词虞美人");
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             assertTrue(index.search("虞美人", 8).isEmpty(), "subagents/ 子目录不索引");
         }
     }
@@ -172,11 +210,11 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
         Path sessions = liveDir.resolve("sessions");
         Files.createDirectories(sessions);
         Path jsonl = sessions.resolve("20260926-170000-0004.jsonl");
-        Files.writeString(jsonl, "{\"type\":\"session\",\"version\":1,\"cwd\":\"/tmp/p\"}\n");
+        writeHeader(jsonl);
         writeEvent(jsonl, "assistant/chunk", 1, "不入索引的流式段");
         writeEvent(jsonl, "user/message", 2, "带版本头会话的关键词山茶");
 
-        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions, liveDir)) {
             List<SessionHit> hits = index.search("山茶", 8);
             assertEquals(1, hits.size());
             assertEquals(1, hits.get(0).eventIndex(),

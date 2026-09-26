@@ -46,8 +46,8 @@ import java.util.Map;
  */
 public final class FtsSessionIndex implements SessionQueryService, AutoCloseable {
 
-    /** 库结构版本：不符即就地整库重建（派生层自愈，不迁移）。 */
-    static final int SCHEMA_VERSION = 1;
+    /** 库结构版本：不符即就地整库重建（派生层自愈，不迁移）。v2 = sessions 表增 cwd 列（M26-03）。 */
+    static final int SCHEMA_VERSION = 2;
 
     /** FTS5 候选上限：MATCH 命中按 bm25 取前 N 行进精算（个人会话规模全命中也在此内）。 */
     static final int CANDIDATE_CAP = 500;
@@ -63,12 +63,19 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
 
     private final Path sessionsDir;
     private final Path dbFile;
+    /** 授权边界（M26-03，ADR-0028 决策三）：检索只出本目录的会话——查询侧工作目录。 */
+    private final Path cwd;
     private final Object lock = new Object();
     private Connection conn;
 
-    public FtsSessionIndex(Path sessionsDir) {
+    /**
+     * @param cwd 授权边界：命中仅限会话头行 cwd 与此相等者（无 cwd 的旧会话不进结果）；
+     *            与会话落盘侧同源（生产装配传进程工作目录）
+     */
+    public FtsSessionIndex(Path sessionsDir, Path cwd) {
         this.sessionsDir = sessionsDir;
         this.dbFile = sessionsDir.resolve(DB_FILE);
+        this.cwd = java.util.Objects.requireNonNull(cwd, "cwd");
     }
 
     @Override
@@ -182,7 +189,7 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
     private static void createSchema(Connection c) throws SQLException {
         exec(c, "CREATE TABLE IF NOT EXISTS sessions("
                         + "session_id TEXT PRIMARY KEY, title TEXT, "
-                        + "mtime INTEGER NOT NULL, size INTEGER NOT NULL)",
+                        + "mtime INTEGER NOT NULL, size INTEGER NOT NULL, cwd TEXT)",
                 "CREATE TABLE IF NOT EXISTS doc_meta("
                         + "doc_id INTEGER PRIMARY KEY AUTOINCREMENT, "
                         + "session_id TEXT NOT NULL, event_index INTEGER NOT NULL, "
@@ -309,10 +316,12 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
         }
     }
 
-    /** 全量重建单会话索引（单事务）：坏行跳过；版本头跳过且不计事件序号（M26-01）；title latest-wins。 */
+    /** 全量重建单会话索引（单事务）：坏行跳过；版本头跳过且不计事件序号（M26-01），
+     * 头行 cwd 随 sessions 表落库（M26-03 授权过滤的元数据来源）；title latest-wins。 */
     private void reindex(String id, Path path, long mtime, long size) throws IOException, SQLException {
         List<Object[]> rows = new ArrayList<>();
         String title = null;
+        String sessionCwd = null;
         int lineNo = -1; // 事件日志下标（与 Session.append 序号同义）
         try (var reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
             String line;
@@ -321,7 +330,11 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                     continue;
                 }
                 if (dev.duo.harness.session.SessionFormat.isHeaderLine(line)) {
-                    continue; // 版本头不是事件（M26-01）：跳过且不计序号
+                    // 版本头不是事件（M26-01）：跳过且不计序号；cwd 随 sessions 表落库（M26-03）
+                    java.nio.file.Path headerCwd =
+                            dev.duo.harness.session.SessionFormat.parseHeader(line).cwd();
+                    sessionCwd = headerCwd == null ? null : headerCwd.toString();
+                    continue;
                 }
                 lineNo++;
                 IndexedEvent event;
@@ -351,7 +364,7 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
              PreparedStatement delSession = conn.prepareStatement(
                      "DELETE FROM sessions WHERE session_id=?");
              PreparedStatement insSession = conn.prepareStatement(
-                     "INSERT INTO sessions(session_id, title, mtime, size) VALUES(?,?,?,?)");
+                     "INSERT INTO sessions(session_id, title, mtime, size, cwd) VALUES(?,?,?,?,?)");
              PreparedStatement insMeta = conn.prepareStatement(
                      "INSERT INTO doc_meta(session_id, event_index, type, at, text) VALUES(?,?,?,?,?)",
                      Statement.RETURN_GENERATED_KEYS);
@@ -365,6 +378,11 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
             insSession.setString(2, title);
             insSession.setLong(3, mtime);
             insSession.setLong(4, size);
+            if (sessionCwd != null) {
+                insSession.setString(5, sessionCwd);
+            } else {
+                insSession.setNull(5, java.sql.Types.VARCHAR);
+            }
             insSession.executeUpdate();
             for (Object[] row : rows) {
                 insMeta.setString(1, id);
@@ -452,12 +470,16 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
         Map<String, List<SessionTextMatcher.Candidate>> bySession = new LinkedHashMap<>();
         Map<String, String> titles = new HashMap<>();
         Map<String, Long> mtimes = new HashMap<>();
+        // cwd 授权边界（M26-03，ADR-0028 决策三）：命中仅限头行 cwd 与查询侧工作目录
+        // 相等的会话——cwd 列 NULL（M26 前旧会话/未记目录者）不进结果
         String sql = "SELECT m.session_id, m.event_index, m.type, m.at, m.text, s.title, s.mtime"
                 + " FROM doc_meta m JOIN docs ON docs.rowid = m.doc_id"
                 + " JOIN sessions s ON s.session_id = m.session_id"
-                + " WHERE docs MATCH ? ORDER BY rank LIMIT " + CANDIDATE_CAP;
+                + " WHERE docs MATCH ? AND s.cwd = ?"
+                + " ORDER BY rank LIMIT " + CANDIDATE_CAP;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, matchExpr);
+            ps.setString(2, cwd.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     String sessionId = rs.getString(1);
@@ -491,6 +513,10 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
             Session live = Session.heldSession(sessionsDir.resolve(id + JSONL_SUFFIX));
             if (live == null) {
                 continue; // 对账与匹配之间被关闭：本次跳过，下次对账自然回库
+            }
+            // cwd 授权边界（M26-03）：live 会话目录与查询侧不相等（null 含）即排除
+            if (live.cwd() == null || !cwd.toString().equals(live.cwd().toString())) {
+                continue;
             }
             List<SessionTextMatcher.Candidate> candidates = new ArrayList<>();
             List<SessionEvent> events = live.events();
