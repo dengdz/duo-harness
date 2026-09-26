@@ -25,7 +25,7 @@ class SessionExportTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionExportTest —— 导出渲染：markdown 快照/JSONL 等价/屏障/交付清单与变更摘要章节/流式等价（11 用例） ===");
+        System.out.println("\n=== 套件：SessionExportTest —— 导出渲染：markdown 快照/JSONL 等价/屏障/交付清单与变更摘要章节/流式等价（8 用例） ===");
     }
 
     private Session sessionWithFixture() throws Exception {
@@ -114,8 +114,8 @@ class SessionExportTest {
         session.append(SessionEvent.deliverablePresented("[\"/tmp/p/out/报告-v2.md\"]"));
         String md = SessionExport.markdown(session);
         assertTrue(md.contains("## 交付清单（模型声明）"), md);
-        assertTrue(md.contains("- `/tmp/p/out/报告-v2.md`"), "跨声明去重后仍列出");
-        assertTrue(md.contains("- `/tmp/p/data.json`"));
+        assertEquals(1, md.split("- `/tmp/p/out/报告-v2.md`", -1).length - 1,
+                "跨声明去重：同一文件只列一次");
 
         Session noDeliverable = sessionWithFixture();
         assertFalse(SessionExport.markdown(noDeliverable).contains("## 交付清单"),

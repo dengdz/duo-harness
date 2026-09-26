@@ -511,3 +511,13 @@
   2. **领域词的 Avoid 条在「引语复述」场景反噬**——「交付清单」作为 Avoid 词，工具 description 引导文案与 Javadoc 用了它；Avoid 约束的是「概念命名」而非「引用导出章节名」——翻转时逐处判定语义角色（是命名还是指涉），不一刀切。
   3. **DSH 对照的「有意放宽」要当场记档**——open turn 前置未带过来，两轮后无人记得是有意还是遗漏；凡对照参考项目做减法，工单 Comments 当场一句「DSH 有 X、duo 不做，因 Y」。
 - **对后续开发的建议**：05 导出增强是 cwd 第三消费方（提取评估点）+ 交付清单章节消费 deliverable 事件（本单数据源）——两单联动验收。
+
+### 2026-09-26 · M26 工单 05 审查（0.21.0 分支，0e05177..HEAD：变更摘要与导出增强）
+
+- **范围与轮次**：四轴并行子代理（Standards 因并发限额重派）→ 修复 12 项 → 豁免 4 项 → 全仓绿。四轴齐全。
+- **计数**：Standards 2 P2 + 7 P3；Spec 1 需修（跨声明去重落空）+ 2 记档；行级 3 medium + 6 low；Java 3 BLOCKER 候选 + 2 CRITICAL。合并修复 12。
+- **模式化问题（本次新识别）**：
+  1. **「声称的去重」要找实现里的 Set**——spec/CHANGELOG/Javadoc 三处说去重、实现 ArrayList 直收，测试 contains 断言也测不出（假信心闭环）。规则：凡文档声称「去重/排序/有界」，实现审查先找对应数据结构，测试断言要能对缺失失败（count/equals 而非 contains）。
+  2. **子进程 stderr 是隐形死锁源**——redirectErrorStream(false) 且不消费 stderr：输出写满管道缓冲即阻塞、waitFor 超时防线永不执行。规则：ProcessBuilder 三选一显式处理 stderr（DISCARD/合并/独立 drain），且先读尽 stdout 再 waitFor 的顺序才成立。
+  3. **提前 return 的分支漏掉共享尾部输出**——变更摘要三分支（git 有行/git 空/退化）中 git 空分支 return 丢 toolPaths。规则：多分支共享尾段的渲染函数，尾段提取或分支矩阵表驱动（每分支列"该出现什么"）。
+- **对后续开发的建议**：07 收尾时浏览器演示 04/05 联动（present → /export 两章）；「交付清单」章节名在导出报告与术语表的专属用法已闭环。

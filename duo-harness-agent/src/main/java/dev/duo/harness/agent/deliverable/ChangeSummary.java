@@ -40,6 +40,16 @@ public final class ChangeSummary {
 
     private static final Logger log = LoggerFactory.getLogger(ChangeSummary.class);
 
+    /** 文件写工具名（工具记录兜底的口径集合）。 */
+    private static final Set<String> FILE_WRITE_TOOLS = Set.of("write", "edit");
+    /** 二进制嗅探字节数（前 8KB 含 NUL 判二进制）。 */
+    private static final int BINARY_SNIFF_BYTES = 8000;
+    /** git 进程超时秒数。 */
+    private static final int GIT_TIMEOUT_SECONDS = 10;
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private static final Map<String, Base> BASES = new ConcurrentHashMap<>();
 
     /** 会话开始时的 git 状态（gitAvailable=false = 非 git 目录/捕获失败）。 */
@@ -66,7 +76,7 @@ public final class ChangeSummary {
         BASES.put(session.id(), capture(cwd));
     }
 
-    /** 导出时刻的变更报告（幂等——重复导出同一会话重复对账，结果一致）。 */
+    /** 导出时刻的变更报告（重复导出不重拍首帧、无副作用；两导出间文件可变则结果随实况）。 */
     public static ChangeReport report(Session session) {
         List<String> toolPaths = toolPaths(session);
         Base base = BASES.get(session.id());
@@ -89,7 +99,8 @@ public final class ChangeSummary {
                 ref = git(cwd, "rev-parse", "HEAD").strip(); // 干净工作区 = HEAD 状态
             }
             if (ref.isEmpty()) {
-                return new Base(false, cwd, null, Set.of()); // 空仓库（无提交）
+                // 理论不可达：空仓库时 rev-parse 非零退出走异常路径——防御保留
+                return new Base(false, cwd, null, Set.of());
             }
             return new Base(true, cwd, ref,
                     Set.copyOf(gitLines(cwd, "ls-files", "--others", "--exclude-standard")));
@@ -131,24 +142,44 @@ public final class ChangeSummary {
         if (parts.length < 3) {
             return null;
         }
+        // 二进制行 "-\t-\t..." 映射 null（ChangeRow 契约：null → 渲染 (binary)）；
         // 重命名形态 "old => new" 原样呈现（括号记法保留 git 输出）
-        return new ChangeRow(parts[2], parts[0], parts[1]);
+        return new ChangeRow(parts[2],
+                "-".equals(parts[0]) ? null : parts[0],
+                "-".equals(parts[1]) ? null : parts[1]);
     }
 
+    /** 行数流式计数（不整文件驻内存）；读取失败返回 "?"（渲染原样——可观测的降级标记）。 */
     private static String countLines(Path file) {
-        try {
-            byte[] bytes = Files.readAllBytes(file);
-            if (isBinary(bytes)) {
-                return null; // 二进制：行数无意义（渲染为 (binary)）
-            }
+        try (var in = Files.newInputStream(file)) {
+            byte[] buf = new byte[8192];
             int lines = 0;
-            for (byte b : bytes) {
-                if (b == '\n') {
-                    lines++;
+            long total = 0;
+            boolean binary = false;
+            int read;
+            while ((read = in.read(buf)) != -1) {
+                if (!binary) {
+                    for (int i = 0; i < read; i++) {
+                        if (buf[i] == 0) {
+                            binary = true;
+                            break;
+                        }
+                    }
+                    if (!binary && total < BINARY_SNIFF_BYTES) {
+                        // 首窗内无 NUL 即按文本计（嗅探窗 = 前 BINARY_SNIFF_BYTES 字节）
+                    }
                 }
+                if (!binary) {
+                    for (int i = 0; i < read; i++) {
+                        if (buf[i] == '\n') {
+                            lines++;
+                        }
+                    }
+                }
+                total += read;
             }
-            if (bytes.length > 0 && bytes[bytes.length - 1] != '\n') {
-                lines++; // 末行无换行也计一行
+            if (binary) {
+                return null; // 二进制：行数无意义（渲染为 (binary)）
             }
             return String.valueOf(lines);
         } catch (IOException e) {
@@ -156,32 +187,21 @@ public final class ChangeSummary {
         }
     }
 
-    private static boolean isBinary(byte[] bytes) {
-        int limit = Math.min(bytes.length, 8000);
-        for (int i = 0; i < limit; i++) {
-            if (bytes[i] == 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // ---- 工具记录兜底 ----
 
     /** write/edit 工具触碰的路径聚合（去重保序；bash 旁路写不在口径内——记档）。 */
-    static List<String> toolPaths(Session session) {
+    private static List<String> toolPaths(Session session) {
         Set<String> paths = new LinkedHashSet<>();
         for (var event : session.events()) {
             if (!SessionEvent.TOOL_CALL.equals(event.type())) {
                 continue;
             }
             String toolName = event.toolName();
-            if (!"write".equals(toolName) && !"edit".equals(toolName)) {
+            if (toolName == null || !FILE_WRITE_TOOLS.contains(toolName)) {
                 continue;
             }
             try {
-                JsonNode args = new com.fasterxml.jackson.databind.ObjectMapper().readTree(
-                        event.text());
+                JsonNode args = JSON.readTree(event.text());
                 String path = args.path("path").asText("").strip();
                 if (!path.isEmpty()) {
                     paths.add(path);
@@ -196,20 +216,21 @@ public final class ChangeSummary {
     // ---- git 进程 ----
 
     private static String git(Path dir, String... args) throws IOException, InterruptedException {
-        ProcessBuilder pb = new ProcessBuilder();
         List<String> command = new ArrayList<>();
         command.add("git");
         command.add("-C");
         command.add(dir.toString());
         command.addAll(List.of(args));
-        pb.command(command);
-        pb.redirectErrorStream(false);
+        ProcessBuilder pb = new ProcessBuilder(command);
+        // stderr 丢弃：不消费的管道写满 64KB 会令 git 阻塞在 stderr、stdout 永不 EOF
+        // （waitFor 超时防线永不触达的潜在死锁）
+        pb.redirectError(java.lang.ProcessBuilder.Redirect.DISCARD);
         Process process = pb.start();
         String stdout;
         try (var in = process.getInputStream()) {
             stdout = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         }
-        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+        if (!process.waitFor(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly();
             throw new IOException("git 超时: " + String.join(" ", command));
         }

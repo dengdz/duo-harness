@@ -5,7 +5,9 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 会话导出渲染（M21 工单 09，ADR-0022 决策 9；M26 工单 05 增强）：当前会话 →
@@ -20,6 +22,9 @@ import java.util.List;
  * 原样副本。</p>
  */
 public final class SessionExport {
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private static final DateTimeFormatter TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -156,13 +161,14 @@ public final class SessionExport {
      * 不给空章节）。
      */
     private static void appendDeliverables(Session session, Appendable out) throws IOException {
-        List<String> paths = new ArrayList<>();
+        Set<String> unique = new LinkedHashSet<>();
         for (SessionEvent event : session.events()) {
             if (!SessionEvent.DELIVERABLE_PRESENTED.equals(event.type())) {
                 continue;
             }
-            collectPaths(event.text(), paths);
+            collectPaths(event.text(), unique);
         }
+        List<String> paths = List.copyOf(unique);
         if (paths.isEmpty()) {
             return;
         }
@@ -177,21 +183,26 @@ public final class SessionExport {
             throws IOException {
         out.append("\n---\n\n## 变更摘要（系统对账）\n");
         if (report.gitAvailable()) {
-            if (report.gitRows().isEmpty()) {
-                out.append("\n无文件变更\n");
-                return;
-            }
-            out.append("\n| 文件 | 新增 | 删除 |\n|---|---|---|\n");
-            for (ChangeRow row : report.gitRows()) {
-                out.append("| `").append(row.path()).append("` | ")
-                        .append(row.added() == null ? "(binary)" : row.added()).append(" | ")
-                        .append(row.deleted() == null ? "(binary)" : row.deleted()).append(" |\n");
+            if (!report.gitRows().isEmpty()) {
+                out.append("\n| 文件 | 新增 | 删除 |\n|---|---|---|\n");
+                for (ChangeRow row : report.gitRows()) {
+                    out.append("| `").append(row.path()).append("` | ")
+                            .append(row.added() == null ? "(binary)" : row.added()).append(" | ")
+                            .append(row.deleted() == null ? "(binary)" : row.deleted())
+                            .append(" |\n");
+                }
+            } else {
+                out.append("\ntracked 文件无变更\n");
             }
             if (!report.toolPaths().isEmpty()) {
+                // 工具触碰与 git 对账口径不同（gitignored/既有未跟踪文件的改动只在此可见）
                 out.append("\n另经文件工具触碰（含于上表或未在 git 跟踪内）：\n");
                 for (String path : report.toolPaths()) {
                     out.append("- `").append(path).append("`\n");
                 }
+            }
+            if (report.gitRows().isEmpty() && report.toolPaths().isEmpty()) {
+                out.append("\n无文件变更\n");
             }
             return;
         }
@@ -206,10 +217,10 @@ public final class SessionExport {
         }
     }
 
-    /** 交付声明事件的路径数组 JSON 聚合（坏形态条目跳过不炸导出）。 */
-    private static void collectPaths(String filesJson, List<String> out) {
+    /** 交付声明事件的路径数组 JSON 收集（坏形态条目跳过不炸导出；去重由调用方 Set 承担）。 */
+    private static void collectPaths(String filesJson, Set<String> out) {
         try {
-            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(filesJson);
+            var node = JSON.readTree(filesJson);
             if (!node.isArray()) {
                 return;
             }

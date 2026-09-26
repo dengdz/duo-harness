@@ -25,7 +25,8 @@ class ChangeSummaryTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：ChangeSummaryTest —— 变更摘要供给：git 首尾快照对账（tracked 行数/新增未跟踪）、非 git 与 resume 退化、工具记录聚合（6 用例） ===");
+        System.out.println("\n=== 套件：ChangeSummaryTest —— 变更摘要供给：git 首尾快照对账"
+                + "（tracked 行数/新增未跟踪）、非 git 与 resume 退化、工具记录聚合（6 用例） ===");
     }
 
     @TempDir

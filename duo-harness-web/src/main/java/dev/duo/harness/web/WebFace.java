@@ -1210,6 +1210,9 @@ public final class WebFace {
             }
             Session current = tab.session;
             String fileName = dev.duo.harness.session.SessionExport.fileName(current.id(), parse);
+            // 对账在发头之前（头已出便无法改状态码——report 异常仍可 500 送达）
+            var report = parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
+                    ? dev.duo.harness.agent.deliverable.ChangeSummary.report(current) : null;
             exchange.getResponseHeaders().set("Content-Disposition",
                     "attachment; filename=\"" + fileName + "\"");
             exchange.getResponseHeaders().set("Content-Type",
@@ -1222,9 +1225,7 @@ public final class WebFace {
             try (var writer = new java.io.OutputStreamWriter(exchange.getResponseBody(),
                     StandardCharsets.UTF_8)) {
                 if (parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN) {
-                    dev.duo.harness.session.SessionExport.renderMarkdown(current,
-                            dev.duo.harness.agent.deliverable.ChangeSummary.report(current),
-                            writer);
+                    dev.duo.harness.session.SessionExport.renderMarkdown(current, report, writer);
                 } else {
                     dev.duo.harness.session.SessionExport.renderJsonl(current, writer);
                 }
