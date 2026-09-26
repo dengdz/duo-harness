@@ -47,13 +47,18 @@ public final class SessionQueryPlugin implements Plugin<JsonNode> {
     public Disposable apply(Context ctx, JsonNode config) {
         Path sessionsDir = parseSessionsDir(config);
         int maxResults = parseMaxResults(config);
-        InvertedSessionIndex index = new InvertedSessionIndex(sessionsDir);
+        FtsSessionIndex index = new FtsSessionIndex(sessionsDir);
         Disposable published = ctx.provide(SessionQueryService.SERVICE_NAME, index);
         if (ctx.hasService(ToolsService.SERVICE_NAME)) {
             ctx.as(SessionQueryToolsView.class).tools()
                     .register(ctx, new SessionSearchTool(index, maxResults));
         }
         return () -> {
+            try {
+                index.close(); // 库连接随拆树释放（M26-02；懒构建——未搜索过则空操作）
+            } catch (Exception ignored) {
+                // 关库失败无可补救：连接随进程释放
+            }
             try {
                 published.dispose();
             } catch (Exception ignored) {

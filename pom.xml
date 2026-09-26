@@ -40,6 +40,8 @@
     <!-- 附件规范化/缩放（M21，ADR-0022；纯 Java 零 native，新依赖已获 grill 同意 A1） -->
     <twelvemonkeys.version>3.10.1</twelvemonkeys.version>
     <thumbnailator.version>0.4.20</thumbnailator.version>
+    <!-- 会话检索 FTS5 引擎（M26-02，ADR-0028 决策一；内含各平台原生引擎，新依赖已获 grill 同意） -->
+    <sqlite-jdbc.version>3.49.1.0</sqlite-jdbc.version>
     <exec-maven-plugin.version>3.1.0</exec-maven-plugin.version>
     <!-- reactor 模式：exec:java 仅在 example 模块启用（其余模块跳过） -->
     <exec.skip>true</exec.skip>
@@ -67,6 +69,11 @@
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
         <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.xerial</groupId>
+        <artifactId>sqlite-jdbc</artifactId>
+        <version>${sqlite-jdbc.version}</version>
       </dependency>
       <dependency>
         <groupId>io.modelcontextprotocol.sdk</groupId>

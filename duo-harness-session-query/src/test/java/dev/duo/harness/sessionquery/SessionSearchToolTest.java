@@ -49,7 +49,7 @@ class SessionSearchToolTest {
                 "{\"type\":\"user/message\",\"at\":1,\"text\":\"苹果的讨论\"}",
                 "{\"type\":\"assistant/message\",\"at\":2,\"text\":\"梨的讨论\"}"),
                 StandardCharsets.UTF_8);
-        return new SessionSearchTool(new InvertedSessionIndex(dir), 8);
+        return new SessionSearchTool(new FtsSessionIndex(dir), 8);
     }
 
     private static String execute(SessionSearchTool tool, String query) throws Exception {

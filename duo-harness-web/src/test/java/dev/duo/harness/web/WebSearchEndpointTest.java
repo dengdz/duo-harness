@@ -7,7 +7,7 @@ import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.session.Session;
-import dev.duo.harness.sessionquery.InvertedSessionIndex;
+import dev.duo.harness.sessionquery.FtsSessionIndex;
 import dev.duo.harness.sessionquery.SessionQueryService;
 import dev.duo.harness.tools.ToolsPlugin;
 import dev.duo.harness.tools.ToolsService;
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 会话检索端点 HTTP 级测试（M21 工单 08）：命中返回（snippet/事件定位）、
+ * 会话检索端点 HTTP 级测试（M21 工单 08，M26-02 起注入 FTS5 引擎）：命中返回（snippet/事件定位）、
  * session-query 行缺席 503、缺检索词 400。夹具 JSONL 代码生成，零真实会话。
  */
 class WebSearchEndpointTest {
@@ -94,7 +94,7 @@ class WebSearchEndpointTest {
     void searchReturnsHitsWithSnippet() throws Exception {
         writeFixture("20260919-100000-0001", "苹果的历史讨论");
         writeFixture("20260918-090000-0002", "梨的历史讨论");
-        WebFace f = start(new InvertedSessionIndex(tempDir.resolve("sessions")));
+        WebFace f = start(new FtsSessionIndex(tempDir.resolve("sessions")));
 
         HttpResponse<String> res = get(f, "/api/search?q=" + java.net.URLEncoder.encode("苹果", StandardCharsets.UTF_8));
         assertEquals(200, res.statusCode());
@@ -115,7 +115,7 @@ class WebSearchEndpointTest {
 
     @Test
     void missingQueryIs400() throws Exception {
-        WebFace f = start(new InvertedSessionIndex(tempDir.resolve("sessions")));
+        WebFace f = start(new FtsSessionIndex(tempDir.resolve("sessions")));
         assertEquals(400, get(f, "/api/search").statusCode());
     }
 }

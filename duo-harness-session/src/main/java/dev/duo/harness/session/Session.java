@@ -197,12 +197,14 @@ public final class Session {
     }
 
     /**
-     * JVM 内已持锁会话注册表（绝对路径 → 持有标记）。同进程第二实例在**打开 fd 之前**
+     * JVM 内已持锁会话注册表（绝对路径 → 持有的实例）。同进程第二实例在**打开 fd 之前**
      * 即被拒绝——若先 open 再 tryLock，失败路径关闭探测 fd 会触发 POSIX 陷阱：
      * 进程关闭同一文件的任意 fd，内核会释放该进程在此文件上的**全部**锁（包括
      * 已成功持锁实例的锁），跨进程独占就此蒸发（M10-03 验收实测踩中）。
+     * 值存实例引用（M26-02）：会话检索的 live 供数通道——活跃会话不入派生索引库，
+     * 内容经注册表从内存直取（M21#1「当前会话不可检索」的消除依据）。
      */
-    private static final java.util.concurrent.ConcurrentMap<Path, Boolean> HELD_LOCKS =
+    private static final java.util.concurrent.ConcurrentMap<Path, Session> HELD_LOCKS =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -235,8 +237,9 @@ public final class Session {
                     closeQuietly(channel); // 他进程持锁：关自己的探测 fd 无碍（锁在别人名下）
                     throw new SessionLockedException(id, jsonl);
                 }
-                HELD_LOCKS.put(key, Boolean.TRUE);
-                return new Session(id, jsonl, channel, fileLock, key);
+                Session session = new Session(id, jsonl, channel, fileLock, key);
+                HELD_LOCKS.put(key, session);
+                return session;
             } catch (OverlappingFileLockException e) {
                 // 注册表已拦同进程重复；此分支仅防外部路径竞态，防御性保留
                 closeQuietly(channel);
@@ -294,6 +297,15 @@ public final class Session {
      */
     public static boolean heldByThisProcess(Path jsonl) {
         return HELD_LOCKS.containsKey(jsonl.toAbsolutePath().normalize());
+    }
+
+    /**
+     * 本进程持有的会话实例（M26-02 live 供数通道）：会话检索对活跃会话不经
+     * 派生索引库——经注册表从内存直取事件（文件不可触碰：任何 fd 的开关都会
+     * 触发 POSIX 锁释放陷阱）。未持有返回 null。
+     */
+    public static Session heldSession(Path jsonl) {
+        return HELD_LOCKS.get(jsonl.toAbsolutePath().normalize());
     }
 
     /**
