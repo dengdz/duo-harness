@@ -232,7 +232,11 @@ public final class SubagentManager {
         SubagentTemplate template = templates.byName(templateName)
                 .orElseThrow(() -> new PluginException("未知子代理模板: " + templateName));
         Path subagentsDir = parentSession.jsonl().getParent().resolve(SUBDIRECTORY);
-        Session child = Session.create(subagentsDir, Path.of(System.getProperty("user.dir")));
+        // 子会话继承父会话 cwd（检索授权按目录归属——父子同域；父无 cwd 的旧会话回退进程目录）
+        Path childCwd = parentSession.cwd() != null
+                ? parentSession.cwd()
+                : Path.of(System.getProperty("user.dir"));
+        Session child = Session.create(subagentsDir, childCwd);
         String agentId = child.id();
 
         parentSession.append(SessionEvent.subagentSpawned(agentId, templateName, spawnPayload(

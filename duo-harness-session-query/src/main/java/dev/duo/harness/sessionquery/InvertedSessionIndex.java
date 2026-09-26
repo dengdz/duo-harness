@@ -229,6 +229,10 @@ public final class InvertedSessionIndex implements SessionQueryService {
                 if (line.isBlank()) {
                     continue;
                 }
+                if (dev.duo.harness.session.SessionFormat.isHeaderLine(line)) {
+                    // 版本头不是事件（M26-01）：跳过且不计 lineNo——与 Session.append 序号保持同义
+                    continue;
+                }
                 lineNo++;
                 IndexedEvent event;
                 try {

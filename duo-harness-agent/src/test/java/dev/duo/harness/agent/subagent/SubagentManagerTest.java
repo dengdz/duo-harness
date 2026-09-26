@@ -122,8 +122,25 @@ class SubagentManagerTest {
     // ===== 生命周期（工单 03） =====
 
     @Test
-    void spawnReturnsImmediatelyAndReflowsOnCompletion() throws Exception {
-        CountDownLatch started = new CountDownLatch(1);
+    void childSessionInheritsParentCwd() throws Exception {
+        // M26-01 审查修复：子会话继承父会话 cwd（检索授权按目录归属——父子同域），
+        // 父无 cwd（旧会话 resume）才回退进程目录
+        Path parentCwd = tempDir.resolve("proj");
+        parent.close(); // setUp 建的 parent 无 cwd，换带 cwd 的父会话
+        parent = Session.create(sessionsDir(), parentCwd);
+        manager.bindBackend(instantBackend("完成"));
+        String agentId = manager.spawn(parent, "worker", "任务");
+        awaitCompleted(parent, new HashSet<>());
+        Path childJsonl = sessionsDir().resolve(SubagentManager.SUBDIRECTORY)
+                .resolve(agentId + ".jsonl");
+        awaitReleased(childJsonl);
+        Session child = Session.load(childJsonl);
+        assertEquals(parentCwd, child.cwd(), "子会话记录父会话 cwd，检索授权父子同域");
+        child.close();
+    }
+
+    @Test
+    void spawnReturnsImmediatelyAndReflowsOnCompletion() throws Exception {        CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         manager.bindBackend(gatedBackend(started, release, "子代理结论"));
 

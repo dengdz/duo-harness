@@ -1529,13 +1529,14 @@ class WebFaceTest {
 
     @Test
     void subagentReplayServesEventsSkipsBadLinesAndRejectsBadIds() throws Exception {
-        // 子任务回放端点（M15 工单 05）：静态只读——事件原样返回、坏行跳过；
-        // id 白名单拒绝路径穿越；不存在的子会话返回 found=false 而非 404（前端弹层统一呈现）
+        // 子任务回放端点（M15 工单 05）：静态只读——事件原样返回、坏行跳过、版本头不进回放
+        // （M26-01 起子会话首行带头）；id 白名单拒绝路径穿越；不存在的子会话返回 found=false 而非 404（前端弹层统一呈现）
         Path sessionsDir = tempDir.resolve("web-sessions");
         Path subagentsDir = sessionsDir.resolve("subagents");
         java.nio.file.Files.createDirectories(subagentsDir);
         String childId = "20260916-120000-00ff";
         java.nio.file.Files.write(subagentsDir.resolve(childId + ".jsonl"), List.of(
+                "{\"type\":\"session\",\"version\":1,\"cwd\":\"/tmp/p\"}",
                 "{\"type\":\"user/message\",\"at\":1,\"text\":\"播种的父背景\"}",
                 "{\"type\":\"subagent/seed-boundary\",\"at\":2,\"text\":\"前 1 条来自父会话 p-1\"}",
                 "not-a-json-line",
@@ -1547,8 +1548,9 @@ class WebFaceTest {
         assertEquals(200, ok.statusCode(), "正常读取");
         JsonNode node = new ObjectMapper().readTree(ok.body());
         assertTrue(node.get("found").asBoolean());
-        assertEquals(3, node.get("events").size(), "坏行跳过，其余事件原样返回");
-        assertEquals("播种的父背景", node.get("events").get(0).get("text").asText());
+        assertEquals(3, node.get("events").size(), "坏行跳过、版本头不进回放，其余事件原样返回");
+        assertEquals("播种的父背景", node.get("events").get(0).get("text").asText(),
+                "首帧是首个事件而非版本头（M26-01 审查修复）");
         assertEquals("subagent/seed-boundary", node.get("events").get(1).get("type").asText(),
                 "fork 播种背景段在子会话回放中可见");
 

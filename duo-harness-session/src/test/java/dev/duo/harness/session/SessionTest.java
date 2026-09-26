@@ -1021,6 +1021,19 @@ class SessionTest {
     }
 
     @Test
+    void loadRejectsMidStreamHeaderLine() throws IOException {
+        // append-only 下头行只可能在首行——中部杂入即文件损坏，fail-loud（M26-01 审查收紧）
+        Path file = sessionsDir().resolve("20260101-000000-0005.jsonl");
+        Files.createDirectories(sessionsDir());
+        Files.write(file, List.of(
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"先有事件\"}",
+                "{\"type\":\"session\",\"version\":1}"));
+
+        PluginException e = assertThrows(PluginException.class, () -> Session.load(file));
+        assertTrue(e.getMessage().contains("不在首行"), e.getMessage());
+    }
+
+    @Test
     void jsonlLinesCarryHeaderAndMatchDiskExactly() throws IOException {
         // 导出副本逐行等价磁盘文件（含头行）——jsonlLines 与 persist 用同一序列化路径
         Session session = Session.create(sessionsDir(), tempDir);

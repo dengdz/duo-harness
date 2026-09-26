@@ -148,15 +148,20 @@ public final class Session {
             // 任意 fd 会释放它在该文件上的全部锁，独占锁会被自己的读取路径放掉）
             session.lockChannel.position(0);
             String content = readAll(session.lockChannel);
-            List<String> eventLines = new ArrayList<>();
+            String[] rawLines = content.split("\n", -1);
+            List<String> eventLines = new ArrayList<>(rawLines.length);
             boolean sawHeader = false;
-            for (String line : content.split("\n", -1)) {
+            for (String line : rawLines) {
                 if (line.isBlank()) {
                     continue;
                 }
                 if (SessionFormat.isHeaderLine(line)) {
                     if (sawHeader) {
                         throw new PluginException("会话文件出现重复版本头: " + jsonl);
+                    }
+                    if (!eventLines.isEmpty()) {
+                        // append-only 下头行只可能出现在首行——中部杂入即文件损坏，fail-loud
+                        throw new PluginException("版本头不在首行（文件损坏）: " + jsonl);
                     }
                     sawHeader = true;
                     SessionFormat.Header header = SessionFormat.parseHeader(line);
@@ -792,17 +797,8 @@ public final class Session {
      * 屏障语义由数据结构保证——append 先落盘 force 再入快照（CoW 原子发布），
      * 快照既无半行撕裂、又是已持久化事件的视图（导出即持久化视图，无 pending）。
      * 坏行不存在（快照只含本类写出的合法行）；序列化失败 fail-loud 不给截断导出。
+     * M26-01 起带头会话首行补版本头（与磁盘逐字节一致），无头旧文件保持无头。
      */
-    /** 会话文件格式版本：有头 = 头声明版本（迁移后为当前版本），无头旧文件 = 0。 */
-    public int formatVersion() {
-        return formatVersion;
-    }
-
-    /** 会话工作目录（版本头元信息，检索授权过滤依据；未记录为 null）。 */
-    public Path cwd() {
-        return cwd;
-    }
-
     public List<String> jsonlLines() {
         List<String> out = new ArrayList<>(snapshot.size() + 1);
         if (formatVersion > 0) {
@@ -818,6 +814,16 @@ public final class Session {
             }
         }
         return out;
+    }
+
+    /** 会话文件格式版本：有头 = 头声明版本（迁移后为当前版本），无头旧文件 = 0。 */
+    public int formatVersion() {
+        return formatVersion;
+    }
+
+    /** 会话工作目录（版本头元信息，检索授权过滤依据；未记录为 null）。 */
+    public Path cwd() {
+        return cwd;
     }
 
     /**

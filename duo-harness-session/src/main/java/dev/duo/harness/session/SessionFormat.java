@@ -32,6 +32,11 @@ public final class SessionFormat {
     /** 版本头行的 type 值（非事件类型——头行不是 {@link SessionEvent}）。 */
     public static final String HEADER_TYPE = "session";
 
+    /** 头行 JSON 字段名（序列化与解析同源引用，不做字面量重复）。 */
+    private static final String FIELD_TYPE = "type";
+    private static final String FIELD_VERSION = "version";
+    private static final String FIELD_CWD = "cwd";
+
     private SessionFormat() {
     }
 
@@ -42,10 +47,10 @@ public final class SessionFormat {
     /** 序列化版本头行（cwd 为 null 时省略字段——旧签名创建的会话不携带目录）。 */
     public static String headerLine(int version, Path cwd) {
         var node = JSON.createObjectNode();
-        node.put("type", HEADER_TYPE);
-        node.put("version", version);
+        node.put(FIELD_TYPE, HEADER_TYPE);
+        node.put(FIELD_VERSION, version);
         if (cwd != null) {
-            node.put("cwd", cwd.toString());
+            node.put(FIELD_CWD, cwd.toString());
         }
         try {
             return JSON.writeValueAsString(node);
@@ -58,8 +63,8 @@ public final class SessionFormat {
     public static Header parseHeader(String line) {
         try {
             JsonNode node = JSON.readTree(line);
-            int version = node.path("version").asInt(0);
-            JsonNode cwdNode = node.get("cwd");
+            int version = node.path(FIELD_VERSION).asInt(0);
+            JsonNode cwdNode = node.get(FIELD_CWD);
             Path cwd = cwdNode == null || cwdNode.isNull() ? null : Path.of(cwdNode.asText());
             return new Header(version, cwd);
         } catch (IOException e) {
@@ -75,7 +80,7 @@ public final class SessionFormat {
     public static boolean isHeaderLine(String line) {
         try {
             JsonNode node = JSON.readTree(line);
-            return HEADER_TYPE.equals(node.path("type").asText());
+            return HEADER_TYPE.equals(node.path(FIELD_TYPE).asText());
         } catch (IOException e) {
             return false;
         }

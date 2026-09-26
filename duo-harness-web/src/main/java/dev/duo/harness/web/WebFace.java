@@ -1401,6 +1401,9 @@ public final class WebFace {
                     if (line.isBlank()) {
                         continue;
                     }
+                    if (dev.duo.harness.session.SessionFormat.isHeaderLine(line)) {
+                        continue; // 版本头不是事件（M26-01）：回放只给事件，新子会话首帧不带头
+                    }
                     try {
                         arr.add(JSON.readTree(line));
                     } catch (Exception ignored) {

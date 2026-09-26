@@ -86,6 +86,19 @@ class InvertedSessionIndexTest {
     }
 
     @Test
+    void headerLineNotIndexedAndKeepsEventIndexAligned() throws Exception {
+        // M26-01 审查修复：新会话首行版本头——不进索引、不计 lineNo（eventIndex 与 append 序号同义）
+        Path jsonl = dir.resolve("20260926-140000-0001.jsonl");
+        java.nio.file.Files.writeString(jsonl,
+                "{\"type\":\"session\",\"version\":1,\"cwd\":\"/tmp/p\"}\n");
+        appendEvent(jsonl, "user/message", 1, "新会话首条消息含独特关键词雪莲花", null, null, null);
+        List<SessionHit> hits = new InvertedSessionIndex(dir).search("雪莲花", 8);
+        assertEquals(1, hits.size());
+        assertEquals(0, hits.get(0).eventIndex(),
+                "版本头不计行——eventIndex 与 Session.append 序号保持同义");
+    }
+
+    @Test
     void toolCallMatchesByToolNameAndArgs() throws Exception {
         writeMainFixture();
         InvertedSessionIndex index = new InvertedSessionIndex(dir);

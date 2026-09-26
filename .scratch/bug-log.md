@@ -281,3 +281,8 @@
 - **根因**：断点 3 把末条消息字符串 content 组块时用 set("text") 捷径漏了判别字段 type；mock server 只回显不校验协议，组块合法性落在测试盲区。
 - **修复**：组块补 put("type","text")；断点 3 用例补块级 type 断言；MockAnthropicServer 升级最小协议校验（content 块缺 type 即测试内点名）——同族第二击升结构化防线。
 - **防复发**：回归用例 + mock 基建校验 + "协议块组装按官方 schema 自查判别字段"经验升级。
+
+### BUG-20260926-02 · ChatReplMain LLM 调用 HTTP 404（疑环境配置过期）（2026-09-26，reported）
+- **症状**：M26-01 验收中 REPL 对话报 `LLM 调用失败: HTTP 404`；同次验收 v0 旧会话续接与新会话创建均正常（会话层无涉）。
+- **初判根因**：环境问题——config `model: deepseek-flash` 在 DeepSeek anthropic 兼容端点 404（模型名疑似过期）；M26-01 diff 与 LLM 路径零交集已排除。待用户核对模型名后收尾。
+- **防复发**：待收尾时定（候选：LLM 失败提示携带 model/endpoint 的改进项）。
