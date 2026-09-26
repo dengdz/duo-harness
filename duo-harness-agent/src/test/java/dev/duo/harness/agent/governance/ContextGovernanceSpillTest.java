@@ -58,6 +58,7 @@ class ContextGovernanceSpillTest {
     @Test
     void oversizedToolResultSpilledWithPreviewAndLocator() throws IOException {
         Session session = newSession();
+        long bytesBeforeGovern = Files.size(session.jsonl()); // 含 M26-01 版本头
         String big = "A".repeat(SPILL_HEAD()) + "B".repeat(SPILL_TAIL());
         List<Message> governed = governance().govern(
                 List.of(Message.tool("call_1", big)), session);
@@ -78,7 +79,7 @@ class ContextGovernanceSpillTest {
         assertTrue(replacement.contains("B".repeat(10)), "预览保留尾部");
         assertTrue(replacement.length() < SPILL_THRESHOLD() / 2, "替换后体量大幅低于阈值");
         // 会话目录零写入（治理不动日志）
-        assertEquals(0, Files.size(session.jsonl()), "治理不写会话日志");
+        assertEquals(bytesBeforeGovern, Files.size(session.jsonl()), "治理不写会话日志");
     }
 
     @Test

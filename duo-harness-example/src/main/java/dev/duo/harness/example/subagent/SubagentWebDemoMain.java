@@ -38,7 +38,7 @@ public final class SubagentWebDemoMain {
         Files.createDirectories(sessionsDir);
 
         // 父会话：两轮对话 + 三张子任务卡的引用事件（SSE 尾部快照整窗回放给页面）
-        Session parent = Session.create(sessionsDir);
+        Session parent = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
         parent.append(SessionEvent.userMessage("帮我调研一下 X 的可行性"));
         parent.append(SessionEvent.toolCall("c1", "spawn",
                 "{\"template\":\"researcher\",\"task\":\"调研 X 的可行性\"}"));

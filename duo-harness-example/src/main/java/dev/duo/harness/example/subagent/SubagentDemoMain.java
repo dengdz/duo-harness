@@ -65,7 +65,7 @@ public final class SubagentDemoMain {
                 {"templates": [{"name": "researcher", "tools": ["echo"],
                                 "prompt": "你是调研助手，只做调研不改文件"}]}""");
 
-        Session parent = Session.create(sessionsDir);
+        Session parent = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
         // 呈现位职责：发布宿主构件（LLM / 治理阈值 / 当前会话）——子代理执行链的父侧来源
         LlmAdapter llm = demoLlm();
         PresenterAssembly.publishSubagentHost(root, llm, null, () -> parent);

@@ -77,7 +77,7 @@ public final class HeadlessBoot {
         Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
         try {
             if (sessionId == null) {
-                return Session.create(sessionsDir);
+                return Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
             }
             Path jsonl = sessionsDir.resolve(sessionId + ".jsonl");
             if (!Files.isRegularFile(jsonl)) {

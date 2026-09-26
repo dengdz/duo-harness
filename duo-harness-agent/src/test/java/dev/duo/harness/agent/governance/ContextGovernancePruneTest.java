@@ -47,7 +47,8 @@ class ContextGovernancePruneTest {
     @Test
     void overPruneThresholdResultNarrowed() throws IOException {
         Session session = Session.create(tempDir.resolve("sessions"));
-        // 5000 字符（>8K 阈值的一半不触发……直接用 10000：> 8K 阈值、< 50K spill 阈值）
+        long bytesBeforeGovern = Files_size(session.jsonl()); // 含 M26-01 版本头
+        // 5000 字符（>8K 阈值的一半不触发……直接用 10000：>8K 阈值、< 50K spill 阈值）
         String content = "H".repeat(9_000) + "M".repeat(1_000) + "T".repeat(500);
         List<Message> governed = governance().govern(
                 List.of(Message.tool("call_1", content)), session);
@@ -59,7 +60,7 @@ class ContextGovernancePruneTest {
         assertTrue(replacement.contains("已修剪中段"), "标注修剪字符数");
         assertFalse(replacement.contains("H".repeat(3_000)), "头部深处的中段被移除（仅保留头 2K）");
         // 原文仍在会话日志（治理不写日志，此处仅确认投影外事实由日志承载——日志零写入）
-        assertEquals(0, Files_size(session.jsonl()), "治理不写会话日志");
+        assertEquals(bytesBeforeGovern, Files_size(session.jsonl()), "治理不写会话日志");
     }
 
     @Test

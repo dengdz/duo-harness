@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -26,7 +27,7 @@ class SessionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（51 用例） ===");
+        System.out.println("\n=== 套件：SessionTest —— 事件溯源：append 落盘与回放、投影规则、尾部窗口映射（边界/回折/孤儿）、可选字段往返（usage/reasoning）、独占锁语义（争用拒绝/释放重开/关闭守卫）、latest 选取与前导非投影事件保留、占用探测与标题投影、子代理事件往返与投影分流、种子边界与中止痕迹、工具结果紧邻修复与崩溃闭合、命令审计两事件（往返/投影排除/配对与窗口零牵动）、压缩点投影（替换/latest-wins/重放恢复/配对零牵动）、权限档投影（latest-wins/重放一致/新会话 null/静态读取不释放持锁）（51 用例 + M26-01 版本头 8 用例） ===");
     }
 
     @TempDir
@@ -52,11 +53,12 @@ class SessionTest {
         // 内存观测量：事件可见
         assertEquals(1, session.events().size());
         assertEquals(SessionEvent.USER_MESSAGE, session.events().get(0).type());
-        // 磁盘观测量：JSONL 逐行落盘
+        // 磁盘观测量：JSONL 逐行落盘（M26-01 起首行为版本头，事件行随后）
         List<String> lines = Files.readAllLines(session.jsonl());
-        assertEquals(1, lines.size());
-        assertTrue(lines.get(0).contains("\"type\":\"user/message\""), lines.get(0));
-        assertTrue(lines.get(0).contains("\"text\":\"你好\""), lines.get(0));
+        assertEquals(2, lines.size());
+        assertTrue(lines.get(0).contains("\"type\":\"session\""), lines.get(0));
+        assertTrue(lines.get(1).contains("\"type\":\"user/message\""), lines.get(1));
+        assertTrue(lines.get(1).contains("\"text\":\"你好\""), lines.get(1));
     }
 
     @Test
@@ -147,8 +149,10 @@ class SessionTest {
         crashed.append(SessionEvent.toolResult("call_1", "bash", "输出内容"));
         crashed.close();
 
-        int before = Files.readString(sessionsDir().resolve(
-                crashed.id() + ".jsonl")).split("\n", -1).length - 1;
+        int before = (int) Files.readAllLines(sessionsDir().resolve(
+                crashed.id() + ".jsonl")).stream()
+                .filter(line -> !SessionFormat.isHeaderLine(line))
+                .count();
         Session reopened = Session.load(sessionsDir().resolve(
                 crashed.id() + ".jsonl"));
 
@@ -927,5 +931,113 @@ class SessionTest {
         assertEquals("被父 agent 中止", reloaded.events().get(0).text());
         assertTrue(reloaded.deriveMessages().isEmpty(), "中止痕迹是审计事件，不进对话投影");
         reloaded.close();
+    }
+
+    // ===== M26 工单 01：版本头与 cwd 字段（ADR-0028 决策二） =====
+
+    @Test
+    void createWritesVersionHeaderWithCwdFirst() throws IOException {
+        Path cwd = tempDir.resolve("proj");
+        Session session = Session.create(sessionsDir(), cwd);
+        session.append(SessionEvent.userMessage("你好"));
+
+        assertEquals(SessionFormat.CURRENT_VERSION, session.formatVersion());
+        assertEquals(cwd, session.cwd());
+        List<String> lines = Files.readAllLines(session.jsonl());
+        assertEquals(2, lines.size(), "首行版本头 + 事件行");
+        assertTrue(lines.get(0).contains("\"type\":\"session\""), lines.get(0));
+        assertTrue(lines.get(0).contains("\"version\":" + SessionFormat.CURRENT_VERSION), lines.get(0));
+        assertTrue(lines.get(0).contains("\"cwd\":\"" + cwd + "\""), lines.get(0));
+        assertTrue(lines.get(1).contains("\"type\":\"user/message\""), lines.get(1));
+        session.close();
+    }
+
+    @Test
+    void createLegacyOverloadWritesHeaderWithoutCwd() throws IOException {
+        // 旧签名（无 cwd）：文件仍带头，头行省略 cwd 字段——无目录元信息的会话（测试等场景）
+        Session session = Session.create(sessionsDir());
+        assertEquals(SessionFormat.CURRENT_VERSION, session.formatVersion());
+        assertNull(session.cwd());
+        List<String> lines = Files.readAllLines(session.jsonl());
+        assertEquals(1, lines.size());
+        assertTrue(lines.get(0).contains("\"type\":\"session\""), lines.get(0));
+        assertFalse(lines.get(0).contains("cwd"), lines.get(0));
+        session.close();
+    }
+
+    @Test
+    void loadReadsLegacyHeaderlessFileAsVersionZero() throws IOException {
+        // 旧格式（无头）直读：v0 语义即现有格式，行为与改造前完全一致
+        Path file = sessionsDir().resolve("20260101-000000-0001.jsonl");
+        Files.createDirectories(sessionsDir());
+        Files.write(file, List.of(
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"旧问\"}",
+                "{\"type\":\"assistant/message\",\"at\":2,\"text\":\"旧答\"}"));
+
+        Session session = Session.load(file);
+        assertEquals(0, session.formatVersion(), "无头旧文件 = v0");
+        assertNull(session.cwd());
+        assertEquals(2, session.events().size(), "全部行都是事件（头分流不误伤）");
+        assertEquals("旧问", session.events().get(0).text());
+        session.close();
+    }
+
+    @Test
+    void loadParsesHeaderAndExcludesItFromEvents() {
+        Session original = Session.create(sessionsDir(), tempDir);
+        appendRound(original, "第一问", "第一答");
+
+        original.close();
+        Session reloaded = Session.load(original.jsonl());
+        assertEquals(SessionFormat.CURRENT_VERSION, reloaded.formatVersion());
+        assertEquals(tempDir, reloaded.cwd());
+        assertEquals(original.events(), reloaded.events(), "头行不进事件序列");
+        reloaded.close();
+    }
+
+    @Test
+    void loadRejectsFutureVersion() throws IOException {
+        Path file = sessionsDir().resolve("20260101-000000-0002.jsonl");
+        Files.createDirectories(sessionsDir());
+        Files.write(file, List.of(
+                "{\"type\":\"session\",\"version\":99}",
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"未来\"}"));
+
+        PluginException e = assertThrows(PluginException.class, () -> Session.load(file));
+        assertTrue(e.getMessage().contains("升级"), "外来高版本应拒绝为「请升级」而非「损坏」: " + e.getMessage());
+        assertTrue(e.getMessage().contains("v99"), e.getMessage());
+    }
+
+    @Test
+    void loadRejectsDuplicateHeaderLine() throws IOException {
+        Path file = sessionsDir().resolve("20260101-000000-0003.jsonl");
+        Files.createDirectories(sessionsDir());
+        Files.write(file, List.of(
+                "{\"type\":\"session\",\"version\":1}",
+                "{\"type\":\"session\",\"version\":1}"));
+
+        PluginException e = assertThrows(PluginException.class, () -> Session.load(file));
+        assertTrue(e.getMessage().contains("重复版本头"), e.getMessage());
+    }
+
+    @Test
+    void jsonlLinesCarryHeaderAndMatchDiskExactly() throws IOException {
+        // 导出副本逐行等价磁盘文件（含头行）——jsonlLines 与 persist 用同一序列化路径
+        Session session = Session.create(sessionsDir(), tempDir);
+        appendRound(session, "问", "答");
+        assertEquals(Files.readAllLines(session.jsonl()), session.jsonlLines());
+        session.close();
+    }
+
+    @Test
+    void jsonlLinesOfLegacyFileStayHeaderless() throws IOException {
+        // v0 语义不因导出改变：无头旧文件的导出副本保持无头
+        Path file = sessionsDir().resolve("20260101-000000-0004.jsonl");
+        Files.createDirectories(sessionsDir());
+        Files.write(file, List.of("{\"type\":\"user/message\",\"at\":1,\"text\":\"旧\"}"));
+
+        Session session = Session.load(file);
+        assertEquals(List.of("{\"type\":\"user/message\",\"at\":1,\"text\":\"旧\"}"), session.jsonlLines());
+        session.close();
     }
 }

@@ -232,7 +232,7 @@ public final class SubagentManager {
         SubagentTemplate template = templates.byName(templateName)
                 .orElseThrow(() -> new PluginException("未知子代理模板: " + templateName));
         Path subagentsDir = parentSession.jsonl().getParent().resolve(SUBDIRECTORY);
-        Session child = Session.create(subagentsDir);
+        Session child = Session.create(subagentsDir, Path.of(System.getProperty("user.dir")));
         String agentId = child.id();
 
         parentSession.append(SessionEvent.subagentSpawned(agentId, templateName, spawnPayload(

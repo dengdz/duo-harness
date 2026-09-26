@@ -74,7 +74,7 @@ public final class ChatReplMain {
         }
         boolean resumed = session != null;
         if (session == null) {
-            session = Session.create(sessionsDir);
+            session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
         }
         out.println((resumed
                 ? "继续会话 " + session.id() + "（已有 " + session.deriveMessages().size() + " 条消息）"
@@ -90,7 +90,7 @@ public final class ChatReplMain {
             }
             if (line.strip().equals("/new")) {
                 Session previous = session;
-                session = Session.create(sessionsDir);
+                session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                 out.println("已开新会话 " + session.id());
                 continue;

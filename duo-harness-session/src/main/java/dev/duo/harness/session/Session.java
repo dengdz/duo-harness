@@ -77,6 +77,10 @@ public final class Session {
             new AtomicBoolean(false);
     /** 本实例的锁注册键（绝对规范化路径；close 时注销）。 */
     private final Path lockKey;
+    /** 会话文件格式版本（M26 工单 01）：新会话 = {@link SessionFormat#CURRENT_VERSION}；无头旧文件 = 0。 */
+    private int formatVersion;
+    /** 会话工作目录（版本头元信息，检索授权过滤依据 ADR-0028 决策三；未记录为 null）。 */
+    private Path cwd;
 
     private Session(String id, Path jsonl, FileChannel lockChannel,
                     FileLock fileLock, Path lockKey) {
@@ -87,8 +91,21 @@ public final class Session {
         this.lockKey = lockKey;
     }
 
-    /** 新建会话：生成 id、创建 JSONL 文件并取得独占锁。 */
+    /**
+     * 新建会话（不记录工作目录——测试与无 cwd 场景；文件仍带版本头）。
+     * 生产装配应使用 {@link #create(Path, Path)} 传入 cwd（检索授权的前提）。
+     */
     public static Session create(Path sessionsDir) {
+        return create(sessionsDir, null);
+    }
+
+    /**
+     * 新建会话：生成 id、创建 JSONL 文件、写入版本头首行并取得独占锁。
+     * 版本头经持锁通道写并 force——与事件追加同一持久化承诺。
+     *
+     * @param cwd 会话工作目录（版本头元信息；null 时头行省略该字段）
+     */
+    public static Session create(Path sessionsDir, Path cwd) {
         String id = newId();
         Path file = sessionsDir.resolve(id + ".jsonl");
         try {
@@ -97,7 +114,22 @@ public final class Session {
         } catch (IOException e) {
             throw new PluginException("无法创建会话文件: " + file, e);
         }
-        return lock(id, file);
+        Session session = lock(id, file);
+        try {
+            byte[] bytes = (SessionFormat.headerLine(SessionFormat.CURRENT_VERSION, cwd) + "\n")
+                    .getBytes(StandardCharsets.UTF_8);
+            ByteBuffer buf = ByteBuffer.wrap(bytes);
+            while (buf.hasRemaining()) {
+                session.lockChannel.write(buf);
+            }
+            session.lockChannel.force(false);
+        } catch (IOException e) {
+            session.close();
+            throw new PluginException("版本头落盘失败: " + file, e);
+        }
+        session.formatVersion = SessionFormat.CURRENT_VERSION;
+        session.cwd = cwd;
+        return session;
     }
 
     /**
@@ -116,10 +148,38 @@ public final class Session {
             // 任意 fd 会释放它在该文件上的全部锁，独占锁会被自己的读取路径放掉）
             session.lockChannel.position(0);
             String content = readAll(session.lockChannel);
+            List<String> eventLines = new ArrayList<>();
+            boolean sawHeader = false;
             for (String line : content.split("\n", -1)) {
                 if (line.isBlank()) {
                     continue;
                 }
+                if (SessionFormat.isHeaderLine(line)) {
+                    if (sawHeader) {
+                        throw new PluginException("会话文件出现重复版本头: " + jsonl);
+                    }
+                    sawHeader = true;
+                    SessionFormat.Header header = SessionFormat.parseHeader(line);
+                    if (header.version() > SessionFormat.CURRENT_VERSION) {
+                        // 外来高版本：结构校验前先拒绝——"请升级"而非"文件损坏"（ADR-0028 决策二）
+                        throw new PluginException("会话文件版本 v" + header.version()
+                                + " 高于本 harness 支持的 v" + SessionFormat.CURRENT_VERSION
+                                + "，请升级 harness: " + jsonl);
+                    }
+                    session.formatVersion = header.version();
+                    session.cwd = header.cwd();
+                    continue; // 版本头不进事件序列（静态读者按 type 过滤天然不命中它）
+                }
+                eventLines.add(line);
+            }
+            if (session.formatVersion > 0 && session.formatVersion < SessionFormat.CURRENT_VERSION) {
+                // 迁移链：内存逐级转换、磁盘不动（本期 CURRENT=1 链为空不触发；首个
+                // 真实迁移随 v2 格式变更在此激活——ADR-0028 决策二）
+                eventLines = new ArrayList<>(SessionFormat.migrate(session.formatVersion, eventLines,
+                        List.of(), SessionFormat.CURRENT_VERSION));
+                session.formatVersion = SessionFormat.CURRENT_VERSION;
+            }
+            for (String line : eventLines) {
                 session.events.add(parse(line));
             }
             sealDanglingToolCalls(session);
@@ -733,8 +793,23 @@ public final class Session {
      * 快照既无半行撕裂、又是已持久化事件的视图（导出即持久化视图，无 pending）。
      * 坏行不存在（快照只含本类写出的合法行）；序列化失败 fail-loud 不给截断导出。
      */
+    /** 会话文件格式版本：有头 = 头声明版本（迁移后为当前版本），无头旧文件 = 0。 */
+    public int formatVersion() {
+        return formatVersion;
+    }
+
+    /** 会话工作目录（版本头元信息，检索授权过滤依据；未记录为 null）。 */
+    public Path cwd() {
+        return cwd;
+    }
+
     public List<String> jsonlLines() {
-        List<String> out = new ArrayList<>(snapshot.size());
+        List<String> out = new ArrayList<>(snapshot.size() + 1);
+        if (formatVersion > 0) {
+            // 版本头随导出副本携带（同一序列化函数——与磁盘首行逐字节一致）；
+            // 无头旧文件保持无头，v0 语义不因导出改变
+            out.add(SessionFormat.headerLine(formatVersion, cwd));
+        }
         for (SessionEvent event : snapshot) {
             try {
                 out.add(toJsonLine(event));

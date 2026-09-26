@@ -76,10 +76,11 @@ class ExportCommandTest {
         Path written = Path.of(outcome.text().substring("已导出: ".length()));
         assertTrue(written.getFileName().toString().endsWith(".jsonl"));
         List<String> lines = Files.readAllLines(written, StandardCharsets.UTF_8);
-        // 导出执行在 command/run 落盘之后——导出含消息与本次命令自己的 run 事件（done 尚未落）
-        assertEquals(2, lines.size());
-        assertTrue(lines.get(0).contains("导出我"));
-        assertTrue(lines.get(1).contains("command/run"));
+        // 导出执行在 command/run 落盘之后——含版本头（M26-01 起）、消息与本次命令自己的 run 事件（done 尚未落）
+        assertEquals(3, lines.size());
+        assertTrue(lines.get(0).contains("\"type\":\"session\""), "首行为版本头: " + lines.get(0));
+        assertTrue(lines.get(1).contains("导出我"));
+        assertTrue(lines.get(2).contains("command/run"));
     }
 
     @Test

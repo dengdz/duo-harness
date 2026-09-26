@@ -19,6 +19,7 @@ import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
 import dev.duo.harness.tools.fs.WorkspacePolicy;
 
+import java.nio.file.Path;
 import java.util.Set;
 
 /**
@@ -153,7 +154,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // CLI 随后撞同进程持锁注册表被顶开新建，resume 续接语义（模型意图横幅）就此
         // 永远失效。自建的空会话由 Session.latest 的空会话跳过规则隔离，不污染 CLI 的
         // 下次续接；恢复上次 Web 对话走 /switch。
-        Session session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"));
+        Session session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
+                Path.of(System.getProperty("user.dir")));
         // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置；governance 段
         // 可省（缺省常量，0.7.0 行为），配置错误（未知字段/类型/越界）启动即 FAILED 点名
         ContextGovernance.Tuning governanceTuning = PresenterAssembly.parseGovernance(config);
@@ -217,7 +219,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // /new：全新会话；/switch：换绑既有会话；新标签首请求：懒创建——三者换绑后都经
         // 会话变更回调重建 agent（ToolCallingAgent 持有 final 会话引用，不重建即分脑）。
         // 回调**返回**新 agent 归标签上下文（M24 工单 07）——不再有全局单槽 setAgent
-        face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions")));
+        face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
+                Path.of(System.getProperty("user.dir"))));
         // 会话变更回调是单回调槽（覆盖式 setter，非多播）——全部换绑动作必须合并在这一次
         // 注册里。教训（BUG-20260916-01）：第二处注册会覆盖"换绑重建 agent"，切回分脑
         //（agent 写已 close 的旧会话，发消息必报错）。标题生成（工单 M13-06）随换绑同源

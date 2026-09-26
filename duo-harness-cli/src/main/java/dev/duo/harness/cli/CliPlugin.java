@@ -208,12 +208,12 @@ public final class CliPlugin implements Plugin<JsonNode> {
         try {
             session = Session.latest(sessionsDir);
             if (session == null) {
-                session = Session.create(sessionsDir);
+                session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
             }
         } catch (dev.duo.harness.session.SessionLockedException e) {
             out.println("[提示] " + e.getMessage());
             out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
-            session = Session.create(sessionsDir);
+            session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
             // 继承被占会话的权限档（BUG-20260919-03 裁定，ADR-0020 决策 10 的双开延续）：
             // 占用改开不是用户开新话题，治理态不因呈现位轮转而丢——继承并落事件（重启链延续）
             String inherited = Session.permissionModeOf(
@@ -554,7 +554,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
                 CommandScope.CLI, false, context -> {
                 Session previous = holder.session;
-                holder.session = Session.create(sessionsDir);
+                holder.session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
                 agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
                         maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
                         requestVariants, visionEnabled, fileDelivery,
