@@ -9,7 +9,7 @@ M7#3 原文口径：「仅用户全局 + 项目根两文件；嵌套子目录链
 06
 
 ## Status
-in-progress（实现与自动化验证完成；验收件 = 测试套件 + 真机子目录约定演示，见 Comments）
+done（2026-09-26 用户双路径验收通过——套件 17 用例绿 + 真机子目录约定演示：模型以【子目录约定生效】开头作答并自识 AGENTS.md 链）
 
 ## Checklist
 - [x] AGENTS.md 注入迁 meta_user 通道（与 cacheControl 身份段协同，同改同测）
@@ -23,6 +23,7 @@ in-progress（实现与自动化验证完成；验收件 = 测试套件 + 真机
 - 2026-09-26：**story12 口径记档**：「子目录约定对该目录下操作可见」按 ZCode 同构参考语义落地为 **cwd 锚定链**——链按发起时 cwd 下探，工具操作发生在更深层子目录时不追加该层约定（cwd 不随工具调用移动）；链不缓存（每请求重扫），新会话/cwd 变更后的请求自然取到新链。若后续需要"read 深层文件时叠加该层约定"的按操作下探，属新工单（挂 08 收尾时评估是否入 backlog）。
 - 2026-09-26：**TDD seam**（自主模式按 spec Testing Decisions 定）：①AgentsMd 纯函数 9 用例（既有 5 升级链语义 + 嵌套多层/中间缺失/fs 增量/metaUserSection 形态）②装配 3 用例（服务发布/段现读/零注入/budgetChars，duo.home 重定向隔离本机环境）③注入段序 5+1 用例（agents-md → memory → 历史倒插、不落会话、system 负向断言）。实现期一处 M7 旧语义用例改写（忽略子目录 → 链语义）。
 - 2026-09-26：全量 992 用例 0 失败（2 既有 skip）。M7#3 销账（limitations 行删除，CHANGELOG 记账）；M7#4 子代理不注入口径不变（走旧构造恒 null）。
+- **验收通过（2026-09-26，用户双路径实测）**：路径 A 套件——三行叙述（5+9+3 用例）精确出现、无 ERROR；路径 B 真机——subdemo/AGENTS.md 写独特约定后 cd subdemo 启动 CLI，问「按你收到的目录约定，回答应该以什么开头？」模型答「【子目录约定生效】——按 AGENTS.md 链中的约定…」——**行为与自我标识双对**（嵌套链注入生效 + 模型知道内容来自 AGENTS.md 链）。清场完成。工单转 done。
 - **待用户验收（转 done 前最后一步）**：
   1. 测试套件（命令含旗标）：`./mvnw -q -pl duo-harness-agent -am test -Dtest='AgentsMdTest,AgentsMdPluginTest,MemoryInjectionTest' -Dsurefire.failIfNoSpecifiedTests=false`——3 套件（9+3+5=17 用例）全绿；
   2. 真机子目录约定演示：仓库 `docs/` 目录下建 `docs/AGENTS.md` 写一行独特约定（如"本目录文档一律先给结论"），启动 CLI（命令块整块复制）问「按 docs 目录的约定，回答应该什么样？」——模型应引用该约定（cwd=仓库根，docs 不是 cwd 子层——注意：CLI cwd 在仓库根，链只下探到 cwd，docs/AGENTS.md 不入链！演示要换 cwd：`cd docs && mvn ...`（mvn 从子目录跑 -pl 需 -f ../pom.xml）或简化为在仓库根下建子目录验证）。**修正后的演示**：`mkdir -p subdemo && echo "约定：回答以【子目录约定生效】开头" > subdemo/AGENTS.md`，然后 `cd subdemo` 并从那里启动 CLI（mvn 命令加 `-f ../pom.xml`），问「你的约定要求回答什么样开头」——应答【子目录约定生效】；验完 `cd .. && rm -rf subdemo`。
