@@ -82,8 +82,10 @@ const api = {
     return res.json();
   },
   async page(before, sid) {
-    // sid = 会话绑定（M26-06 复合游标）：服务端核对游标属于当前会话，409 即整页作废
+    // sid = 会话绑定（M26-06 复合游标）：服务端核对游标属于当前会话；
+    // 409 = 换绑后在途翻页作废（预期竞态）——返回 null 由调用方静默丢弃，不当错误呈现
     const res = await fetch('/api/session/page?before=' + before + '&sid=' + encodeURIComponent(sid));
+    if (res.status === 409) return null;
     if (!res.ok) throw new Error('分页请求失败（HTTP ' + res.status + '）');
     return res.json();
   },
@@ -1510,6 +1512,7 @@ const app = (() => {
     const epoch = windowEpoch;
     try {
       const data = await api.page(before, currentSessionId);
+      if (!data) return; // 409：游标属于旧会话（换绑后在途翻页）——静默丢弃，前端重新对齐
       if (epoch !== windowEpoch) return; // 加载期间窗口被整窗替换：结果过期丢弃
       if (data.sessionId !== currentSessionId) return; // M26-06：响应不属于当前会话（换绑后在途）——整页丢弃
       render.prependEvents(data.events);

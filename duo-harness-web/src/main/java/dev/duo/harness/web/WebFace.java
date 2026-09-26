@@ -67,6 +67,10 @@ public final class WebFace {
     static final long FAIL_CLOSED_GRACE_MS = 2_000;
     /** SSE 游标请求头（浏览器重连自动携带，值为最后收到的 id）。 */
     private static final String LAST_EVENT_ID_HEADER = "Last-Event-ID";
+
+    /** 复合游标分隔符（M26-06）：帧 id「会话id#序号」——编码（dataFrameWithId）与
+     * 解析（resolveReplayWindow）共用，协议级单一事实源。 */
+    private static final String CURSOR_SEP = "#";
     /** 首屏尾部窗口的消息数缺省（ADR-0013 常量起步；M19 起经 web 插件 config 可配）。 */
     static final int TAIL_WINDOW_MESSAGES = 50;
 
@@ -434,8 +438,10 @@ public final class WebFace {
                     // 旧监听器注销失败无碍：新订阅已就位
                 }
             }
+            // 回调闭包捕获 target 而非读 tab.session：换绑窗口内旧会话的在途事件
+            // 仍以旧会话 id 作帧前缀（序号与 id 同源，杜绝「新 sid + 旧序号」错配帧）
             tab.sseSubscription = target.addListener((index, event) ->
-                    pushSessionEvent(index, event, tab));
+                    pushSessionEvent(index, event, target, tab.tabId));
             if (previous != null && previous != target) {
                 // 换绑即本标签不再使用旧会话：释放独占锁（否则旧会话被本进程白占，他处打不开）。
                 // 必须串行：并发换绑各关各的快照会跳过中间会话，其独占锁永久泄漏
@@ -489,11 +495,12 @@ public final class WebFace {
     }
 
     /** 会话事件广播（按标签路由，M24 工单 07）：帧带复合游标 id（会话id#日志序号，M26-06）
-     * ——浏览器以最后收到的 id 作重连游标（ADR-0010）；只有绑定该会话的标签连接能收到（A 标签的卡片不弹到 B）。 */
-    private void pushSessionEvent(int index, SessionEvent event, TabContext tab) {
+     * ——浏览器以最后收到的 id 作重连游标（ADR-0010）；只有绑定该会话的标签连接能收到（A 标签的卡片不弹到 B）。
+     * source 为注册监听时捕获的会话（不随换绑漂移，见 bindTab）。 */
+    private void pushSessionEvent(int index, SessionEvent event, Session source, String tabId) {
         // 序号由会话在写入处随回调给出（不从日志末尾反推——并发追加下反推会错位）
         String frame = toJson(event);
-        broadcast(client -> client.send(dataFrameWithId(tab.session.id(), index, frame)), tab.tabId);
+        broadcast(client -> client.send(dataFrameWithId(source.id(), index, frame)), tabId);
     }
 
     /** 非会话帧广播（run/error 等直推帧）：帧不带序号，契约见 {@link #dataFrame}；按发起标签路由。 */
@@ -1335,8 +1342,11 @@ public final class WebFace {
         respondJson(exchange, 200, "{\"completed\":" + completed + "}");
     }
     /**
-     * 历史分页（ADR-0013）：before（事件序号）之前的尾页事件——响应携 startEvent（窗口首事件
-     * 下标，前端更新加载锚点）、events、hasMore、earlierCount；服务端每次全量投影定消息边界。
+     * 历史分页（ADR-0013）：before（事件序号）之前的尾页事件——响应携 sessionId（会话
+     * 绑定回带，M26-06 前端第二道核对）、startEvent（窗口首事件下标，前端更新加载锚点）、
+     * events、hasMore、earlierCount；服务端每次全量投影定消息边界。请求必须携 sid
+     * （当前会话 id）：缺失 400（旧形态一步切拒绝）、不符 409（换绑后在途翻页作废，
+     * 前端静默丢弃重对齐）。
      */
     private void handleSessionPage(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -1540,10 +1550,13 @@ public final class WebFace {
     private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events,
                                                     Session bound, int pageSize) {
         if (cursor != null && !cursor.isBlank()) {
-            int hash = cursor.indexOf('#');
-            if (hash > 0 && cursor.substring(0, hash).equals(bound.id())) {
+            int cursorSep = cursor.indexOf(CURSOR_SEP);
+            // 会话段与当前绑定相等才可作增量凭据；分隔符缺失（裸数字旧形态）不受理
+            boolean sessionMatched = cursorSep > 0
+                    && cursor.substring(0, cursorSep).equals(bound.id());
+            if (sessionMatched) {
                 try {
-                    int parsed = Integer.parseInt(cursor.substring(hash + 1).strip());
+                    int parsed = Integer.parseInt(cursor.substring(cursorSep + 1).strip());
                     if (parsed >= 0 && parsed < events.size()) {
                         return new ReplayWindow(parsed + 1, "incremental", false, false, 0);
                     }
@@ -1571,8 +1584,8 @@ public final class WebFace {
      * Last-Event-ID 原样回传，服务端经 {@link #resolveReplayWindow} 校验会话绑定后
      * 才作增量凭据（防换绑/重启后旧游标错位续播；复合游标与双侧核对见 ADR-0028 拒绝的选项段）。
      */
-    private static String dataFrameWithId(String sessionId, int id, String payload) {
-        return "id: " + sessionId + "#" + id + "\n" + dataFrame(payload);
+    private static String dataFrameWithId(String sessionId, int seq, String payload) {
+        return "id: " + sessionId + CURSOR_SEP + seq + "\n" + dataFrame(payload);
     }
 
     private String toJson(SessionEvent event) {
