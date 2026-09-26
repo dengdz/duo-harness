@@ -1,19 +1,22 @@
 package dev.duo.harness.session;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 会话导出渲染（M21 工单 09，ADR-0022 决策 9）：当前会话 → 人读 Markdown 或
- * JSONL 原样副本。纯函数（输入会话快照、输出字符串），零 I/O——落盘/下载由
- * 呈现位负责（CLI 写盘 cwd、Web 下载流）。
+ * 会话导出渲染（M21 工单 09，ADR-0022 决策 9；M26 工单 05 增强）：当前会话 →
+ * 人读 Markdown 或 JSONL 原样副本。渲染核心写 {@link Appendable}（流式——CLI
+ * 写盘与 Web 下载不整包驻内存），字符串形态为兼容重载。
  *
  * <p>markdown 结构：头部元信息（id/标题/导出时间）→ 按事件序的角色/时间戳正文
  * （用户/助手全文、工具调用一行摘要、压缩点一行标注、子代理回答按消息渲染）→
- * 尾部附件引用清单（user/attachment 引用 + read_image 入库引用；字节不打包，
- * 库内永不删除）。jsonl 为 {@link Session#jsonlLines()} 的换行拼接——落盘的
+ * 交付清单（模型 deliverable/presented 声明聚合，M26-04）→ 变更摘要（系统对账
+ * ——git 对账行或文件工具记录，数据由 agent 侧 ChangeSummary 供给，本类只渲染）
+ * → 尾部附件引用清单。jsonl 为 {@link Session#jsonlLines()} 的逐行写出——落盘的
  * 原样副本。</p>
  */
 public final class SessionExport {
@@ -56,9 +59,65 @@ public final class SessionExport {
         return "duo-session-" + sessionId + format.fileSuffix;
     }
 
-    /** markdown 人读导出。 */
+    /** 变更对账单行：路径 + 加减行数（binary 行为 null，显示 "(binary)"）。 */
+    public record ChangeRow(String path, String added, String deleted) {
+    }
+
+    /**
+     * 变更摘要数据（M26 工单 05）：git 对账（会话首尾快照比对，agent 侧
+     * ChangeSummary 供给——本模块纯渲染不做 I/O）与文件工具记录双源。
+     *
+     * @param gitAvailable git 对账可用（快照在册且目录为 git 仓库）；false 时仅工具记录
+     * @param gitRows      git 对账行（tracked 改动 + 新增未跟踪文件；空 = 无文件变更）
+     * @param toolPaths    文件工具（write/edit）触碰过的路径聚合（永远可用的兜底清单）
+     */
+    public record ChangeReport(boolean gitAvailable, List<ChangeRow> gitRows,
+                               List<String> toolPaths) {
+
+        /** 空报告（无快照信息——退化为纯工具记录形态）。 */
+        public static final ChangeReport NONE =
+                new ChangeReport(false, List.of(), List.of());
+
+        public ChangeReport {
+            gitRows = List.copyOf(gitRows);
+            toolPaths = List.copyOf(toolPaths);
+        }
+    }
+
+    // ---- 字符串形态（兼容重载） ----
+
+    /** markdown 人读导出（无变更摘要数据——交付清单照常渲染）。 */
     public static String markdown(Session session) {
+        return markdown(session, ChangeReport.NONE);
+    }
+
+    /** markdown 人读导出（携变更摘要）。 */
+    public static String markdown(Session session, ChangeReport report) {
         StringBuilder out = new StringBuilder();
+        try {
+            renderMarkdown(session, report, out);
+        } catch (IOException e) {
+            throw new IllegalStateException("markdown 渲染失败（StringBuilder 不抛 IO）", e);
+        }
+        return out.toString();
+    }
+
+    /** JSONL 原样副本（逐行等价于会话日志文件）。 */
+    public static String jsonl(Session session) {
+        StringBuilder out = new StringBuilder();
+        try {
+            renderJsonl(session, out);
+        } catch (IOException e) {
+            throw new IllegalStateException("jsonl 渲染失败（StringBuilder 不抛 IO）", e);
+        }
+        return out.toString();
+    }
+
+    // ---- 流式渲染核心（CLI 写盘 / Web 下载共用，不整包驻内存） ----
+
+    /** markdown 流式渲染。 */
+    public static void renderMarkdown(Session session, ChangeReport report,
+                                      Appendable out) throws IOException {
         out.append("# duo 会话导出：").append(session.title() != null ? session.title() : session.id())
                 .append('\n');
         out.append("\n- 会话 id: `").append(session.id()).append('`');
@@ -66,12 +125,14 @@ public final class SessionExport {
             out.append("\n- 标题: ").append(session.title());
         }
         out.append("\n- 导出时间: ").append(TIME.format(Instant.now()));
-        out.append("\n- 事件数: ").append(session.events().size()).append('\n');
+        out.append("\n- 事件数: ").append(String.valueOf(session.events().size())).append('\n');
         out.append("\n---\n");
-        List<String> attachments = new java.util.ArrayList<>();
+        List<String> attachments = new ArrayList<>();
         for (SessionEvent event : session.events()) {
             appendEvent(out, event, attachments);
         }
+        appendDeliverables(session, out);
+        appendChangeSummary(report, out);
         out.append("\n---\n\n## 附件引用清单\n");
         if (attachments.isEmpty()) {
             out.append("\n无\n");
@@ -80,17 +141,94 @@ public final class SessionExport {
                 out.append("- ").append(line).append('\n');
             }
         }
-        return out.toString();
     }
 
-    /** JSONL 原样副本（逐行等价于会话日志文件）。 */
-    public static String jsonl(Session session) {
-        List<String> lines = session.jsonlLines();
-        return lines.isEmpty() ? "" : String.join("\n", lines) + "\n";
+    /** JSONL 流式渲染（逐行写出，落盘原样副本）。 */
+    public static void renderJsonl(Session session, Appendable out) throws IOException {
+        for (String line : session.jsonlLines()) {
+            out.append(line).append('\n');
+        }
     }
 
-    private static void appendEvent(StringBuilder out, SessionEvent event,
-                                    List<String> attachments) {
+    /**
+     * 交付清单章节（M26 工单 04 数据源）：deliverable/presented 事件聚合——跨多次
+     * 声明去重保序（同一文件多次交付只列一次）。无声明整个章节省略（无交付的会话
+     * 不给空章节）。
+     */
+    private static void appendDeliverables(Session session, Appendable out) throws IOException {
+        List<String> paths = new ArrayList<>();
+        for (SessionEvent event : session.events()) {
+            if (!SessionEvent.DELIVERABLE_PRESENTED.equals(event.type())) {
+                continue;
+            }
+            collectPaths(event.text(), paths);
+        }
+        if (paths.isEmpty()) {
+            return;
+        }
+        out.append("\n---\n\n## 交付清单（模型声明）\n\n");
+        for (String path : paths) {
+            out.append("- `").append(path).append("`\n");
+        }
+    }
+
+    /** 变更摘要章节：git 对账行（含行数）或文件工具记录（无行数）双形态。 */
+    private static void appendChangeSummary(ChangeReport report, Appendable out)
+            throws IOException {
+        out.append("\n---\n\n## 变更摘要（系统对账）\n");
+        if (report.gitAvailable()) {
+            if (report.gitRows().isEmpty()) {
+                out.append("\n无文件变更\n");
+                return;
+            }
+            out.append("\n| 文件 | 新增 | 删除 |\n|---|---|---|\n");
+            for (ChangeRow row : report.gitRows()) {
+                out.append("| `").append(row.path()).append("` | ")
+                        .append(row.added() == null ? "(binary)" : row.added()).append(" | ")
+                        .append(row.deleted() == null ? "(binary)" : row.deleted()).append(" |\n");
+            }
+            if (!report.toolPaths().isEmpty()) {
+                out.append("\n另经文件工具触碰（含于上表或未在 git 跟踪内）：\n");
+                for (String path : report.toolPaths()) {
+                    out.append("- `").append(path).append("`\n");
+                }
+            }
+            return;
+        }
+        // 非 git 目录 / 快照不可用：工具记录形态（有清单无行数）
+        out.append("\n（非 git 目录或快照不可用——仅文件工具记录，无行数统计）\n");
+        if (report.toolPaths().isEmpty()) {
+            out.append("\n无文件变更\n");
+            return;
+        }
+        for (String path : report.toolPaths()) {
+            out.append("- `").append(path).append("`\n");
+        }
+    }
+
+    /** 交付声明事件的路径数组 JSON 聚合（坏形态条目跳过不炸导出）。 */
+    private static void collectPaths(String filesJson, List<String> out) {
+        try {
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(filesJson);
+            if (!node.isArray()) {
+                return;
+            }
+            for (var item : node) {
+                if (item.isNull()) {
+                    continue;
+                }
+                String path = item.asText("").strip();
+                if (!path.isEmpty()) {
+                    out.add(path);
+                }
+            }
+        } catch (Exception ignored) {
+            // 坏形态声明（手改日志）跳过——导出不因单条坏数据失败
+        }
+    }
+
+    private static void appendEvent(Appendable out, SessionEvent event,
+                                    List<String> attachments) throws IOException {
         String at = TIME.format(Instant.ofEpochMilli(event.at()));
         switch (event.type()) {
             case SessionEvent.USER_MESSAGE ->
@@ -116,12 +254,14 @@ public final class SessionExport {
                     out.append("\n> [压缩点 · ").append(event.toolName()).append(" · ").append(at)
                             .append("] 早期历史已折叠为摘要（全文见 JSONL 导出）\n");
             default -> {
-                // chunk/审批/命令/权限档/标题等治理与过程事件不进人读正文（JSONL 导出全量可查）
+                // chunk/审批/命令/权限档/标题/交付声明等治理与过程事件不进人读正文
+                // （交付声明进交付清单章节；JSONL 导出全量可查）
             }
         }
     }
 
-    private static void appendTurn(StringBuilder out, String role, String at, String text) {
+    private static void appendTurn(Appendable out, String role, String at, String text)
+            throws IOException {
         out.append("\n## ").append(role).append(" · ").append(at).append("\n\n")
                 .append(text.strip()).append('\n');
     }

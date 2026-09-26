@@ -156,6 +156,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 下次续接；恢复上次 Web 对话走 /switch。
         Session session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
                 Path.of(System.getProperty("user.dir")));
+        dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
         // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置；governance 段
         // 可省（缺省常量，0.7.0 行为），配置错误（未知字段/类型/越界）启动即 FAILED 点名
         ContextGovernance.Tuning governanceTuning = PresenterAssembly.parseGovernance(config);
@@ -229,6 +230,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         //（agent 写已 close 的旧会话，发消息必报错）。标题生成（工单 M13-06）随换绑同源
         // attach，双开时与 CLI 共享静态去重表
         face.onSessionChanged(fresh -> {
+            // 变更摘要首拍（M26-05）：全部换绑动作（/new、/switch、懒创建）经此单回调
+            dev.duo.harness.agent.deliverable.ChangeSummary.markStart(fresh);
             SessionTitles.attach(fresh, adapter);
             // 显式换绑（新话题/切换/新标签）：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
             PresenterAssembly.restorePermissionMode(ctx, fresh, true);

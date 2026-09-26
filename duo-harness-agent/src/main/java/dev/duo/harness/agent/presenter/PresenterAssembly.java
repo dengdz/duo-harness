@@ -592,12 +592,16 @@ public final class PresenterAssembly {
                         return "/api/session/export?format=" + format.argName;
                     }
                     java.nio.file.Path target = exportDir.resolve(fileName);
-                    try {
-                        java.nio.file.Files.writeString(target,
-                                format == dev.duo.harness.session.SessionExport.Format.MARKDOWN
-                                        ? dev.duo.harness.session.SessionExport.markdown(session)
-                                        : dev.duo.harness.session.SessionExport.jsonl(session),
-                                java.nio.charset.StandardCharsets.UTF_8);
+                    // 流式写盘（M26-05）：渲染核心直写 Writer，大会话不整包驻内存
+                    try (var writer = java.nio.file.Files.newBufferedWriter(target,
+                            java.nio.charset.StandardCharsets.UTF_8)) {
+                        if (format == dev.duo.harness.session.SessionExport.Format.MARKDOWN) {
+                            dev.duo.harness.session.SessionExport.renderMarkdown(session,
+                                    dev.duo.harness.agent.deliverable.ChangeSummary.report(session),
+                                    writer);
+                        } else {
+                            dev.duo.harness.session.SessionExport.renderJsonl(session, writer);
+                        }
                     } catch (java.io.IOException e) {
                         // fail-loud：写失败向上抛（分发器收敛为错误文本），不留半截文件承诺
                         throw new IllegalStateException("导出写盘失败: " + target, e);

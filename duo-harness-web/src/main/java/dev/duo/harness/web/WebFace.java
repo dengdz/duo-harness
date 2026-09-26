@@ -1210,16 +1210,28 @@ public final class WebFace {
             }
             Session current = tab.session;
             String fileName = dev.duo.harness.session.SessionExport.fileName(current.id(), parse);
-            String body = parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
-                    ? dev.duo.harness.session.SessionExport.markdown(current)
-                    : dev.duo.harness.session.SessionExport.jsonl(current);
             exchange.getResponseHeaders().set("Content-Disposition",
                     "attachment; filename=\"" + fileName + "\"");
-            respond(exchange, 200,
+            exchange.getResponseHeaders().set("Content-Type",
                     parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN
                             ? "text/markdown; charset=utf-8"
-                            : "application/x-ndjson",
-                    body.getBytes(StandardCharsets.UTF_8));
+                            : "application/x-ndjson");
+            // 流式下载（M26-05）：chunked 写出，大会话不整包驻内存；中途失败只能
+            // 截断连接（状态头已出）——日志点名，浏览器侧表现为下载未完成
+            exchange.sendResponseHeaders(200, 0);
+            try (var writer = new java.io.OutputStreamWriter(exchange.getResponseBody(),
+                    StandardCharsets.UTF_8)) {
+                if (parse == dev.duo.harness.session.SessionExport.Format.MARKDOWN) {
+                    dev.duo.harness.session.SessionExport.renderMarkdown(current,
+                            dev.duo.harness.agent.deliverable.ChangeSummary.report(current),
+                            writer);
+                } else {
+                    dev.duo.harness.session.SessionExport.renderJsonl(current, writer);
+                }
+                writer.flush();
+            } catch (IOException e) {
+                log.error("/api/session/export 流式写出中断: {}", fileName, e);
+            }
         } catch (Throwable t) {
             log.error("/api/session/export 处理失败", t);
             respondText(exchange, 500, "导出失败: " + t);
