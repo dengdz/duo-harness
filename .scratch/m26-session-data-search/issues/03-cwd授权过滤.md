@@ -10,7 +10,11 @@
 01, 02
 
 ## Status
-ready-for-agent
+in-progress
+
+## Comments
+
+- 2026-09-26 开工（0.21.0 分支，Blocked by 01/02 已完成）。
 
 ## Checklist
 - [ ] 检索管线按 cwd 逐条过滤（相等才收），消费 01 落盘的会话 cwd 字段
