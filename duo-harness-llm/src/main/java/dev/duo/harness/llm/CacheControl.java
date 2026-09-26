@@ -9,8 +9,9 @@ package dev.duo.harness.llm;
  * <ul>
  *   <li><b>身份前缀</b>（identity prefix）：system 的首段（yml {@code llm.systemPrompt}
  *       用户指令——装配期固定，跨会话不变）——断点 1；</li>
- *   <li><b>稳定身份</b>（stable body）：其余静态片段（AGENTS.md / memory-guide /
- *       技能清单——注册表不变则逐轮逐字节相同）——断点 2；</li>
+ *   <li><b>稳定身份</b>（stable body）：其余静态片段（技能清单 / memory-guide 等
+ *       prompt 注册表片段——注册表不变则逐轮逐字节相同；AGENTS.md 已迁 meta_user
+ *       消息段，M25 工单 07）——断点 2；</li>
  *   <li><b>动态段</b>（dynamic）：会话消息 + reminder（每轮变化）——不打 system
  *       断点，由 anthropic 适配器在最后一条消息上打消息级断点（断点 3）。</li>
  * </ul>

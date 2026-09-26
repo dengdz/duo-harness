@@ -88,6 +88,8 @@ public final class ToolCallingAgent implements ChatAgent {
     private final dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector;
     /** 记忆本服务（M25 工单 02；null = 未装配——零注入）。 */
     private final dev.duo.harness.agent.memory.MemoryBook memory;
+    /** AGENTS.md 链服务（M25 工单 07；null = 未装配——零注入；子代理恒 null）。 */
+    private final dev.duo.harness.agent.prompt.AgentsMdChain agentsMd;
     /**
      * 两级收件箱（M23 ADR-0025 决策一；next-step 级由 M19 steer 单级升级）：
      * busy 期间外部线程经 {@link #injectUserMessage}（next-step，step 边界排干）或
@@ -190,6 +192,23 @@ public final class ToolCallingAgent implements ChatAgent {
                             boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
                             dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
                             dev.duo.harness.agent.memory.MemoryBook memory) {
+        this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
+                presenterId, requestVariants, vision, fileDelivery, planBashDetector, memory, null);
+    }
+
+    /**
+     * 全参构造（M25 工单 07 meta_user 版）：agentsMd 非 null 时每轮请求把 AGENTS.md
+     * 链以 user 角色置于消息序列最前（先于 memory 段——项目约定在前、记忆补充在后）；
+     * null = 未装配，零注入。
+     */
+    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
+                            PromptRegistry prompts, int maxIterations,
+                            int maxParallelToolCalls, ContextGovernance governance,
+                            String presenterId, dev.duo.harness.attachment.RequestVariants requestVariants,
+                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
+                            dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
+                            dev.duo.harness.agent.memory.MemoryBook memory,
+                            dev.duo.harness.agent.prompt.AgentsMdChain agentsMd) {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.tools = Objects.requireNonNull(tools, "tools");
         this.session = Objects.requireNonNull(session, "session");
@@ -209,6 +228,7 @@ public final class ToolCallingAgent implements ChatAgent {
         this.vision = vision;
         this.planBashDetector = planBashDetector;
         this.memory = memory;
+        this.agentsMd = agentsMd;
     }
 
     /**
@@ -591,13 +611,20 @@ public final class ToolCallingAgent implements ChatAgent {
         }
         List<ChatMessage> chatMessages = new ArrayList<>(
                 Messages.toChatMessages(projected, requestVariants, vision, fileDelivery));
-        // meta_user 记忆段（M25 工单 02）：置于消息序列最前（先于对话历史）——组装在
+        // meta_user 段（M25 工单 02/07）：置于消息序列最前（先于对话历史）——组装在
         // 治理投影之后，不参与治理、不被压缩吞；现读（缺席/为空 null → 零注入）；
-        // 请求视图专用，不落会话日志
+        // 请求视图专用，不落会话日志。两次 add(0) 倒插：memory 先入、agentsMd 后入
+        // 盖顶——终序 agents-md（项目约定）→ memory（记忆补充）→ 对话历史
         if (memory != null) {
             String metaUser = memory.metaUserSection();
             if (metaUser != null) {
                 chatMessages.add(0, ChatMessage.user(metaUser));
+            }
+        }
+        if (agentsMd != null) {
+            String section = agentsMd.section();
+            if (section != null) {
+                chatMessages.add(0, ChatMessage.user(section));
             }
         }
         if (reminder != null && !reminder.isBlank()) {

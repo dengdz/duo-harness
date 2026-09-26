@@ -6,6 +6,8 @@
 
 ### Added
 
+- **AGENTS.md 嵌套链与 meta_user 通道（M25 工单 07，ADR-0024 M25 节；M7#3 销账）**：AGENTS.md 注入升级——①通道迁移：从 system 提示片段迁到 meta_user 消息段（`<agents-md>` 标签 + 免责语，以 user 角色置于请求消息序列最前、先于 `<memory>` 段，请求视图专用不落会话日志；system 稳定身份段随之收敛，cacheControl 断点划分自动适配）；②嵌套子目录链：用户全局（~/.duo/AGENTS.md）→ 项目根 → 项目根到 cwd 的每层 AGENTS.md 浅到深拼接（由泛到专——靠近根的是全局约定、靠近 cwd 的是局部细化）；③fs 增量发现：每请求现发现现读——会话中新建目录/文件下一轮即入链。子代理不注入（M7#4 口径不变）。docs/limitations.md M7#3 条目销账（嵌套链与增量发现两件未做项均收）
+
 - **cacheControl 三级断点与 provider 映射（M25 工单 06，ADR-0024 M25 节）**：对每轮重复携带的稳定前缀打 provider 缓存断点省钱提速——anthropic 形态 system 按三级组块（身份前缀 = yml 用户指令、稳定身份 = AGENTS.md/记忆指南/技能清单等静态片段）各打 `cache_control: ephemeral`、末条消息 content 块打动态段断点（块拼接与原 system 逐字节等价，缓存键稳定；单段 system 退字符串旧路径零变化）；openai-compat / glm / deepseek 无断点参数静默享受 provider 自动前缀缓存（不支持零报错）。缓存命中透出进用量统计：TokenUsage 新增 cachedTokens（anthropic `cache_read_input_tokens` / openai-compat `prompt_tokens_details.cached_tokens` / deepseek `prompt_cache_hit_tokens` 双字段兼容），随 assistant/message 会话事件落 JSONL（>0 落盘）、headless usage 帧与状态面计量同源；断点失效自然回源（provider 语义，无隐性成本）
 
 - **压缩熔断与状态可见（M25 工单 05，ADR-0024 M25 节）**：summary 压缩连续失败达 3 次（空摘要同计）即熔断——自动压缩静默暂停，会话照常可用（防"压缩失败→重试→再失败"每轮空烧卡死长会话）；状态面上下文占用行标注「⚠ 压缩已熔断」（`context.compactionTripped` 字段）；仅成功压缩清零计数解除熔断，manual /compact 不受熔断约束（用户显式指令优先）；microcompact 与 summary 压缩并存互不干扰——熔断只挡 summary，本地裁剪照常工作；microcompact 裁剪点同压缩点作废旧 usage 计量（治理后回退本地估算，防按虚高占用误触发）

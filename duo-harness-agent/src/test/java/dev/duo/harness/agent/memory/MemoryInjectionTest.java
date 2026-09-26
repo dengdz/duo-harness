@@ -36,7 +36,7 @@ class MemoryInjectionTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：MemoryInjectionTest —— 记忆注入：消息序列最前、不落会话、降级零注入、事件痕（4 用例） ===");
+        System.out.println("\n=== 套件：MemoryInjectionTest —— 记忆注入：消息序列最前、不落会话、降级零注入、事件痕、agents-md 段序（5 用例） ===");
     }
 
     @TempDir
@@ -202,6 +202,42 @@ class MemoryInjectionTest {
         assertTrue(captured.get(0).messages().stream()
                         .noneMatch(m -> m.content().contains("<memory>")),
                 "记忆本缺席 → 请求零记忆段（未启用用户零感知）");
+        session.close();
+    }
+
+    @Test
+    void agentsMd段先于memory段且不落会话() throws IOException {
+        // M25 工单 07 段序：agents-md（项目约定）→ memory（记忆补充）→ 对话历史
+        Path file = tempDir.resolve("MEMORY.md");
+        Files.writeString(file, "- 记忆条目\n");
+        Session session = newSession();
+        List<ChatRequest> captured = new ArrayList<>();
+        ToolCallingAgent agent = new ToolCallingAgent(
+                capturingAdapter(captured), new NoTools(), session,
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
+                null, null, null, false, null, null,
+                new MemoryBook(file, MemoryBook.DEFAULT_BUDGET_CHARS),
+                new dev.duo.harness.agent.prompt.AgentsMdChain(
+                        tempDir, tempDir.resolve("无.md"), 16 * 1024));
+        java.nio.file.Files.writeString(tempDir.resolve("无.md"), "根约定。");
+
+        agent.send("你好", AgentListener.NONE);
+
+        List<ChatMessage> messages = captured.get(0).messages();
+        assertTrue(messages.get(0).content().startsWith("<agents-md>"),
+                "agents-md 段最前: " + messages.get(0).content().substring(0, 40));
+        assertTrue(messages.get(0).content().contains("根约定。"), "段含链内容");
+        assertTrue(messages.get(1).content().startsWith("<memory>"), "memory 段第二");
+        assertEquals("你好", messages.get(2).content(), "对话历史随后");
+        assertTrue(session.deriveMessages().stream()
+                        .noneMatch(m -> String.valueOf(m.content()).contains("根约定。")),
+                "agents-md 段不落会话日志");
+        // cacheControl 协同（工单 07"同测"）：迁出后 system 不含 AGENTS.md 内容——
+        // 稳定身份段按构造自动收敛（userPrompt + 静态片段）
+        assertFalse(captured.get(0).systemPrompt().contains("根约定。"),
+                "system 不含 AGENTS.md 链内容（已迁 meta_user）");
+        assertFalse(captured.get(0).systemPrompt().contains("<agents-md>"),
+                "system 无 agents-md 标签");
         session.close();
     }
 

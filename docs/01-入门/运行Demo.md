@@ -147,4 +147,4 @@ mvn -pl duo-harness-example -am package exec:java -DskipTests \
 | `/plan 整理示例目录` | 进入计划模式（模型先探索与设计、不做修改性操作）→ 模型调 `exit_plan_mode` 呈交计划 → 你选批准或打回给反馈 |
 | 计划复核不回答 | fail-closed：计划不批准，保持计划模式 |
 
-技能目录（四根发现，同名高优先根胜）：项目 `.duo/skills/` → 项目 `.agents/skills/`（行业标准）→ `~/.duo/skills/` → `~/.agents/skills/`；本仓库内置演示技能 `release-notes`。AGENTS.md（用户全局 `~/.duo/AGENTS.md` 与项目根）自动注入 agent 上下文（64KB 预算）。
+技能目录（四根发现，同名高优先根胜）：项目 `.duo/skills/` → 项目 `.agents/skills/`（行业标准）→ `~/.duo/skills/` → `~/.agents/skills/`；本仓库内置演示技能 `release-notes`。AGENTS.md 链（用户全局 `~/.duo/AGENTS.md` → 项目根 → 到当前目录的嵌套子目录）以 `<agents-md>` 段注入请求消息最前（64KB 预算，每请求现发现现读）。

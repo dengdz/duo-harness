@@ -41,6 +41,12 @@ public final class HeadlessRunner {
         dev.duo.harness.agent.memory.MemoryBook memory();
     }
 
+    /** agentsMd 服务的视图接口（方法名即服务名 "agentsMd"，M25 工单 07）。 */
+    interface HeadlessAgentsMdView {
+
+        dev.duo.harness.agent.prompt.AgentsMdChain agentsMd();
+    }
+
     private HeadlessRunner() {
     }
 
@@ -74,8 +80,13 @@ public final class HeadlessRunner {
             dev.duo.harness.agent.memory.MemoryBook memory =
                     s.root().hasService(dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME)
                             ? s.root().as(HeadlessMemoryView.class).memory() : null;
+            // AGENTS.md 链可选依赖（M25 工单 07）：同款判存接线
+            dev.duo.harness.agent.prompt.AgentsMdChain agentsMd =
+                    s.root().hasService(dev.duo.harness.agent.prompt.AgentsMdChain.SERVICE_NAME)
+                            ? s.root().as(HeadlessAgentsMdView.class).agentsMd() : null;
             ChatAgent agent = PresenterAssembly.chatAgent(s.llm(), s.tools(), s.session(),
-                    s.prompts(), maxIterations, governance, HeadlessAnswerer.PRESENTER_ID, memory);
+                    s.prompts(), maxIterations, governance, HeadlessAnswerer.PRESENTER_ID,
+                    memory, agentsMd);
             AgentReply reply = agent.send(prompt, projector.listener());
             var endFields = NdjsonFrames.fields("phase", "turn_end");
             if (projector.lastUsage() != null) {

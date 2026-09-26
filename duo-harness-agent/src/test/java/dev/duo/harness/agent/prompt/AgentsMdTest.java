@@ -21,7 +21,7 @@ class AgentsMdTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：AgentsMdTest —— AGENTS.md 注入：按序拼接、单文件、全缺 null、"
-                + "预算截断、.git 定根（5 用例） ===");
+                + "预算截断、.git 定根、嵌套链浅到深、fs 增量、meta_user 段（9 用例） ===");
     }
 
     @TempDir
@@ -83,12 +83,65 @@ class AgentsMdTest {
 
     @Test
     void projectRootLocatedByGitMarker() throws IOException {
-        // cwd 深于项目根两层，AGENTS.md 放项目根——.git 向上定位应命中
+        // M25 工单 07 嵌套链语义：项目根在前、cwd 的 AGENTS.md 入链在后（浅到深）
         Path cwd = projectWith("根约定。");
         Files.writeString(cwd.resolve("AGENTS.md"), "子目录约定。");
 
         String text = AgentsMd.load(cwd, tempDir.resolve("无"), 64 * 1024);
 
-        assertEquals("根约定。", text, "取 .git 所在的项目根 AGENTS.md，而非 cwd 的");
+        assertEquals("根约定。\n\n子目录约定。", text,
+                "项目根（.git 定位）在前、cwd 的子目录约定入链在后");
+    }
+
+    @Test
+    void 嵌套链多层浅到深拼接() throws IOException {
+        // root → src → src/main 三层约定，浅到深拼接（由泛到专）
+        Path cwd = projectWith("根约定。");
+        Files.writeString(cwd.getParent().resolve("AGENTS.md"), "src 层约定。");
+        Files.writeString(cwd.resolve("AGENTS.md"), "main 层约定。");
+
+        String text = AgentsMd.load(cwd, tempDir.resolve("无"), 64 * 1024);
+
+        assertEquals("根约定。\n\nsrc 层约定。\n\nmain 层约定。", text,
+                "嵌套链浅到深：根 → src → main");
+    }
+
+    @Test
+    void 链上中间层缺失自然跳过() throws IOException {
+        // src 层无 AGENTS.md——根与 main 层照常拼接，缺失层零占位
+        Path cwd = projectWith("根约定。");
+        Files.writeString(cwd.resolve("AGENTS.md"), "main 层约定。");
+
+        String text = AgentsMd.load(cwd, tempDir.resolve("无"), 64 * 1024);
+
+        assertEquals("根约定。\n\nmain 层约定。", text, "中间缺失层跳过不占位");
+    }
+
+    @Test
+    void fs增量发现新文件下一轮即见() throws IOException {
+        // M7#3「fs 操作后增量发现」：会话中新建目录/文件，下一次 load（即下一轮请求）入链
+        Path cwd = projectWith("根约定。");
+        String before = AgentsMd.load(cwd, tempDir.resolve("无"), 64 * 1024);
+        assertEquals("根约定。", before, "初轮仅根");
+
+        Files.writeString(cwd.resolve("AGENTS.md"), "会话中新建的约定。");
+        String after = AgentsMd.load(cwd, tempDir.resolve("无"), 64 * 1024);
+
+        assertEquals("根约定。\n\n会话中新建的约定。", after, "现发现现读——新文件下一轮即入链");
+    }
+
+    @Test
+    void metaUser段形态与降级() throws IOException {
+        // 无链文件 → null 零注入；有内容 → <agents-md> 标签 + 免责语包裹
+        Path cwd = projectWith(null);
+        assertNull(AgentsMd.metaUserSection(cwd, tempDir.resolve("无"), 64 * 1024),
+                "链上无文件 → 无 meta_user 段");
+
+        Files.writeString(cwd.getParent().getParent().resolve("AGENTS.md"), "根约定。");
+        String section = AgentsMd.metaUserSection(cwd, tempDir.resolve("无"), 64 * 1024);
+        assertTrue(section.startsWith("<agents-md>"), "段以 agents-md 标签包裹: " + section);
+        assertTrue(section.contains("根约定。"), "段内含链内容");
+        assertTrue(section.contains("以用户为准"), "段内含免责语: " + section);
+        assertTrue(section.endsWith("</agents-md>"), "段以闭合标签收尾");
     }
 }

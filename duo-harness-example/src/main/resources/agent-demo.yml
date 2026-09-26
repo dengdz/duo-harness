@@ -48,8 +48,9 @@ plugins:
     config:
       systemPrompt: "你是在 duo-harness 中运行的助手，回答使用中文并保持简洁。"
 
-  # AGENTS.md 注入：~/.duo/AGENTS.md + 项目根（.git 定根），64KB 预算截断；
-  # 注册为 agents-md 片段——行序即组装序（用户指令 → 项目约定 → 技能清单）
+  # AGENTS.md 链（M25 工单 07 迁 meta_user）：~/.duo/AGENTS.md → 项目根 → 到 cwd 的
+  # 嵌套子目录链（浅到深）拼接，以 <agents-md> 段置于请求消息最前（先于 memory 段）；
+  # 每请求现发现现读（fs 增量），64KB 预算截断，链上无文件零注入
   - id: agents-md
     name: dev.duo.harness.agent.prompt.AgentsMdPlugin
     config: {}

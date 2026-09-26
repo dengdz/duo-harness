@@ -22,7 +22,7 @@ mvn -pl duo-harness-example -am package exec:java \
 | `tools` | 工具域（三段执行管线 + 审批/guard 挂点）——MCP 与 agent 循环的前置 |
 | `fs-tools` | fs 工具族六件（read/write/edit/glob/grep/bash）+ "workspace" 服务——三档权限预设，`mode` 配默认档 |
 | `prompts` | system 提示（最前用户指令片段） |
-| `agents-md` | 自动注入 AGENTS.md 项目约定 |
+| `agents-md` | AGENTS.md 链注入（用户全局 → 项目根 → 嵌套子目录，meta_user 段） |
 | `skills` | 技能清单 + `skill` 工具（模型自主加载技能） |
 | `answers` | 交互服务（审批/提问的回答者注册表） |
 | `approval` | 档位审批（ADR-0012）：workspace 内写放行、越界写与 bash 按档 ask |
