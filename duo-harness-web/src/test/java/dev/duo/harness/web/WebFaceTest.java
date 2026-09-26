@@ -1243,7 +1243,7 @@ class WebFaceTest {
         start(session, scriptedAgent(session, "ok"));
 
         String stream;
-        try (SseCollector sse = openSse("1")) {
+        try (SseCollector sse = openSse(session.id() + "#1")) {
             stream = sse.awaitText(600);
         }
 
@@ -1272,8 +1272,10 @@ class WebFaceTest {
         assertTrue(stream.contains("\"mode\":\"tail-snapshot\""), "首连为尾部窗口快照模式: " + stream);
         assertTrue(stream.contains("\"hasMore\":false") && stream.contains("\"earlierCount\":0"),
                 "不足窗口上限：无更早消息: " + stream);
-        assertTrue(stream.contains("id: 0\n") && stream.contains("id: 1\n"),
-                "窗口未截断时事件帧从 0 起全量: " + stream);
+        assertTrue(stream.contains("\"sessionId\":\"" + session.id() + "\""),
+                "start 帧回带会话 id（M26-06 前端第二道核对）: " + stream);
+        assertTrue(stream.contains("id: " + session.id() + "#0\n") && stream.contains("id: " + session.id() + "#1\n"),
+                "窗口未截断时事件帧从 0 起全量（复合游标 id，M26-06）: " + stream);
         assertTrue(stream.contains("user/message") && stream.contains("assistant/message"), "事件内容在场");
         assertTrue(stream.contains("\"type\":\"replay/done\""), "边界帧在场");
         // 边界帧自带帧头（\n\ndata: 紧跟 JSON）：若被加上 id 行则格式变为 \n\nid: N\ndata: ...
@@ -1302,11 +1304,11 @@ class WebFaceTest {
         assertTrue(stream.contains("\"mode\":\"tail-snapshot\""), "尾部快照模式: " + stream);
         assertTrue(stream.contains("\"hasMore\":true") && stream.contains("\"earlierCount\":10"),
                 "窗口被截断：头帧携截断信息: " + stream);
-        assertTrue(stream.contains("id: 10\n"), "首帧从边界事件（下标 10）起: " + stream);
-        assertTrue(!stream.contains("id: 9\n"), "边界之前的事件不下发: " + stream);
+        assertTrue(stream.contains("id: " + session.id() + "#10\n"), "首帧从边界事件（下标 10）起: " + stream);
+        assertTrue(!stream.contains("id: " + session.id() + "#9\n"), "边界之前的事件不下发: " + stream);
         assertTrue(stream.contains("问5") && stream.contains("答5"), "窗口首条消息（消息序数 10）在场");
         assertTrue(!stream.contains("问4") && !stream.contains("答4"), "窗外消息（消息 0-9）不出现");
-        assertTrue(stream.contains("id: 59\n"), "末帧到日志末尾: " + stream);
+        assertTrue(stream.contains("id: " + session.id() + "#59\n"), "末帧到日志末尾: " + stream);
     }
 
     @Test
@@ -1319,34 +1321,56 @@ class WebFaceTest {
         start(session, scriptedAgent(session, "ok"));
 
         String stream;
-        try (SseCollector sse = openSse("1")) {
+        try (SseCollector sse = openSse(session.id() + "#1")) {
             stream = sse.awaitText(800);
         }
 
         assertTrue(stream.contains("\"type\":\"replay/start\",\"mode\":\"incremental\""),
-                "带游标为增量模式: " + stream);
-        assertTrue(stream.contains("id: 2\n"), "补发游标之后的事件: " + stream);
-        assertTrue(!stream.contains("id: 0\n") && !stream.contains("id: 1\n"), "存量不重发: " + stream);
+                "带复合游标（会话id#序号，M26-06）为增量模式: " + stream);
+        assertTrue(stream.contains("id: " + session.id() + "#2\n"), "补发游标之后的事件: " + stream);
+        assertTrue(!stream.contains("id: " + session.id() + "#0\n") && !stream.contains("id: " + session.id() + "#1\n"),
+                "存量不重发: " + stream);
         assertTrue(stream.contains("第二问"), "补发内容为缺失段");
         assertTrue(!stream.contains("第一问") && !stream.contains("第一答"), "已渲染历史不重发");
     }
 
     @Test
+    void sseLegacyBareCursorNoLongerIncremental() throws Exception {
+        // M26-06 复合游标协议：裸数字（旧形态）不再作有效续播凭据——回退尾部快照重对齐
+        Session session = Session.create(tempDir.resolve("sessions"));
+        session.append(SessionEvent.userMessage("第一问"));
+        session.append(SessionEvent.assistantMessage("第一答"));
+        session.append(SessionEvent.userMessage("第二问"));
+        start(session, scriptedAgent(session, "ok"));
+
+        String stream;
+        try (SseCollector sse = openSse("1")) {
+            stream = sse.awaitText(800);
+        }
+
+        assertTrue(stream.contains("\"mode\":\"tail-snapshot\""),
+                "裸数字游标回退尾部快照（不再增量续播）: " + stream);
+        assertTrue(stream.contains("第一问"), "重对齐含完整尾部窗口");
+    }
+
+    @Test
     void sseOutOfRangeOrInvalidCursorFallsBackToTailSnapshot() throws Exception {
-        // 游标越界 / 非法 → 尾部窗口快照兜底（与首连同路径，ADR-0013）
+        // 游标越界 / 非法 / 跨会话 → 尾部窗口快照兜底（与首连同路径，ADR-0013）；
+        // M26-06：别会话的复合游标（换绑/重启后重连携旧书签）整体作废重对齐，不静默错位续播
         Session session = Session.create(tempDir.resolve("sessions"));
         session.append(SessionEvent.userMessage("第一问"));
         session.append(SessionEvent.assistantMessage("第一答"));
         start(session, scriptedAgent(session, "ok"));
 
-        for (String cursor : List.of("99", "abc", "-3")) {
+        String sid = session.id();
+        for (String cursor : List.of(sid + "#99", sid + "#abc", "20260101-000000-9999#0")) {
             String stream;
             try (SseCollector sse = openSse(cursor)) {
                 stream = sse.awaitText(600);
             }
             assertTrue(stream.contains("\"mode\":\"tail-snapshot\""),
                     "游标 " + cursor + " 回退尾部快照: " + stream);
-            assertTrue(stream.contains("id: 0\n") && stream.contains("id: 1\n"),
+            assertTrue(stream.contains("id: " + sid + "#0\n") && stream.contains("id: " + sid + "#1\n"),
                     "游标 " + cursor + " 按尾部窗口重发: " + stream);
         }
     }
@@ -1362,7 +1386,7 @@ class WebFaceTest {
             sse.awaitText(300); // 空会话回放完成
             session.append(SessionEvent.userMessage("实时消息"));
             String stream = sse.awaitText(600);
-            assertTrue(stream.contains("id: 0\n"), "实时帧带序号: " + stream);
+            assertTrue(stream.contains("id: " + session.id() + "#0\n"), "实时帧带复合游标 id（M26-06）: " + stream);
             assertTrue(stream.contains("实时消息"), "实时帧内容在场: " + stream);
         }
     }
@@ -1378,9 +1402,11 @@ class WebFaceTest {
         start(session, scriptedAgent(session, "ok"));
 
         com.fasterxml.jackson.databind.JsonNode page = new ObjectMapper().readTree(
-                get("/api/session/page?before=60"));
+                get("/api/session/page?before=60&sid=" + session.id()));
 
         org.junit.jupiter.api.Assertions.assertEquals(10, page.get("startEvent").asInt(), "窗口起点");
+        org.junit.jupiter.api.Assertions.assertEquals(session.id(), page.get("sessionId").asText(),
+                "响应回带会话 id（M26-06 前端第二道核对）");
         org.junit.jupiter.api.Assertions.assertEquals(50, page.get("events").size(), "每页 50 条事件");
         org.junit.jupiter.api.Assertions.assertTrue(page.get("hasMore").asBoolean(), "仍有更早历史");
         org.junit.jupiter.api.Assertions.assertEquals(10, page.get("earlierCount").asInt(), "更早计数");
@@ -1399,7 +1425,7 @@ class WebFaceTest {
         start(session, scriptedAgent(session, "ok"));
 
         com.fasterxml.jackson.databind.JsonNode page = new ObjectMapper().readTree(
-                get("/api/session/page?before=10"));
+                get("/api/session/page?before=10&sid=" + session.id()));
 
         org.junit.jupiter.api.Assertions.assertEquals(0, page.get("startEvent").asInt(), "不足一页 → 从 0 起");
         org.junit.jupiter.api.Assertions.assertEquals(10, page.get("events").size());
@@ -1412,9 +1438,14 @@ class WebFaceTest {
                 Session session = Session.create(tempDir.resolve("sessions"));
         start(session, scriptedAgent(session, "ok"));
 
-        assertEquals(400, fetch("/api/session/page?before=abc").statusCode(), "非数字 before");
-        assertEquals(400, fetch("/api/session/page?before=1").statusCode(), "越界 before（空会话上界为 0）");
-        assertEquals(400, fetch("/api/session/page").statusCode(), "缺 before 参数");
+        String sid = session.id();
+        assertEquals(400, fetch("/api/session/page?before=abc&sid=" + sid).statusCode(), "非数字 before");
+        assertEquals(400, fetch("/api/session/page?before=1&sid=" + sid).statusCode(), "越界 before（空会话上界为 0）");
+        assertEquals(400, fetch("/api/session/page?sid=" + sid).statusCode(), "缺 before 参数");
+        assertEquals(400, fetch("/api/session/page?before=0").statusCode(),
+                "缺 sid（M26-06 复合游标协议）：旧形态裸 before 不再受理");
+        assertEquals(409, fetch("/api/session/page?before=0&sid=20260101-000000-xxxx").statusCode(),
+                "sid 属别会话（换绑后在途翻页）：明确失效而非装错数据（M26-06）");
     }
 
     @Test
@@ -1427,9 +1458,10 @@ class WebFaceTest {
         }
         start(session, scriptedAgent(session, "ok"));
 
-        com.fasterxml.jackson.databind.JsonNode first = new ObjectMapper().readTree(get("/api/session/page?before=60"));
+        com.fasterxml.jackson.databind.JsonNode first = new ObjectMapper().readTree(
+                get("/api/session/page?before=60&sid=" + session.id()));
         com.fasterxml.jackson.databind.JsonNode second = new ObjectMapper().readTree(
-                get("/api/session/page?before=" + first.get("startEvent").asInt()));
+                get("/api/session/page?before=" + first.get("startEvent").asInt() + "&sid=" + session.id()));
 
         org.junit.jupiter.api.Assertions.assertEquals(60,
                 first.get("events").size() + second.get("events").size(), "两页拼回全量 60 条");

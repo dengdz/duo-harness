@@ -488,12 +488,12 @@ public final class WebFace {
         return defaultTab.session;
     }
 
-    /** 会话事件广播（按标签路由，M24 工单 07）：帧带日志序号 id——浏览器以最后收到的
-     * id 作重连游标（ADR-0010）；只有绑定该会话的标签连接能收到（A 标签的卡片不弹到 B）。 */
+    /** 会话事件广播（按标签路由，M24 工单 07）：帧带复合游标 id（会话id#日志序号，M26-06）
+     * ——浏览器以最后收到的 id 作重连游标（ADR-0010）；只有绑定该会话的标签连接能收到（A 标签的卡片不弹到 B）。 */
     private void pushSessionEvent(int index, SessionEvent event, TabContext tab) {
         // 序号由会话在写入处随回调给出（不从日志末尾反推——并发追加下反推会错位）
         String frame = toJson(event);
-        broadcast(client -> client.send(dataFrameWithId(index, frame)), tab.tabId);
+        broadcast(client -> client.send(dataFrameWithId(tab.session.id(), index, frame)), tab.tabId);
     }
 
     /** 非会话帧广播（run/error 等直推帧）：帧不带序号，契约见 {@link #dataFrame}；按发起标签路由。 */
@@ -1347,6 +1347,18 @@ public final class WebFace {
         if (tab == null) {
             return;
         }
+        String sid = queryParam(exchange, "sid");
+        if (sid.isEmpty()) {
+            // 复合游标协议（M26-06）：分页请求必须绑定会话——旧形态裸 before 不再受理（同包发布一步切）
+            respondEmpty(exchange, 400);
+            return;
+        }
+        Session bound = tab.session;
+        if (!sid.equals(bound.id())) {
+            // 游标属于别的会话（换绑后在途翻页）：明确失效而非装错数据——前端收 409 丢弃整页重对齐
+            respondEmpty(exchange, 409);
+            return;
+        }
         int before;
         try {
             before = Integer.parseInt(queryParam(exchange, "before"));
@@ -1354,7 +1366,6 @@ public final class WebFace {
             respondEmpty(exchange, 400);
             return;
         }
-        Session bound = tab.session;
         List<SessionEvent> events = bound.events();
         if (before < 0 || before > events.size()) {
             respondEmpty(exchange, 400);
@@ -1362,6 +1373,7 @@ public final class WebFace {
         }
         Session.TailWindow window = bound.windowBefore(before, pageSize); // 首屏/每页同值（ADR-0013）
         var root = JSON.createObjectNode()
+                .put("sessionId", bound.id()) // 响应回带（M26-06）：前端第二道核对——不符即整页丢弃
                 .put("startEvent", window.startEvent())
                 .put("hasMore", window.earlierMessages() > 0)
                 .put("earlierCount", window.earlierMessages());
@@ -1444,12 +1456,14 @@ public final class WebFace {
             // 连接观测：回放模式与游标——诊断重连行为（断线重连应见 incremental）
             log.debug("SSE 连接：模式={}，游标={}，事件数={}", window.mode(), cursor, events.size());
             var header = JSON.createObjectNode().put("type", "replay/start").put("mode", window.mode());
+            // 响应回带会话 id（M26-06）：前端核对不符即丢弃——复合游标的第二道防线
+            header.put("sessionId", bound.id());
             if (window.tailSnapshot()) {
                 header.put("hasMore", window.hasMore()).put("earlierCount", window.earlierCount());
             }
             client.send(dataFrame(header.toString()));
             for (int i = window.from(); i < events.size(); i++) {
-                client.send(dataFrameWithId(i, toJson(events.get(i))));
+                client.send(dataFrameWithId(bound.id(), i, toJson(events.get(i))));
             }
             client.send(dataFrame("{\"type\":\"replay/done\"}"));
         } catch (Exception e) {
@@ -1516,21 +1530,26 @@ public final class WebFace {
                                 boolean hasMore, int earlierCount) { }
 
     /**
-     * 解析重连游标决定回放窗口：游标合法且落在日志范围内 → 只补其后事件（增量，ADR-0010）；
-     * 无游标或游标非法/越界 → 尾部窗口快照（ADR-0013）——投影取尾部页长（config.pageSize 可配，M19）
-     * 条消息的事件区间，头帧带 hasMore（是否还有更早消息）与更早计数。日志 append-only、
-     * 治理为纯读侧（不改编号），越界游标只见于跨会话误用——按首连同样兜底。
+     * 解析重连游标决定回放窗口（M26-06 复合游标）：游标为复合形态「会话id#序号」——
+     * 会话 id 与当前绑定相等且序号落在日志范围内 → 只补其后事件（增量，ADR-0010）；
+     * 别会话的游标（换绑/服务重启后重连携旧书签）整体作废 → 尾部窗口快照重对齐
+     * （ADR-0013），不再静默从错误位置续播；无游标、复合段非法/越界、或裸数字
+     * （旧形态，不再作有效续播凭据）→ 同样尾部快照兜底。日志 append-only、治理为
+     * 纯读侧（不改编号），序号越界只见于游标陈旧——按重对齐处理。
      */
     private static ReplayWindow resolveReplayWindow(String cursor, List<SessionEvent> events,
                                                     Session bound, int pageSize) {
         if (cursor != null && !cursor.isBlank()) {
-            try {
-                int parsed = Integer.parseInt(cursor.strip());
-                if (parsed >= 0 && parsed < events.size()) {
-                    return new ReplayWindow(parsed + 1, "incremental", false, false, 0);
+            int hash = cursor.indexOf('#');
+            if (hash > 0 && cursor.substring(0, hash).equals(bound.id())) {
+                try {
+                    int parsed = Integer.parseInt(cursor.substring(hash + 1).strip());
+                    if (parsed >= 0 && parsed < events.size()) {
+                        return new ReplayWindow(parsed + 1, "incremental", false, false, 0);
+                    }
+                } catch (NumberFormatException ignored) {
+                    // 序号段非法按无游标处理（尾部快照兜底）
                 }
-            } catch (NumberFormatException ignored) {
-                // 非法游标按无游标处理（尾部快照兜底）
             }
         }
         Session.TailWindow tail = bound.tailWindow(pageSize);
@@ -1547,9 +1566,13 @@ public final class WebFace {
         return "data: " + payload.replace("\n", "\ndata: ") + "\n\n";
     }
 
-    /** 会话事件帧：带日志序号 id——浏览器重连自动以 Last-Event-ID 回传作游标（ADR-0010）。 */
-    private static String dataFrameWithId(int id, String payload) {
-        return "id: " + id + "\n" + dataFrame(payload);
+    /**
+     * 会话事件帧：带复合游标 id（「会话id#日志序号」，M26-06）——浏览器重连以
+     * Last-Event-ID 原样回传，服务端经 {@link #resolveReplayWindow} 校验会话绑定后
+     * 才作增量凭据（防换绑/重启后旧游标错位续播；复合游标与双侧核对见 ADR-0028 拒绝的选项段）。
+     */
+    private static String dataFrameWithId(String sessionId, int id, String payload) {
+        return "id: " + sessionId + "#" + id + "\n" + dataFrame(payload);
     }
 
     private String toJson(SessionEvent event) {

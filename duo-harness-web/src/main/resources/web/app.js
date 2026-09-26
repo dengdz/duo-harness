@@ -81,8 +81,9 @@ const api = {
     if (!res.ok) throw new Error((await res.text().catch(() => '')) || ('检索失败（HTTP ' + res.status + '）'));
     return res.json();
   },
-  async page(before) {
-    const res = await fetch('/api/session/page?before=' + before);
+  async page(before, sid) {
+    // sid = 会话绑定（M26-06 复合游标）：服务端核对游标属于当前会话，409 即整页作废
+    const res = await fetch('/api/session/page?before=' + before + '&sid=' + encodeURIComponent(sid));
     if (!res.ok) throw new Error('分页请求失败（HTTP ' + res.status + '）');
     return res.json();
   },
@@ -787,11 +788,13 @@ const sse = (() => {
   // 整窗替换（tail-snapshot 头帧）后重置重记
   let oldestLoaded = null;
   let replaying = true; // 头帧与 done 帧之间为回放：状态面刷新合并到 done 一次（防逐帧 fetch 风暴）
+  let frameSession = ''; // 当前流所属会话（M26-06）：replay/start 帧学习——事件帧 id 前缀不符即丢弃
 
   function handle(event) {
     if (event.type === 'replay/start') {
       // 尾部窗口快照（首连/刷新/切换，ADR-0013）→ 整窗替换并记录窗口头（分页/无刷新切换消费）；
       // 增量（断线补齐）→ 保留页面已有内容（ADR-0010）
+      if (event.sessionId) frameSession = event.sessionId; // 换绑重连：学习新会话（M26-06）
       if (event.mode === 'tail-snapshot') {
         render.resetForReplay();
         oldestLoaded = null;
@@ -841,7 +844,11 @@ const sse = (() => {
       app.clearSendBusy(); // 断线期间可能错过解除帧——连接建立即复位
     };
     source.onmessage = (e) => {
-      const id = parseInt(e.lastEventId, 10);
+      // 复合游标帧 id（M26-06）：「会话id#序号」——序号段更新锚点；会话段与 start 帧
+      // 学得的 frameSession 不符即丢弃该帧（防串台第二道防线，主力校验在服务端）
+      const m = /^([^#]+)#(\d+)$/.exec(e.lastEventId || '');
+      if (m && frameSession && m[1] !== frameSession) return;
+      const id = m ? Number(m[2]) : NaN;
       if (!Number.isNaN(id) && (oldestLoaded === null || id < oldestLoaded)) oldestLoaded = id;
       try {
         handle(JSON.parse(e.data));
@@ -1502,8 +1509,9 @@ const app = (() => {
     loadingEarlier = true;
     const epoch = windowEpoch;
     try {
-      const data = await api.page(before);
+      const data = await api.page(before, currentSessionId);
       if (epoch !== windowEpoch) return; // 加载期间窗口被整窗替换：结果过期丢弃
+      if (data.sessionId !== currentSessionId) return; // M26-06：响应不属于当前会话（换绑后在途）——整页丢弃
       render.prependEvents(data.events);
       sse.setOldest(data.startEvent); // 锚点推进到新窗首事件：下次翻页取上一页而非重复本页
       setTailWindow({ hasMore: data.hasMore, earlierCount: data.earlierCount });
