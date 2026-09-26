@@ -91,3 +91,11 @@
 | 1 | ~~会话检索为内存倒排索引，量级有边界~~ **已销账（M26-02，ADR-0028 决策一）** | 两半均落地：①引擎转 SQLite FTS5（`FtsSessionIndex`，派生只读索引库落会话目录、懒构建 + mtime/size 戳增量、schema 不符/损坏就地重建，全文与词表不再常驻内存）——`SessionQueryService` 接口语义零改动兑现（契约测试基类机器验证）；②活跃会话经 `Session.heldSession` 注册表 live 供数入检索（文件不再被索引触碰，POSIX 陷阱根源消除）。残余口径：分词仍为英文整词 + 中文逐字（无词典），跨字噪音命中仍可能——FTS5 形态下以入库预分词 + 短语加权保持同语义（ADR-0028 决策一） |
 | 2 | 治理 token 估算不含图片 | 上下文治理的估算口径只计文本（图片 token 数 provider 间差异大且无本地 tokenizer）；视觉会话的真实占用由 provider 实测 usage 侧自然覆盖（计量切真实 usage，ADR-0009）——估算线在纯视觉轮次下会显著低估，压缩触发点可能滞后 |
 | 3 | Files API 投递仅 DeepSeek 形态端点，file_id 失效不自动重传 | `imageDelivery: files` 已接线（上传换 file_id、本地索引去重、配额满回收最旧自有文件重试、上传失败回退 inline）；但端点形态仅 DeepSeek（`POST {base}/files`），非 DeepSeek 部署用缺省 inline；provider 侧 file_id 失效时该轮报错——清理 `cache/attachments/files-index.json` 后重发即自然重传（ADR-0022 决策 5） |
+
+## M26（0.21.0）
+
+| # | 限制 | 说明与去向 |
+|---|---|---|
+| 1 | 会话 JSONL 无撕裂恢复与行校验和 | 崩溃恰好落在半行写入时，该行无校验和可判损坏（DSH 点名的 duo 缺口）：load 侧按坏行 fail-loud/跳过兜底、检索侧坏行跳过，但无法区分"损坏"与"格式非法"。M26-05 的变更摘要对账也不校验行完整性。来源：M26 立项 Out of Scope 显式排除（spec Further Notes）；升级路径 = 行级 CRC + 尾半行检测，随会话文件格式 v2（迁移链已就位）一并评估 |
+| 2 | 变更摘要的未跟踪文件基线盲区 | git 对账以"首拍未跟踪集 − 终态未跟踪集"识别新增文件——会话开始前已未跟踪、会话中被修改的文件不进对账行（只出现在工具记录注记）；untracked 清单存内存，进程重启后 resume 会话整体退化为工具记录形态。来源：M26-05 实现口径（工单 Comments 记档）；升级路径 = 基线快照落盘（随会话元数据） |
+| 3 | resume 会话的变更摘要无行数 | 会话首拍只在空会话绑定时进行（resume 的"开始"在历史进程不可得），resume 会话导出退化为 write/edit 工具记录清单（有文件无行数）。来源：M26-05 实现口径（工单 Comments 记档）；升级路径 = 快照随会话文件持久化（格式 v2 一并评估） |
