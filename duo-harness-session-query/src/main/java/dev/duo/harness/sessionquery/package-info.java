@@ -1,7 +1,10 @@
 /**
- * 会话检索域（M21，ADR-0022 决策 8）：后端无关的会话全文检索服务——一期
- * 纯 Java 内存倒排索引（懒构建首次搜索才扫 + 文件 mtime/size 增量；分词 AND +
- * snippet 高亮），接口语义对齐 FTS5 形态防后期转 SQLite 的切换漂移。
+ * 会话检索域（M21 立，ADR-0022 决策 8；M26-02 起 SQLite FTS5 引擎，ADR-0028 决策一）：
+ * 后端无关的会话全文检索服务——{@link FtsSessionIndex} 引擎（派生只读索引库
+ * index.db：懒构建 + 文件 mtime/size 增量 + schema 不符/损坏就地重建；查询字面化，
+ * 分词 AND + snippet 高亮由 {@link SessionTextMatcher} 单一实现）+ 活跃会话
+ * live 内存供数（不经索引文件，POSIX 属主锁零风险）。接口语义即一期契约，
+ * 契约测试基类（SessionQueryServiceContractTest）机器验证换引擎上层零改动。
  *
  * <p>索引内容对齐 DSH 清单：消息文本 / tool 调用名+参数 / tool 结果 / todo /
  * turn 错误；reasoning 与其余治理事件不入索引（{@link EventTextExtractor}

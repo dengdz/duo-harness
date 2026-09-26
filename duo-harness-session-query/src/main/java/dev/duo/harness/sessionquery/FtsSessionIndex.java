@@ -55,6 +55,12 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
     /** 库文件名（置于会话目录内——目录扫描只认 *.jsonl，互不干扰；删库即重建）。 */
     private static final String DB_FILE = "index.db";
 
+    /** 会话文件后缀（目录扫描与 live 路径共用，不做字面量重复）。 */
+    private static final String JSONL_SUFFIX = ".jsonl";
+
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(FtsSessionIndex.class);
+
     private final Path sessionsDir;
     private final Path dbFile;
     private final Object lock = new Object();
@@ -139,12 +145,16 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
         return opened;
     }
 
-    /** 损坏自愈：删库文件后从零重建（派生层的重建承诺）；再失败才 fail-loud。 */
+    /** 损坏自愈：删库文件（含 WAL/SHM 边车——孤儿 WAL 会在重建库上重放致损坏，
+     * SQLite 官方要求三者同删）后从零重建；再失败才 fail-loud。 */
     private Connection rebuildFromScratch(Throwable cause) {
+        log.warn("索引库不可用，就地重建: {}", dbFile, cause);
         closeQuietly(conn);
         conn = null;
         try {
             Files.deleteIfExists(dbFile);
+            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName() + "-wal"));
+            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName() + "-shm"));
             Files.createDirectories(sessionsDir);
         } catch (IOException e) {
             throw new PluginException("索引库损坏且删除失败: " + dbFile, e);
@@ -217,20 +227,23 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
     private List<String> refreshLocked() {
         List<String> liveIds = new ArrayList<>();
         if (!Files.isDirectory(sessionsDir)) {
-            execQuiet("DELETE FROM doc_meta; DELETE FROM sessions");
+            execQuiet("DELETE FROM doc_meta", "DELETE FROM sessions"); // 独立语句——不依赖多语句执行语义
             return liveIds; // 目录缺席（首次启动未建）：空索引
         }
         Map<String, long[]> indexed = indexedStamps();
         java.util.Set<String> seen = new java.util.HashSet<>();
         try (var list = Files.list(sessionsDir)) {
             for (Path path : list.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
-                String id = path.getFileName().toString().replace(".jsonl", "");
+                    .filter(p -> p.getFileName().toString().endsWith(JSONL_SUFFIX)).toList()) {
+                String id = path.getFileName().toString().replace(JSONL_SUFFIX, "");
                 seen.add(id);
                 if (Session.heldByThisProcess(path)) {
                     // 活跃会话：不入库（文件不可触碰，POSIX 锁释放陷阱），摘除陈旧库条目；
-                    // 内容经 heldSession 注册表走 live 内存匹配
-                    removeSessionQuiet(id);
+                    // 内容经 heldSession 注册表走 live 内存匹配。仅在既有索引在场时才删——
+                    // 每次搜索对活跃会话空转 DELETE 是无谓的 WAL 写放大
+                    if (indexed.containsKey(id)) {
+                        removeSessionQuiet(id);
+                    }
                     liveIds.add(id);
                     continue;
                 }
@@ -242,10 +255,10 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                         continue; // 戳未变：沿用既有索引
                     }
                     reindex(id, path, mtime, size);
-                } catch (IOException e) {
-                    // 单文件读取失败跳过：检索是尽力而为的读放大路径，不炸穿搜索
-                } catch (SQLException e) {
-                    throw new PluginException("会话索引重建失败: " + id, e);
+                } catch (IOException | SQLException e) {
+                    // 单文件失败跳过：检索是尽力而为的读放大路径，不炸穿搜索
+                    // （陈旧/缺席索引随下次对账重试；栈进日志可观测）
+                    log.warn("会话索引重建跳过: {}", id, e);
                 }
             }
         } catch (IOException e) {
@@ -286,10 +299,13 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                 ps.executeUpdate();
             }
             conn.commit();
-            conn.setAutoCommit(true);
         } catch (SQLException e) {
             rollbackQuiet();
-            // 摘除失败保留陈旧条目（下次对账重试），不炸穿搜索
+            // 摘除失败保留陈旧条目（下次对账重试），不炸穿搜索；栈进日志可观测
+            log.warn("会话索引摘除失败: {}", id, e);
+        } finally {
+            // 置位/复位对称：失败路径不得滞留手动提交态（否则后续写落入永不提交的事务）
+            restoreAutoCommitQuiet();
         }
     }
 
@@ -382,8 +398,6 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                     node.path("at").asLong(),
                     node.path("text").asText(""),
                     nameNode == null || nameNode.isNull() ? null : nameNode.asText());
-        } catch (IOException e) {
-            throw e;
         } catch (RuntimeException e) {
             throw new IOException("事件行解析失败", e);
         }
@@ -474,7 +488,7 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                                         List<String> phrases) {
         List<SessionHit> hits = new ArrayList<>();
         for (String id : liveIds) {
-            Session live = Session.heldSession(sessionsDir.resolve(id + ".jsonl"));
+            Session live = Session.heldSession(sessionsDir.resolve(id + JSONL_SUFFIX));
             if (live == null) {
                 continue; // 对账与匹配之间被关闭：本次跳过，下次对账自然回库
             }

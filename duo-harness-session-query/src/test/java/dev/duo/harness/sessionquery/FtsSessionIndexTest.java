@@ -22,7 +22,10 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：FtsSessionIndexTest —— FTS5 引擎：契约 15 用例全量继承（AND/每会话一条/排序/snippet/坏行/白名单/limit/目录缺席/并发安全）+ 特有 7 面：live 供数（活跃会话可搜，M21#1 消除）、schema 不符重建、库损坏自愈、字面化防注入、表达式与预分词纯函数、版本头对齐（22 用例） ===");
+        System.out.println("\n=== 套件：FtsSessionIndexTest —— FTS5 引擎：契约 17 用例全量继承"
+                + "（AND/逐字/每会话一条/短语加权/排序含 mtime 并列/snippet/坏行/白名单/整词大小写/limit/目录缺席/并发安全）"
+                + "+ 特有 9 面：live 供数（M21#1 消除）、schema 不符重建、库损坏自愈、字面化防注入、"
+                + "增量拾取与摘除、subagents 目录不索引、表达式与预分词纯函数、版本头对齐（26 用例） ===");
     }
 
     @Override
@@ -103,7 +106,8 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
 
     @Test
     void ftsSyntaxInQueryIsLiteralNotExecuted() throws Exception {
-        // 模型 query 字面化：FTS5 语法字符（引号/OR/括号/星号）不执行语法、不报错
+        // 模型 query 字面化：FTS5 语法字符（引号/OR/括号/星号）不执行语法、不报错；
+        // OR/NEAR 等语法词按普通词元参与 AND——本例词元无全命中，空结果
         Path sessions = liveDir.resolve("sessions");
         Files.createDirectories(sessions);
         writeEvent(sessions.resolve("20260926-170000-0003.jsonl"),
@@ -111,10 +115,41 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
 
         try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
             List<SessionHit> hits = index.search("梅\"花 OR (梅*) NEAR", 8);
-            assertTrue(hits.isEmpty() || hits.size() <= 1,
-                    "语法字符按字面处理：不炸、不误扩（本例无完整词元命中）");
+            assertTrue(hits.isEmpty(),
+                    "语法字符按字面处理：OR/NEAR 成普通词元参与 AND，本例无完整命中: " + hits);
             // 纯语法字符查询：无有效词元，空结果
             assertTrue(index.search("\"\" OR AND ( ) *", 8).isEmpty());
+        }
+    }
+
+    @Test
+    void incrementalRefreshPicksUpAndDropsFiles() throws Exception {
+        // 增量对账（审查补覆盖——checklist「增量刷新」的机器验证）：追加事件拾取、删文件摘除
+        Path sessions = liveDir.resolve("sessions");
+        Files.createDirectories(sessions);
+        Path jsonl = sessions.resolve("20260926-170000-0010.jsonl");
+        writeEvent(jsonl, "user/message", 1, "首轮内容马蹄莲");
+
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+            assertEquals(1, index.search("马蹄莲", 8).size(), "首轮收录");
+            writeEvent(jsonl, "user/message", 2, "次轮内容鹤望兰");
+            assertEquals(1, index.search("鹤望兰", 8).size(), "mtime/size 戳变化 → 增量拾取新事件");
+            Files.delete(jsonl);
+            assertTrue(index.search("马蹄莲", 8).isEmpty(), "文件消失 → 索引摘除");
+        }
+    }
+
+    @Test
+    void subagentDirectoryNotIndexed() throws Exception {
+        // 子代理会话不入检索（sessions/subagents/ 子目录，与一期口径一致）
+        Path sessions = liveDir.resolve("sessions");
+        Path sub = sessions.resolve("subagents");
+        Files.createDirectories(sub);
+        writeEvent(sub.resolve("20260926-170000-0011.jsonl"),
+                "user/message", 1, "子代理目录里的独有词虞美人");
+
+        try (FtsSessionIndex index = new FtsSessionIndex(sessions)) {
+            assertTrue(index.search("虞美人", 8).isEmpty(), "subagents/ 子目录不索引");
         }
     }
 

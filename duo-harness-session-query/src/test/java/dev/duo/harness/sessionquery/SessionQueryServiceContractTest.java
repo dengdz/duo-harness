@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * SessionQueryService 契约用例集（M26-02 接缝 1）：把接口 javadoc 的语义契约
  * 钉成可执行用例——多词 AND、每会话至多一条最强命中、排序（分数降序并列
- * mtime 降序）、snippet 形态、坏行跳过、白名单、limit 契约、并发安全（15 用例）。实现类继承本基类
+ * mtime 降序）、snippet 形态、坏行跳过、白名单、limit 契约、mtime 并列、整词大小写、并发安全（17 用例）。实现类继承本基类
  * 执行（「转实现上层零改动」承诺的机器验证）；用例不引用任何实现类。
  */
 abstract class SessionQueryServiceContractTest {
@@ -122,6 +122,36 @@ abstract class SessionQueryServiceContractTest {
         List<SessionHit> hits = createIndex(sessionsDir()).search("苹果", 8);
         assertEquals(2, hits.size());
         assertEquals("20260926-160000-0008", hits.get(0).sessionId(), "分数降序");
+    }
+
+    @Test
+    void scoreTieBreaksByNewerMtime() throws IOException {
+        // 排序条款后半句：分数并列按会话最近修改时间降序
+        Path older = session("20260926-160000-0301");
+        appendEvent(older, "user/message", 1, "苹果", null, null, null);
+        try {
+            Thread.sleep(20); // mtime 可区分
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        Path newer = session("20260926-160000-0302");
+        appendEvent(newer, "user/message", 2, "苹果", null, null, null);
+
+        List<SessionHit> hits = createIndex(sessionsDir()).search("苹果", 8);
+        assertEquals(2, hits.size());
+        assertEquals("20260926-160000-0302", hits.get(0).sessionId(),
+                "分数并列时新会话排前（mtime 降序）");
+    }
+
+    @Test
+    void englishWordMatchingIsWholeWordCaseInsensitive() throws IOException {
+        Path a = session("20260926-160000-0105");
+        appendEvent(a, "user/message", 1, "The MainClass uses PostgreSQL", null, null, null);
+
+        SessionQueryService index = createIndex(sessionsDir());
+        assertEquals(1, index.search("mainclass", 8).size(), "大小写不敏感（小写查询命中文内驼峰）");
+        assertEquals(1, index.search("PostgreSQL", 8).size(), "整词命中（查询原大小写亦可）");
+        assertTrue(index.search("ostgres", 8).isEmpty(), "词中片段不命中（整词语义）");
     }
 
     @Test

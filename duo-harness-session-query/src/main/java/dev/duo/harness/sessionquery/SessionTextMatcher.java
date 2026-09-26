@@ -9,8 +9,9 @@ import java.util.regex.Pattern;
  * 检索精算与 snippet 工具（M26-02 自内存倒排实现迁出）：词频计分、汉字原词短语
  * 加权、就近窗口摘录——FTS5 候选精算与活跃会话的 live 内存匹配共用同一套
  * 语义（SessionQueryService 契约的排序与 snippet 条款在此单一实现）。
+ * 仅被本包 {@link FtsSessionIndex} 消费，包私有。
  */
-public final class SessionTextMatcher {
+final class SessionTextMatcher {
 
     /** snippet 窗口：首个命中前 60 字符、窗口总量 160 字符（截断以 … 标注）。 */
     static final int SNIPPET_BEFORE = 60;
@@ -20,7 +21,7 @@ public final class SessionTextMatcher {
     static final int PHRASE_WEIGHT = 1_000;
 
     /** 精算候选：FTS 候选行或 live 事件的统一形态。 */
-    public record Candidate(int eventIndex, String type, long at, String text) {
+    record Candidate(int eventIndex, String type, long at, String text) {
     }
 
     private SessionTextMatcher() {
@@ -33,9 +34,9 @@ public final class SessionTextMatcher {
      *
      * @return 该会话的命中；候选无一有正分为 null
      */
-    public static SessionHit best(String sessionId, String title, long lastModifiedMs,
-                                  List<Candidate> candidates, List<String> tokens,
-                                  List<String> phrases) {
+    static SessionHit best(String sessionId, String title, long lastModifiedMs,
+                           List<Candidate> candidates, List<String> tokens,
+                           List<String> phrases) {
         Candidate best = null;
         int bestScore = 0;
         for (Candidate candidate : candidates) {
@@ -64,7 +65,7 @@ public final class SessionTextMatcher {
     }
 
     /** AND 预检（live 内存路径）：文本是否包含全部查询词（英文整词边界、汉字字面）。 */
-    public static boolean containsAllTokens(String text, List<String> tokens) {
+    static boolean containsAllTokens(String text, List<String> tokens) {
         for (String token : tokens) {
             if (countOccurrences(text, token) == 0) {
                 return false;
@@ -115,13 +116,19 @@ public final class SessionTextMatcher {
         return count;
     }
 
+    /** token 匹配器缓存：精算按候选×词元反复计数，Pattern.compile 只做一次（编译放大消除）。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Pattern> PATTERN_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     /** token 的匹配器：英文词带边界环视，汉字字面（分词规则两侧同口径）。 */
     private static Pattern tokenPattern(String token) {
-        if (token.chars().allMatch(c -> c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_')) {
-            return Pattern.compile("(?<![a-zA-Z0-9_])" + Pattern.quote(token) + "(?![a-zA-Z0-9_])",
-                    Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
-        }
-        return Pattern.compile(Pattern.quote(token));
+        return PATTERN_CACHE.computeIfAbsent(token, t -> {
+            if (t.chars().allMatch(c -> c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_')) {
+                return Pattern.compile("(?<![a-zA-Z0-9_])" + Pattern.quote(t) + "(?![a-zA-Z0-9_])",
+                        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+            }
+            return Pattern.compile(Pattern.quote(t));
+        });
     }
 
     /**
