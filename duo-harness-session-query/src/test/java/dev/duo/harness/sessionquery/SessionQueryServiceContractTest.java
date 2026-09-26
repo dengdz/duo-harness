@@ -27,7 +27,12 @@ abstract class SessionQueryServiceContractTest {
     @TempDir
     Path tempDir;
 
-    /** 被测实现工厂：子类提供（每个用例新建实例——懒构建契约从零验证）。 */
+    /**
+     * 被测实现工厂：子类提供（每个用例新建实例——懒构建契约从零验证）。
+     *
+     * @param cwd 授权边界（M26-03）：检索只出此目录的会话——契约用例的 fixture
+     *            头行 cwd 与此一致，边界本身由实现专属用例钉住
+     */
     abstract SessionQueryService createIndex(Path sessionsDir, Path cwd);
 
     private Path sessionsDir() {
@@ -57,7 +62,8 @@ abstract class SessionQueryServiceContractTest {
     private Path session(String id) throws IOException {
         Files.createDirectories(sessionsDir());
         Path jsonl = sessionsDir().resolve(id + ".jsonl");
-        Files.writeString(jsonl, "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + tempDir + "\"}\n");
+        Files.writeString(jsonl, dev.duo.harness.session.SessionFormat.headerLine(
+                dev.duo.harness.session.SessionFormat.CURRENT_VERSION, tempDir) + "\n");
         return jsonl;
     }
 

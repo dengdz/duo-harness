@@ -36,9 +36,10 @@ class FtsSessionIndexTest extends SessionQueryServiceContractTest {
     @TempDir
     Path liveDir;
 
-    /** 手造会话头行（cwd=liveDir——M26-03 授权边界内的可检索形态）。 */
+    /** 手造会话头行（cwd=liveDir——M26-03 授权边界内的可检索形态；SessionFormat 同源序列化）。 */
     private void writeHeader(Path jsonl) throws Exception {
-        Files.writeString(jsonl, "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + liveDir + "\"}\n",
+        Files.writeString(jsonl, dev.duo.harness.session.SessionFormat.headerLine(
+                        dev.duo.harness.session.SessionFormat.CURRENT_VERSION, liveDir) + "\n",
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
     }
 

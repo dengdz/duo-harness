@@ -10,7 +10,7 @@
 01, 02
 
 ## Status
-in-progress
+done（2026-09-26 用户双向对照验收通过——proj-a 启动只出项目A 会话、proj-b 启动只出项目B 会话、无头旧会话两头不出现，跨目录不串台直观得证；测试路径 27 用例绿；冒烟发现的路径形态边界已记档供审查轮）
 
 ## Comments
 
@@ -51,3 +51,32 @@ cd /tmp/duo-m26-03-accept/proj-a && DUO_HOME=/tmp/duo-m26-03-accept/home \
 | 两个方向对照 | 同一关键词、同一份会话目录，搜到的结果随启动目录切换——跨目录不串台 |
 
 **测试路径**：`mvn -pl duo-harness-session-query -am test`——FtsSessionIndexTest 27 用例绿。
+
+## 审查轮（2026-09-26·第 1 轮·四轴）
+
+**范围**：319ae11..HEAD（8 文件：主代码 2 + 测试 4 + CHANGELOG/工单）。**覆盖**：行级轴 2 主代码全 reviewed；Standards/Spec/Java 规范轴覆盖全集。测试收口：全仓 BUILD SUCCESS。
+
+### 修复（9 项）
+
+- **工具目录未同步授权边界**（Standards S1，P2 硬违规）+ 同文件「内存倒排索引」M26-02 遗留失真——工具目录 session_search「边界」行补授权语义，段落口径更新 FTS5；插件配置参考行同步。
+- **backlog 挂账失实**（Standards S2，P2）——user.dir 提取声称挂账但 backlog 无此条，补真挂账（含 17+ 处计数与来源三轮审查）。
+- **坏头行炸穿搜索**（行级轴 medium）：parseHeader 的 InvalidPathException 未被坏行 catch 覆盖——头解析包 RuntimeException，失败按 cwd 未记录处理（授权过滤自然排除），warn 日志。
+- **重复头 last-wins 覆写**（行级轴 low）：改首个头生效。
+- **cwd 比较口径补 Javadoc**（Standards S3）：构造器写明「字符串相等、不做路径规范化」及 fail-closed 论证——口径不再只活在工单。
+- **两入口一致断言**（Spec 轴）：工具层（foreignCwdSessionExcludedFromToolResults）与 Web 端点层（foreignCwdSessionExcluded）各补异目录排除断言——「装配/集成用例」checklist 落实。
+- **循环内 toString**（Java 轴 CTRL-08）：提取循环外。
+- **契约工厂 Javadoc 补 @param cwd**（Java 轴 COM-07）。
+- **4 处手拼头行统一 SessionFormat.headerLine**（Standards F1 Duplicated Code）：格式知识不泄漏进测试。
+
+### 豁免/裁定记档
+
+- **路径规范化维持现状**（Standards 轴裁定）：生产落盘与查询同进程同取 user.dir（物理路径）自洽；toRealPath 需 IO 且目录删除后假阴性、normalize 解不了 symlink 双形态；fail-closed 方向安全无害——口径已入 Javadoc，不做 normalize。
+- **cwd 无索引**（行级轴）：MATCH 驱动候选集上施加谓词，非全表扫驱动——个人规模无虞。
+- **首头 null 后杂入头可再解析**（修复残余）：首头无 cwd 的会话本就要排除，覆写与否无实际差异——记档不追。
+
+### 四轴分列（要点）
+
+- **Standards**：2 P2 硬违规（工具目录/backlog 失实）+ 2 P3 + 基线 P2（手拼头行）；normalize 维持现状裁定带完整论证。
+- **Spec**：Checklist 3「装配/集成用例」半成品（架构一致成立——全仓唯一构造点双入口共用，但无断言）→ 已补两入口断言；「逐条校验」等价性、无 cwd 双路径覆盖、Out of Scope 三项未偷做均核验通过。
+- **行级**：1 medium（坏头行炸穿）+ 2 low（覆写/路径形态）；参数序/setNull/null 短路/线程安全核验通过。
+- **Java 规范**：1 CRITICAL（CTRL-08）+ 1 MAJOR（COM-07）均修；10 项候选丢弃附理由。

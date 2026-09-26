@@ -46,7 +46,8 @@ class SessionSearchToolTest {
     private SessionSearchTool toolOnFixture() throws Exception {
         Path jsonl = dir.resolve("20260919-100000-0001.jsonl");
         Files.write(jsonl, List.of(
-                "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + dir.getParent() + "\"}",
+                dev.duo.harness.session.SessionFormat.headerLine(
+                        dev.duo.harness.session.SessionFormat.CURRENT_VERSION, dir.getParent()),
                 "{\"type\":\"user/message\",\"at\":1,\"text\":\"苹果的讨论\"}",
                 "{\"type\":\"assistant/message\",\"at\":2,\"text\":\"梨的讨论\"}"),
                 StandardCharsets.UTF_8);
@@ -77,6 +78,21 @@ class SessionSearchToolTest {
     void noResultsIsPlain() throws Exception {
         SessionSearchTool tool = toolOnFixture();
         assertEquals("No results found.", execute(tool, "不存在的词香蕉"));
+    }
+
+    @Test
+    void foreignCwdSessionExcludedFromToolResults() throws Exception {
+        // M26-03 两入口一致（工具层）：异目录会话不进结果——授权边界在工具渲染面同样生效
+        Path jsonl = dir.resolve("20260926-194000-f001.jsonl");
+        Files.write(jsonl, List.of(
+                dev.duo.harness.session.SessionFormat.headerLine(
+                        dev.duo.harness.session.SessionFormat.CURRENT_VERSION,
+                        java.nio.file.Path.of("/other/project")),
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"苹果的异目录讨论\"}"),
+                StandardCharsets.UTF_8);
+        SessionSearchTool tool = new SessionSearchTool(new FtsSessionIndex(dir, dir.getParent()), 8);
+        assertEquals("No results found.", execute(tool, "苹果"),
+                "异目录会话（cwd=/other/project）不进工具结果——与 Web 搜索框同边界");
     }
 
     // ---- 插件装配（真实容器） ----

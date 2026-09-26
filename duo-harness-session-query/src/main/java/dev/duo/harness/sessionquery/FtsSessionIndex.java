@@ -70,7 +70,9 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
 
     /**
      * @param cwd 授权边界：命中仅限会话头行 cwd 与此相等者（无 cwd 的旧会话不进结果）；
-     *            与会话落盘侧同源（生产装配传进程工作目录）
+     *            与会话落盘侧同源（生产装配传进程工作目录）。**比较为字符串相等、不做
+     *            路径规范化**——落盘与查询同进程同取 user.dir（物理路径）自洽；符号链接
+     *            双形态（如 macOS /tmp 与 /private/tmp）不匹配，方向 fail-closed 安全无害
      */
     public FtsSessionIndex(Path sessionsDir, Path cwd) {
         this.sessionsDir = sessionsDir;
@@ -330,10 +332,18 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                     continue;
                 }
                 if (dev.duo.harness.session.SessionFormat.isHeaderLine(line)) {
-                    // 版本头不是事件（M26-01）：跳过且不计序号；cwd 随 sessions 表落库（M26-03）
-                    java.nio.file.Path headerCwd =
-                            dev.duo.harness.session.SessionFormat.parseHeader(line).cwd();
-                    sessionCwd = headerCwd == null ? null : headerCwd.toString();
+                    // 版本头不是事件（M26-01）：跳过且不计序号；cwd 随 sessions 表落库（M26-03）。
+                    // 首个头生效（后续杂入头不覆写）；头解析失败按坏行跳过（cwd 保持 null，
+                    // 授权过滤自然排除——脏文件不因检索放大为故障）
+                    if (sessionCwd == null) {
+                        try {
+                            java.nio.file.Path headerCwd =
+                                    dev.duo.harness.session.SessionFormat.parseHeader(line).cwd();
+                            sessionCwd = headerCwd == null ? null : headerCwd.toString();
+                        } catch (RuntimeException e) {
+                            log.warn("会话头行解析失败，cwd 按未记录处理: {}", id, e);
+                        }
+                    }
                     continue;
                 }
                 lineNo++;
@@ -509,13 +519,14 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
     private List<SessionHit> searchLive(List<String> liveIds, List<String> tokens,
                                         List<String> phrases) {
         List<SessionHit> hits = new ArrayList<>();
+        String cwdStr = cwd.toString(); // 循环不变量：提取一次
         for (String id : liveIds) {
             Session live = Session.heldSession(sessionsDir.resolve(id + JSONL_SUFFIX));
             if (live == null) {
                 continue; // 对账与匹配之间被关闭：本次跳过，下次对账自然回库
             }
             // cwd 授权边界（M26-03）：live 会话目录与查询侧不相等（null 含）即排除
-            if (live.cwd() == null || !cwd.toString().equals(live.cwd().toString())) {
+            if (live.cwd() == null || !cwdStr.equals(live.cwd().toString())) {
                 continue;
             }
             List<SessionTextMatcher.Candidate> candidates = new ArrayList<>();

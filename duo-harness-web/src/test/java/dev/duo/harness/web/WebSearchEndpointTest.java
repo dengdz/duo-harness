@@ -64,7 +64,8 @@ class WebSearchEndpointTest {
         Files.createDirectories(sessions);
         // M26-03：会话带头行（cwd=tempDir）才可被检索——授权边界内的可检索形态
         Files.write(sessions.resolve(id + ".jsonl"), List.of(
-                "{\"type\":\"session\",\"version\":1,\"cwd\":\"" + tempDir + "\"}",
+                dev.duo.harness.session.SessionFormat.headerLine(
+                        dev.duo.harness.session.SessionFormat.CURRENT_VERSION, tempDir),
                 "{\"type\":\"user/message\",\"at\":1,\"text\":\"" + text + "\"}"),
                 StandardCharsets.UTF_8);
     }
@@ -105,6 +106,25 @@ class WebSearchEndpointTest {
         assertEquals("20260919-100000-0001", hits.get(0).path("sessionId").asText());
         assertTrue(hits.get(0).path("snippet").asText().contains("【苹果】"));
         assertEquals("user/message", hits.get(0).path("eventType").asText());
+    }
+
+    @Test
+    void foreignCwdSessionExcluded() throws Exception {
+        // M26-03 授权边界（Web 端点层）：异目录会话不进搜索结果——与 session_search 工具同边界
+        Path sessions = tempDir.resolve("sessions");
+        java.nio.file.Files.createDirectories(sessions);
+        java.nio.file.Files.write(sessions.resolve("20260926-194000-f002.jsonl"), List.of(
+                dev.duo.harness.session.SessionFormat.headerLine(
+                        dev.duo.harness.session.SessionFormat.CURRENT_VERSION,
+                        java.nio.file.Path.of("/other/project")),
+                "{\"type\":\"user/message\",\"at\":1,\"text\":\"苹果的异目录讨论\"}"),
+                StandardCharsets.UTF_8);
+        WebFace f = start(new FtsSessionIndex(sessions, tempDir));
+
+        HttpResponse<String> res = get(f, "/api/search?q=" + java.net.URLEncoder.encode("苹果", StandardCharsets.UTF_8));
+        assertEquals(200, res.statusCode());
+        assertEquals(0, MAPPER.readTree(res.body()).path("hits").size(),
+                "异目录会话（cwd=/other/project）不进 Web 搜索结果");
     }
 
     @Test
