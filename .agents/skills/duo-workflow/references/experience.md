@@ -197,3 +197,17 @@ memory 注入验收首问，模型在有注入段的情况下仍先 read 文件�
 
 **影响范围**：
 所有注入给模型的提示词/规范段/guide 文本（M25 工单 03 写协议 guide 直接适用）；验收判据设计（模型行为类交付的判据写成可观察行为而非机制存在性）。
+
+## [2026-09-26] 给用户的单测验收命令必须带 -Dsurefire.failIfNoSpecifiedTests=false（M25-05 验收首跑报错）
+
+**问题描述**：
+给用户的单测验收命令 `mvn -pl <模块> -am test -Dtest=<类名>` 首跑即报错退出——`-am` 拉起的上游模块（core 是第一个）没有匹配测试类，surefire 报 "No tests matching pattern" 直接失败，用户以为验收件坏了。
+
+**原因分析**：
+agent 自跑时习惯性带 `-Dsurefire.failIfNoSpecifiedTests=false` 旗标，写给用户的命令却凭记忆拼装漏掉——同一命令两个形态，给用户的那份恰恰是跑不通的。
+
+**解决方案**：
+给用户的单测命令以 agent 自己验证过的完整命令为准原样复制（含全部旗标），不自 Simplify；模板固定为 `./mvnw -q -pl <模块> -am test -Dtest=<类名> -Dsurefire.failIfNoSpecifiedTests=false`。
+
+**影响范围**：
+所有"验收件 = 测试套件、用户亲手跑"的工单（M25-06/07/08 验收直接适用）。
