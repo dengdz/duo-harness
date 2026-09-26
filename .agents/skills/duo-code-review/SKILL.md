@@ -20,7 +20,7 @@ description: 四轴审查即修复：Standards/Spec/行级/Java 规范并行审�
 1. **四轴并行审查**（四个**新上下文子代理**同时跑——独立性是产出率的来源，禁止本 agent 亲自执行任一轴）：
    - **Standards 轴**：Call the Skill tool with "code-review"，取其 Process 节的标准源清单与 Fowler 坏味道基线（12 条），随 brief 原文下发给 Standards 子代理（子代理无法自行加载技能，材料由主审随 brief 供给）。
    - **Spec 轴**：同上取其 Spec 轴的 brief 要求；Spec 来源 = `.scratch/<feature>/spec.md` 与对应工单文件，发现逐条引 spec 原文；找不到 spec 如实报"无 spec 可对照"。
-   - **行级规则轴**：Call the Skill tool with "open-code-review-delegate"，以 `ocr delegate preview` / `ocr delegate rule` 的产物原文为文件名单与规则清单随 brief 下发，行级审查交给独立子代理执行——brief 携固定指令：「逐文件对照规则清单出候选发现，先列全再过滤，宁多勿漏」。行级名单只收主代码（测试与文档由 Standards / Spec 轴覆盖），报告覆盖率按 `git diff --stat` 全集口径标注。
+   - **行级规则轴**：Call the Skill tool with "open-code-review-delegate"，以 `ocr delegate preview` / `ocr delegate rule` 的产物原文为文件名单与规则清单随 brief 下发，行级审查交给独立子代理执行——brief 携固定指令：「逐文件对照规则清单出候选发现，先列全再过滤，宁多勿漏」。行级名单只收主代码（测试与文档由 Standards / Spec 轴覆盖），报告覆盖率按 `git diff --stat` 全集口径标注。**规则清单必须逐字粘贴当轮 `ocr delegate rule` 输出**（不得翻译/压缩/改写/摘要——OCR 内置规则的子细则与「不报」防误报清单是本轴完备性的来源，M26-03/04/05 轮的压缩漂移曾致其缺位）；主审读 diff 后追加的 diff 专项「边界重点」**另起一段作为补充**（不替代原文）。
    - **Java 规范轴**：Call the Skill tool with "duo-java-review"，按其 L1 按需清单（programming / exception-log / test-security；mysql-project 默认跳过）加载规则、按其 report-template 输出 BLOCKER/CRITICAL/MAJOR 分级发现。三条 brief 约束：① 适用子集裁剪——MySQL/服务器端章节默认跳过，仓库惯例与新范式（虚拟线程/record/switch 表达式）优先，手册未覆盖新范式的条款不适用；② 反条款倾销——先列候选再过滤，不适用条款写出丢弃理由；③ 分工——只报「规则编号 + 条款原文」类发现，与 Standards 轴重叠的由主审合并处置。范围 = 全部 Java diff（含测试类，走 rules-test-security）。
    - fixed point 取改动前的提交（单工单审 `HEAD~1` 或工作树基点 HEAD，批次/里程碑审分支基点或用户指定点）——已经第 0 步预检。
 
