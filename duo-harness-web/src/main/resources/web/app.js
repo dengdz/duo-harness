@@ -557,20 +557,25 @@ const render = (() => {
     scroll();
   }
 
-  function commandResult(ev) {
+  function commandResult(ev, replaying) {
     if (!ev.text) return; // 空结果（如 /exit）不渲染
     if (ev.toolName === 'export' && ev.text.startsWith('/api/session/export')) {
       // /export（M21 工单 09）：done 结果即下载端点 URL——触发下载流
       // （Content-Disposition 命名，浏览器直接落盘）；URL 文本照常渲染可查。
       // URL 自含 sessionId（M26-07 显式寻址）——导出跟随命令发起时的当前会话；
       // 附加 token（M26-07 收口补）：a 点击是导航不走 fetch 头通道，鉴权开启时
-      // 缺 token 会被 fail-closed 栅栏 403（用户验收实测发现）
-      const a = document.createElement('a');
-      a.href = ev.text + (duoToken ? '&token=' + encodeURIComponent(duoToken) : '');
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      showToast('正在下载导出文件…', 'info');
+      // 缺 token 会被 fail-closed 栅栏 403（用户验收实测发现）。
+      // 回放不下载（用户验收实测发现）：命令审计事件随会话历史重放（切会话/翻页/
+      // 刷新可见），自动下载只对实时命令生效——否则每次切回含 /export 的会话都
+      // 重新触发一次下载
+      if (!replaying) {
+        const a = document.createElement('a');
+        a.href = ev.text + (duoToken ? '&token=' + encodeURIComponent(duoToken) : '');
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast('正在下载导出文件…', 'info');
+      }
     }
     showMessages();
     const div = document.createElement('div');
@@ -696,7 +701,7 @@ const render = (() => {
    * 回放期 chunk 照常渲染（BUG-20260915-03）：碎片流入 t.streamingBubble、assistant/message
    * 收口整段覆盖——进行中轮次刷新不空窗，且不复发 0913-04 碎片化（防碎片化不以丢弃为手段）。
    */
-  function dispatch(ev) {
+  function dispatch(ev, replaying = false) {
     if (ev.type === 'user/attachment') {
       // 附件引用块（M21 工单 04）：text 为引用 JSON，图片经授权读取端点回字节
       try {
@@ -728,7 +733,7 @@ const render = (() => {
     else if (ev.type === 'subagent/spawned') subagentSpawned(ev);
     else if (ev.type === 'subagent/completed') subagentCompleted(ev);
     else if (ev.type === 'command/run') commandLine(ev);
-    else if (ev.type === 'command/done') commandResult(ev);
+    else if (ev.type === 'command/done') commandResult(ev, replaying);
     else if (ev.type === 'assistant/interrupted') interruptedMark();
     else if (ev.type === 'run/error') runError(ev.text);
   }
@@ -743,7 +748,7 @@ const render = (() => {
     const prevTop = t.container.scrollTop;
     const rest = document.createDocumentFragment();
     while (t.container.firstChild) rest.appendChild(t.container.firstChild);
-    for (const ev of events) dispatch(ev);
+    for (const ev of events) dispatch(ev, true); // 翻页渲染的是历史——不触发实时副作用
     t.container.appendChild(rest);
     t.container.scrollTop = t.container.scrollHeight - prevHeight + prevTop;
   }
@@ -774,7 +779,7 @@ const render = (() => {
           container.appendChild(mark);
           continue;
         }
-        dispatch(ev);
+        dispatch(ev, true); // 抽屉渲染的是历史回放——不触发实时副作用
       }
     });
     return target;
