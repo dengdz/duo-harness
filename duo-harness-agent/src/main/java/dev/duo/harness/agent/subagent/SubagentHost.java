@@ -24,9 +24,10 @@ public record SubagentHost(LlmAdapter llm, ContextGovernance.Tuning tuning,
     /**
      * 服务名（呈现位发布、SubagentPlugin 经 inject 声明读取）。取单小写词是内核
      * 契约要求——视图方法名即服务名，而方法名不能含连字符（服务名须能作为
-     * 视图接口的方法名书写）。
+     * 视图接口的方法名书写）。M28 工单 05（H-13）：原 "presenter" 与呈现位域
+     * 词汇撞车，改名 {@code host}——服务语义即子代理宿主，与类名一致。
      */
-    public static final String SERVICE_NAME = "presenter";
+    public static final String SERVICE_NAME = "host";
 
     /** 构造时校验非空——错误前移到构造点。 */
     public SubagentHost {

@@ -54,7 +54,7 @@ public final class SubagentPlugin implements Plugin<JsonNode> {
         if (templates.isEmpty()) {
             return null; // 未配置模板：零注册、零副作用——升级零感知
         }
-        SubagentHost host = ctx.as(HostView.class).presenter();
+        SubagentHost host = ctx.as(HostView.class).host();
         SubagentManager manager = new SubagentManager(templates);
         // 审批钉死（M16 工单 03）：恒否策略在装配处注入——子代理需审批的调用确定性
         // 拒绝并回传理由，不挂起等待人工；放宽（白名单）时只换此注入对象
@@ -107,9 +107,9 @@ public final class SubagentPlugin implements Plugin<JsonNode> {
         ToolsService tools();
     }
 
-    /** presenter 服务的视图接口（方法名即服务名）。 */
+    /** host 服务的视图接口（方法名即服务名；M28 工单 05 自 "presenter" 改名）。 */
     interface HostView {
 
-        SubagentHost presenter();
+        SubagentHost host();
     }
 }

@@ -105,7 +105,7 @@ class CooperativeInterruptTest {
 
             Session session = Session.create(tempDir.resolve("sessions"));
             ToolCallingAgent agent = new ToolCallingAgent(llm, tools, session,
-                    new PromptRegistry("测试"), 5, 5, null, ChatAgent.PRESENTER_CLI);
+                    new PromptRegistry("测试"), 5, 5, null, "cli");
 
             Thread sender = Thread.ofVirtual().start(() ->
                     agent.send("原始问题", AgentListener.NONE));

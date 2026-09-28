@@ -125,7 +125,7 @@ class TwoLevelInboxTest {
 
             Session session = Session.create(tempDir.resolve("sessions"));
             ToolCallingAgent agent = new ToolCallingAgent(slowLlm, tools, session,
-                    new PromptRegistry("测试"), 5, 5, null, ChatAgent.PRESENTER_CLI);
+                    new PromptRegistry("测试"), 5, 5, null, "cli");
 
             Thread injector = new Thread(() -> {
                 try {

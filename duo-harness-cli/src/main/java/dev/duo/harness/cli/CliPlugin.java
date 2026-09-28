@@ -86,6 +86,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class CliPlugin implements Plugin<JsonNode> {
 
+    /** 呈现位身份（M28 工单 05）：id 由呈现位自declare——内核不再钉死合法 id 集，
+     * 第三呈现位零内核改动接入（回答者注册面即在场登记）。 */
+    public static final String PRESENTER_ID = "cli";
+
     private final BufferedReader in;
     private final PrintStream out;
     /** 会话目录（null = DuoHome 缺省 agent-sessions；测试注入临时目录）。 */
@@ -249,7 +253,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionHolder holder = new SessionHolder(session);
         dev.duo.harness.tools.fs.ReadOnlyBashDetector cliPlanGate = planBashDetector(workspacePolicy);
         ChatAgent agent = PresenterAssembly.chatAgent(new AgentSpec(llm, tools, session, prompts,
-                maxIterations, maxParallelToolCalls, ChatAgent.PRESENTER_CLI,
+                maxIterations, maxParallelToolCalls, PRESENTER_ID,
                 new AgentCapabilities(governance, requestVariants, visionEnabled, fileDelivery,
                         cliPlanGate == null ? null : cliPlanGate::isReadOnlyBash,
                         memory == null ? null : memory::metaUserSection,
@@ -259,7 +263,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         answererRegistration = answers.register(ctx,
                 new AuditingAnswerer(holder::current, wrapRuleGenerating(ctx, console, holder::current)));
         PlanHolder plan = new PlanHolder();
-        PresenterAssembly.registerInteractionTools(ctx, tools, answers, ChatAgent.PRESENTER_CLI,
+        PresenterAssembly.registerInteractionTools(ctx, tools, answers, PRESENTER_ID,
                 holder::current, () -> {
             plan.active = false;
             disposeGuidance(plan);
@@ -296,7 +300,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
             registry.addListener(task -> {
                 // 归属过滤（M23 工单 06 验收修正）：CLI 只消费本位发起（或无归属）的任务，
                 // Web 侧任务完成不在终端开轮/注入
-                if (task.owner() != null && !dev.duo.harness.agent.ChatAgent.PRESENTER_CLI.equals(task.owner())) {
+                if (task.owner() != null && !PRESENTER_ID.equals(task.owner())) {
                     return;
                 }
                 String notice = task.notice();
@@ -325,9 +329,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 }
             });
         }
-        registerCommands(ctx, commands, llm, tools, prompts, governance, maxIterations,
-                maxParallelToolCalls, sessionsDir(), holder, agentHolder, plan,
-                workspacePolicy, agentBusy, interruptArmed, memory, agentsMd);
+        registerCommands(ctx, commands, new CommandChain(llm, tools, prompts, governance,
+                maxIterations, maxParallelToolCalls, memory, agentsMd),
+                new CommandState(sessionsDir(), holder, agentHolder, plan, workspacePolicy,
+                        agentBusy, interruptArmed));
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
         // 呈现位可能刚恢复过档位，占用被迫改开的新会话不得覆盖它（BUG-20260919-03）
         PresenterAssembly.restorePermissionMode(
@@ -540,15 +545,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
      * /title 双面命令经共享装配器注册（见下方 registerCompactCommand/registerTitleCommand）。
      * 命令随注册方作用域自动摘除。
      */
-    private void registerCommands(Context ctx, CommandsRegistry commands, LlmAdapter llm,
-                                  ToolsService tools, PromptRegistry prompts,
-                                  ContextGovernance governance, int maxIterations,
-                                  int maxParallelToolCalls, Path sessionsDir,
-                                  SessionHolder holder, AgentHolder agentHolder,
-                                  PlanHolder plan, WorkspacePolicy workspacePolicy,
-                                  AtomicBoolean agentBusy, AtomicBoolean interruptArmed,
-                                  dev.duo.harness.agent.memory.MemoryBook memory,
-                                  dev.duo.harness.agent.prompt.AgentsMdChain agentsMd) {
+    private void registerCommands(Context ctx, CommandsRegistry commands, CommandChain chain,
+                                  CommandState state) {
         commands.register(ctx, new CommandDefinition("exit", "结束终端对话（会话锁释放，插件保持挂载）",
                 CommandScope.CLI, false, context -> {
                 context.requestEnd();
@@ -559,34 +557,35 @@ public final class CliPlugin implements Plugin<JsonNode> {
         commands.register(ctx, new CommandDefinition("stop",
                 "协作式中断当前任务（已流出内容保留，会话停在可恢复态；再发消息即续接）",
                 CommandScope.CLI, true, context -> {
-                if (!agentBusy.get() || !agentHolder.agent.requestInterrupt()) {
+                if (!state.agentBusy().get() || !state.agentHolder().agent.requestInterrupt()) {
                     return "当前无执行中任务，无须中断。";
                 }
                 return "已请求中断当前任务（协作式收口中，稍候）…";
             }));
         commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
                 CommandScope.CLI, false, context -> {
-                Session previous = holder.session;
-                holder.session = Session.create(sessionsDir, Cwd.path());
-                dev.duo.harness.agent.deliverable.ChangeSummary.markStart(holder.session);
-                dev.duo.harness.tools.fs.ReadOnlyBashDetector replanGate = planBashDetector(workspacePolicy);
-                agentHolder.agent = PresenterAssembly.chatAgent(new AgentSpec(llm, tools, holder.session,
-                        prompts, maxIterations, maxParallelToolCalls, ChatAgent.PRESENTER_CLI,
-                        new AgentCapabilities(governance, requestVariants, visionEnabled, fileDelivery,
+                Session previous = state.holder().session;
+                state.holder().session = Session.create(state.sessionsDir(), Cwd.path());
+                dev.duo.harness.agent.deliverable.ChangeSummary.markStart(state.holder().session);
+                dev.duo.harness.tools.fs.ReadOnlyBashDetector replanGate = planBashDetector(state.workspacePolicy());
+                state.agentHolder().agent = PresenterAssembly.chatAgent(new AgentSpec(chain.llm(), chain.tools(),
+                        state.holder().session, chain.prompts(), chain.maxIterations(),
+                        chain.maxParallelToolCalls(), PRESENTER_ID,
+                        new AgentCapabilities(chain.governance(), requestVariants, visionEnabled, fileDelivery,
                                 replanGate == null ? null : replanGate::isReadOnlyBash,
-                                memory == null ? null : memory::metaUserSection,
-                                agentsMd == null ? null : agentsMd::section)));
-                SessionTitles.attach(holder.session, llm);
-                attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
+                                chain.memory() == null ? null : chain.memory()::metaUserSection,
+                                chain.agentsMd() == null ? null : chain.agentsMd()::section)));
+                SessionTitles.attach(state.holder().session, chain.llm());
+                attachSubagentTrace(state.holder().session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                 // 用户显式开新话题：无切档记录即重置回 yml 缺省（ADR-0020 决策 10）
                 PresenterAssembly.restorePermissionMode(
-                        ctx, holder.session, true);
+                        ctx, state.holder().session, true);
                 // 会话级规则随会话生命周期（ADR-0026 决策一）：新会话无规则事件即清空
-                PresenterAssembly.restorePermissionRules(ctx, holder.session);
-                plan.active = false;
-                disposeGuidance(plan);
-                return "新会话 " + holder.session.id() + "。";
+                PresenterAssembly.restorePermissionRules(ctx, state.holder().session);
+                state.plan().active = false;
+                disposeGuidance(state.plan());
+                return "新会话 " + state.holder().session.id() + "。";
             }));
         // /model（M24 工单 09，ADR-0026 决策六）：白名单内运行时切模型——切换落
         // model/intent 会话事件（保存意图）、swap 换链下一 turn 生效；清单外拒切
@@ -668,7 +667,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 "查看或切换权限预设：/permission [read-only|workspace-write|danger-full-access]"
                         + "；/permission rules [list|rm <P#|S#>]",
                 CommandScope.ANY, true, context -> {
-                if (workspacePolicy == null) {
+                if (state.workspacePolicy() == null) {
                     return "workspace 服务未挂载（未装配 fs 工具插件），/permission 不可用。";
                 }
                 String input = context.args().strip();
@@ -677,17 +676,17 @@ public final class CliPlugin implements Plugin<JsonNode> {
                             input.length() > "rules".length() ? input.substring("rules".length()).strip() : "");
                 }
                 if (input.isEmpty()) {
-                    return "当前预设: " + workspacePolicy.mode().configName()
+                    return "当前预设: " + state.workspacePolicy().mode().configName()
                             + "（可选: read-only / workspace-write / danger-full-access；"
                             + "/permission rules 管理权限规则）";
                 }
                 try {
-                    workspacePolicy.setMode(WorkspacePolicy.Mode.parse(input));
+                    state.workspacePolicy().setMode(WorkspacePolicy.Mode.parse(input));
                     // 档位跟对话走（M19，ADR-0020 决策 10）：切档落会话事件——重开恢复
                     context.session().append(
                             dev.duo.harness.session.SessionEvent.permissionMode(
-                                    workspacePolicy.mode().configName()));
-                    return "已切换: " + workspacePolicy.mode().configName();
+                                    state.workspacePolicy().mode().configName()));
+                    return "已切换: " + state.workspacePolicy().mode().configName();
                 } catch (IllegalArgumentException e) {
                     return e.getMessage();
                 }
@@ -695,28 +694,29 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // /compact 与 /title（M19）：双面命令经共享装配器注册（查重先到先得——Web 侧
         // 同款），会话取发起方当前值
         PresenterAssembly.registerCompactCommand(
-                ctx, commands, governance);
+                ctx, commands, chain.governance());
         PresenterAssembly.registerTitleCommand(ctx, commands);
         commands.register(ctx, new CommandDefinition("plan",
                 "计划模式：/plan 进入（可携任务描述直接推进）、/plan off 退出",
                 CommandScope.CLI, false, context -> {
                 String rest = context.args();
                 if (rest.equals("off")) {
-                    if (plan.active) {
-                        holder.current().append(PlanMode.exitedEvent());
-                        disposeGuidance(plan);
-                        plan.active = false;
+                    if (state.plan().active) {
+                        state.holder().current().append(PlanMode.exitedEvent());
+                        disposeGuidance(state.plan());
+                        state.plan().active = false;
                         return "已退出计划模式。";
                     }
                     return "当前不在计划模式。";
                 }
                 String notice;
-                if (plan.active) {
+                if (state.plan().active) {
                     notice = "已在计划模式中。";
                 } else {
-                    holder.current().append(PlanMode.enteredEvent());
-                    plan.active = true;
-                    plan.guidance = prompts.register(ctx, new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
+                    state.holder().current().append(PlanMode.enteredEvent());
+                    state.plan().active = true;
+                    state.plan().guidance = chain.prompts().register(ctx,
+                            new PromptFragment("plan:guidance", PlanMode.GUIDANCE));
                     notice = "已进入计划模式（先探索与设计，完成后调 exit_plan_mode 呈交计划；/plan off 退出）。";
                 }
                 if (!rest.isEmpty()) {
@@ -724,6 +724,20 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 }
                 return notice;
             }));
+    }
+
+    /** 斜杠命令注册的执行链构件组（M28 工单 04）：命令 handler 闭包的链上只读面。 */
+    private record CommandChain(LlmAdapter llm, ToolsService tools, PromptRegistry prompts,
+                                ContextGovernance governance, int maxIterations,
+                                int maxParallelToolCalls,
+                                dev.duo.harness.agent.memory.MemoryBook memory,
+                                dev.duo.harness.agent.prompt.AgentsMdChain agentsMd) {
+    }
+
+    /** 斜杠命令注册的会话与状态组（M28 工单 04）：holder/计划态/治理态的可变面。 */
+    private record CommandState(Path sessionsDir, SessionHolder holder, AgentHolder agentHolder,
+                                PlanHolder plan, WorkspacePolicy workspacePolicy,
+                                AtomicBoolean agentBusy, AtomicBoolean interruptArmed) {
     }
 
     /**
@@ -1009,7 +1023,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** 纯函数形态（可直测，M23 工单 06）：hint 渲染只依赖注册表快照。CLI 只看本位
      * 发起（或无归属）的任务——Web 侧任务不占终端提示符（M23 工单 06 验收修正）。 */
     static String backgroundHint(dev.duo.harness.tools.fs.BackgroundTaskRegistry registry) {
-        var mine = ownedTasks(registry, dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        var mine = ownedTasks(registry, PRESENTER_ID);
         if (mine.isEmpty()) {
             return "";
         }

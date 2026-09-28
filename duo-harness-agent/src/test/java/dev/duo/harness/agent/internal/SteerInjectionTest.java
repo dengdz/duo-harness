@@ -126,7 +126,7 @@ class SteerInjectionTest {
 
             Session session = Session.create(tempDir.resolve("sessions"));
             ToolCallingAgent agent = new ToolCallingAgent(slowLlm, tools, session,
-                    new PromptRegistry("测试"), 5, 5, null, ChatAgent.PRESENTER_CLI);
+                    new PromptRegistry("测试"), 5, 5, null, "cli");
 
             Thread injector = new Thread(() -> {
                 try {
@@ -148,7 +148,7 @@ class SteerInjectionTest {
             assertTrue(reply.completed());
             assertEquals("最终回答", reply.finalText());
             assertTrue(toolExecuted.await(0, TimeUnit.SECONDS), "飞行中工具组已完整跑完");
-            assertEquals(List.of(ChatAgent.PRESENTER_CLI), presenterSeen,
+            assertEquals(List.of("cli"), presenterSeen,
                     "presenterId 随工具执行传导进管线（亲和路由的数据源）");
 
             // 事件时序：原始消息 → 工具对（首轮）→ 迭代边界排干的注入（连续 user/message

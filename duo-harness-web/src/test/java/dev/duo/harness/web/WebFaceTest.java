@@ -479,9 +479,9 @@ class WebFaceTest {
         face.setBackgroundTaskRegistry(registry);
 
         var webTask = registry.start(new ProcessBuilder("bash", "-c", "sleep 30").start(),
-                "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_WEB);
+                "sleep 30", WebPlugin.PRESENTER_ID);
         var cliTask = registry.start(new ProcessBuilder("bash", "-c", "sleep 30").start(),
-                "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+                "sleep 30", "cli");
         String status = get("/api/status");
         assertTrue(status.contains("\"taskId\":\"" + webTask.taskId() + "\""),
                 "web 任务可见: " + status);
@@ -503,7 +503,7 @@ class WebFaceTest {
         face.setBackgroundTaskRegistry(registry);
 
         registry.start(new ProcessBuilder("bash", "-c", "true").start(), "echo cli-side",
-                dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+                "cli");
         Thread.sleep(500); // 任务早已终态：无归属过滤放行的通知即无轮开启
         assertTrue(sent.isEmpty(), "cli 任务完成不触发 Web 通知轮: " + sent);
     }

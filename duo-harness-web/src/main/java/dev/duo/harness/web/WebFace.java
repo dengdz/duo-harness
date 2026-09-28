@@ -204,7 +204,7 @@ public final class WebFace {
             registry.addListener(task -> {
                 // 归属过滤（M23 工单 06 验收修正）：Web 只消费本位发起（或无归属）的
                 // 任务——CLI 侧任务完成不在浏览器开轮/注入
-                if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
+                if (task.owner() != null && !WebPlugin.PRESENTER_ID.equals(task.owner())) {
                     return;
                 }
                 // 标签归属（M24 工单 07 记档）：任务 owner 只有呈现位粒度无 tab——

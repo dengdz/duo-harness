@@ -2,6 +2,7 @@ package dev.duo.harness.example;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.duo.harness.agent.ChatAgent;
+import dev.duo.harness.cli.CliPlugin;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.agent.prompt.PromptPlugin;
@@ -149,7 +150,7 @@ class DualPresenterAffinityTest {
             };
             ToolCallingAgent agent = new ToolCallingAgent(llm,
                     root.as(ToolsView.class).tools(), session,
-                    new PromptRegistry("测试"), 5, 5, null, ChatAgent.PRESENTER_CLI);
+                    new PromptRegistry("测试"), 5, 5, null, CliPlugin.PRESENTER_ID);
 
             var reply = agent.send("写个文件", dev.duo.harness.agent.AgentListener.NONE);
 

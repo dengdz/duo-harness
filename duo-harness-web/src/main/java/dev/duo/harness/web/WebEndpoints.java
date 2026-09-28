@@ -555,7 +555,7 @@ final class WebEndpoints {
             if (face.backgroundTasks != null) {
                 var tasksNode = root.putArray("backgroundTasks");
                 for (var task : face.backgroundTasks.all()) {
-                    if (task.owner() != null && !ChatAgent.PRESENTER_WEB.equals(task.owner())) {
+                    if (task.owner() != null && !WebPlugin.PRESENTER_ID.equals(task.owner())) {
                         continue;
                     }
                     var node = tasksNode.addObject()

@@ -8,14 +8,12 @@ import dev.duo.harness.session.Session;
  *
  * <p>实现（工具循环）在 {@code agent.internal}；消费方（REPL / 未来 Web）
  * 依赖本契约。构造与装配参数见实现类。</p>
+ *
+ * <p>呈现位身份（M28 工单 05，H-03）：内核不预定义合法 id 集——各呈现位
+ * 自declare id（如 cli 插件 {@code PRESENTER_ID = "cli"}）并随工具执行携带，
+ * 回答者注册面（InteractionService）即在场登记，第三呈现位零内核改动接入。</p>
  */
 public interface ChatAgent {
-
-    /** 呈现位标记：终端（CLI 插件构造 agent 时注入，随工具执行携带）。 */
-    String PRESENTER_CLI = "cli";
-
-    /** 呈现位标记：浏览器（Web 插件构造 agent 时注入，随工具执行携带）。 */
-    String PRESENTER_WEB = "web";
 
     /**
      * 执行一次 agent 任务：用户输入入会话 → 循环（LLM 调用 ↔ 工具执行）

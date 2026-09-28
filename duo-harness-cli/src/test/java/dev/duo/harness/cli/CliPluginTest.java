@@ -1283,9 +1283,9 @@ class CliPluginTest {
         // 归属过滤（M23 工单 06 验收修正）：web 发起的任务不占 CLI 提示符——
         // 无归属（null）与 cli 发起的可见
         var webProcess = new ProcessBuilder("bash", "-c", "sleep 30").start();
-        registry.start(webProcess, "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_WEB);
+        registry.start(webProcess, "sleep 30", "web");
         var cliProcess = new ProcessBuilder("bash", "-c", "sleep 30").start();
-        registry.start(cliProcess, "sleep 30", dev.duo.harness.agent.ChatAgent.PRESENTER_CLI);
+        registry.start(cliProcess, "sleep 30", CliPlugin.PRESENTER_ID);
         String filtered = dev.duo.harness.cli.CliPlugin.backgroundHint(registry);
         assertTrue(filtered.contains("[后台 2 个运行中]"),
                 "cli+无归属计数、web 任务被滤除: " + filtered);

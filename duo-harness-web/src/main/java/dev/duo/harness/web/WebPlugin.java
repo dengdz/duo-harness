@@ -49,6 +49,10 @@ import java.util.Set;
  */
 public final class WebPlugin implements Plugin<JsonNode> {
 
+    /** 呈现位身份（M28 工单 05）：id 由呈现位自declare——内核不再钉死合法 id 集，
+     * 第三呈现位零内核改动接入（回答者注册面即在场登记）。 */
+    public static final String PRESENTER_ID = "web";
+
     /** 默认监听端口。 */
     public static final int DEFAULT_PORT = 8080;
 
@@ -185,7 +189,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
         ChatAgent agent = PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
                 adapter, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                ChatAgent.PRESENTER_WEB,
+                PRESENTER_ID,
                 new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
                         fileDelivery,
                         planBashDetector == null ? null : planBashDetector::isReadOnlyBash,
@@ -231,7 +235,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 注册——纯 Web 部署（无终端）下提问卡/计划卡的供给到位，HITL 不依赖 CLI 装配
         // 在场。会话经 face 延迟解析；Web 面不挂计划指导片段，退出回调无状态可清
         PresenterAssembly.registerInteractionTools(
-                ctx, tools, answers, ChatAgent.PRESENTER_WEB, face::currentSession, () -> { });
+                ctx, tools, answers, PRESENTER_ID, face::currentSession, () -> { });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, face::currentSession);
         // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
@@ -267,7 +271,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
             }
             return PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
                     adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls,
-                    ChatAgent.PRESENTER_WEB,
+                    PRESENTER_ID,
                     new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
                             fileDelivery,
                             planBashDetector == null ? null : planBashDetector::isReadOnlyBash,

@@ -61,7 +61,7 @@ public final class WebAnswerer implements Answerer {
     /** 亲和路由（M19，ADR-0020 决策 7）：本回答者代表 Web 呈现位。 */
     @Override
     public String presenterId() {
-        return ChatAgent.PRESENTER_WEB;
+        return WebPlugin.PRESENTER_ID;
     }
 
     @Override
