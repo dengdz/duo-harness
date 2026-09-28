@@ -3,6 +3,11 @@ package dev.duo.harness.agent.internal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.AgentCapabilities;
+import dev.duo.harness.agent.AgentSpec;
+import dev.duo.harness.agent.AgentsMdInjector;
+import dev.duo.harness.agent.MemoryInjector;
+import dev.duo.harness.agent.PlanBashGate;
 import dev.duo.harness.agent.ToolInvocation;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.agent.ChatAgent;
@@ -84,12 +89,12 @@ public final class ToolCallingAgent implements ChatAgent {
     private final dev.duo.harness.attachment.ImageFileDelivery fileDelivery;
     /** 视觉能力开关（llm.vision，ADR-0022）：true 时引用解析为 base64 图片部件。 */
     private final boolean vision;
-    /** plan 态 bash 只读判定器（M24 工单 04；null = plan 态 bash 一律拒）。 */
-    private final dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector;
-    /** 记忆本服务（M25 工单 02；null = 未装配——零注入）。 */
-    private final dev.duo.harness.agent.memory.MemoryBook memory;
-    /** AGENTS.md 链服务（M25 工单 07；null = 未装配——零注入；子代理恒 null）。 */
-    private final dev.duo.harness.agent.prompt.AgentsMdChain agentsMd;
+    /** plan 态 bash 只读裁决端口（M24 工单 04；null = plan 态 bash 一律拒）。 */
+    private final PlanBashGate planBashGate;
+    /** 记忆注入端口（M25 工单 02；null = 未装配——零注入）。 */
+    private final MemoryInjector memory;
+    /** AGENTS.md 注入端口（M25 工单 07；null = 未装配——零注入；子代理恒 null）。 */
+    private final AgentsMdInjector agentsMd;
     /**
      * 两级收件箱（M23 ADR-0025 决策一；next-step 级由 M19 steer 单级升级）：
      * busy 期间外部线程经 {@link #injectUserMessage}（next-step，step 边界排干）或
@@ -124,111 +129,53 @@ public final class ToolCallingAgent implements ChatAgent {
     }
 
     /**
-     * 完整构造：含上下文治理管线（M9）。
+     * 便捷构造：含上下文治理管线（M9）——并发取内核缺省、能力全缺席。
      *
-     * @param llm           LLM 流式适配器
-     * @param tools         工具域服务（Function Calling 的执行后端）
-     * @param session       会话（多轮记忆来源与事件落点）
-     * @param prompts       prompt 注册表（每轮组装 system 提示）
-     * @param maxIterations 最大循环轮数（防死循环上限）
      * @param governance    上下文治理管线（投影 → 管线 → 请求；null = 不治理）
      */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             PromptRegistry prompts, int maxIterations,
                             ContextGovernance governance) {
-        this(llm, tools, session, prompts, maxIterations, DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance);
+        this(llm, tools, session, prompts, maxIterations, DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+                governance, null);
     }
 
     /**
-     * 完整构造：并发度显式版（ADR-0018）。
+     * 便捷构造：并发度 + 呈现位标记显式版（M19 亲和路由）——能力走全缺席，带
+     * 治理/视觉/记忆等能力的装配走 {@link #ToolCallingAgent(AgentSpec)}。
      *
      * @param maxParallelToolCalls 单轮并行池同时在飞上限（配置为 1 即完全串行，
      *                             兼排障开关——执行回到调用线程，行为与串行时代一致）
-     */
-    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
-                            PromptRegistry prompts, int maxIterations,
-                            int maxParallelToolCalls, ContextGovernance governance) {
-        this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls, governance, null);
-    }
-
-    /**
-     * 完整构造（呈现位标记版，M19 亲和路由）：标记随工具执行进管线——审批/提问的
-     * ask 请求据此路由给发起呈现位的回答者，hooks 载荷顺带透传。
-     *
-     * @param presenterId 呈现位标记（如 {@code "cli"} / {@code "web"}；子代理等无呈现位为 null）
+     * @param presenterId          呈现位标记（如 {@code "cli"} / {@code "web"}；子代理等无呈现位为 null）
      */
     public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
                             PromptRegistry prompts, int maxIterations,
                             int maxParallelToolCalls, ContextGovernance governance,
                             String presenterId) {
-        this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, null, false, null, null);
+        this(new AgentSpec(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
+                presenterId, AgentCapabilities.of(governance)));
     }
 
     /**
-     * 全参构造（M24 工单 04 plan 硬禁版）：planBashDetector 非 null 时 plan 态到达的
-     * bash 调用按只读判定器参数级裁决（只读放行/写命令 deny）；null 时 plan 态 bash
-     * 到达一律 fail-closed 拒（无法证明只读即不冒险）。
+     * 装配构造（唯一全参形态，M28 工单 03）：参数对象 + 能力集——新能力进
+     * {@link AgentCapabilities}，本签名不再增长；各能力缺席语义见能力集类注释。
      */
-    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
-                            PromptRegistry prompts, int maxIterations,
-                            int maxParallelToolCalls, ContextGovernance governance,
-                            String presenterId, dev.duo.harness.attachment.RequestVariants requestVariants,
-                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
-                            dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector) {
-        this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, requestVariants, vision, fileDelivery, planBashDetector, null);
-    }
-
-    /**
-     * 全参构造（M25 工单 02 记忆注入版）：memory 非 null 时每轮请求把记忆本内容以
-     * user 角色置于消息序列最前（meta_user 通道，请求视图专用不落会话日志）；
-     * null = 未装配，零注入。
-     */
-    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
-                            PromptRegistry prompts, int maxIterations,
-                            int maxParallelToolCalls, ContextGovernance governance,
-                            String presenterId, dev.duo.harness.attachment.RequestVariants requestVariants,
-                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
-                            dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
-                            dev.duo.harness.agent.memory.MemoryBook memory) {
-        this(llm, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                presenterId, requestVariants, vision, fileDelivery, planBashDetector, memory, null);
-    }
-
-    /**
-     * 全参构造（M25 工单 07 meta_user 版）：agentsMd 非 null 时每轮请求把 AGENTS.md
-     * 链以 user 角色置于消息序列最前（先于 memory 段——项目约定在前、记忆补充在后）；
-     * null = 未装配，零注入。
-     */
-    public ToolCallingAgent(LlmAdapter llm, ToolsService tools, Session session,
-                            PromptRegistry prompts, int maxIterations,
-                            int maxParallelToolCalls, ContextGovernance governance,
-                            String presenterId, dev.duo.harness.attachment.RequestVariants requestVariants,
-                            boolean vision, dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
-                            dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
-                            dev.duo.harness.agent.memory.MemoryBook memory,
-                            dev.duo.harness.agent.prompt.AgentsMdChain agentsMd) {
-        this.llm = Objects.requireNonNull(llm, "llm");
-        this.tools = Objects.requireNonNull(tools, "tools");
-        this.session = Objects.requireNonNull(session, "session");
-        this.prompts = Objects.requireNonNull(prompts, "prompts");
-        if (maxIterations < 1) {
-            throw new IllegalArgumentException("maxIterations 至少为 1: " + maxIterations);
-        }
-        if (maxParallelToolCalls < 1) {
-            throw new IllegalArgumentException("maxParallelToolCalls 至少为 1: " + maxParallelToolCalls);
-        }
-        this.maxIterations = maxIterations;
-        this.maxParallelToolCalls = maxParallelToolCalls;
-        this.governance = governance;
-        this.presenterId = presenterId;
-        this.requestVariants = requestVariants;
-        this.fileDelivery = fileDelivery;
-        this.vision = vision;
-        this.planBashDetector = planBashDetector;
-        this.memory = memory;
-        this.agentsMd = agentsMd;
+    public ToolCallingAgent(AgentSpec spec) {
+        this.llm = Objects.requireNonNull(spec.llm(), "llm");
+        this.tools = Objects.requireNonNull(spec.tools(), "tools");
+        this.session = Objects.requireNonNull(spec.session(), "session");
+        this.prompts = Objects.requireNonNull(spec.prompts(), "prompts");
+        this.maxIterations = spec.maxIterations();
+        this.maxParallelToolCalls = spec.maxParallelToolCalls();
+        AgentCapabilities caps = spec.capabilities();
+        this.governance = caps.governance();
+        this.presenterId = spec.presenterId();
+        this.requestVariants = caps.requestVariants();
+        this.fileDelivery = caps.fileDelivery();
+        this.vision = caps.vision();
+        this.planBashGate = caps.planBashGate();
+        this.memory = caps.memory();
+        this.agentsMd = caps.agentsMd();
     }
 
     /**
@@ -534,7 +481,7 @@ public final class ToolCallingAgent implements ChatAgent {
      */
     private ToolResult planDenyOrExecute(ToolCallRequest call) {
         String denyReason = dev.duo.harness.agent.plan.PlanMode.denyReason(
-                session, call.name(), call.argumentsJson(), planBashDetector);
+                session, call.name(), call.argumentsJson(), planBashGate);
         if (denyReason != null) {
             return ToolResult.error(denyReason);
         }

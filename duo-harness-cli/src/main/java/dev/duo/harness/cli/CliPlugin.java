@@ -1,7 +1,9 @@
 package dev.duo.harness.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.duo.harness.agent.AgentCapabilities;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.AgentSpec;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.commands.CommandContext;
@@ -22,6 +24,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.llm.LlmConfig;
@@ -208,13 +211,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
         try {
             session = Session.latest(sessionsDir);
             if (session == null) {
-                session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+                session = Session.create(sessionsDir, Cwd.path());
             }
             dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
         } catch (dev.duo.harness.session.SessionLockedException e) {
             out.println("[提示] " + e.getMessage());
             out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
-            session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+            session = Session.create(sessionsDir, Cwd.path());
             dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
             // 继承被占会话的权限档（BUG-20260919-03 裁定，ADR-0020 决策 10 的双开延续）：
             // 占用改开不是用户开新话题，治理态不因呈现位轮转而丢——继承并落事件（重启链延续）
@@ -244,10 +247,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
         // 会话标题生成（精简版，工单 M13-06）：首条消息后异步一次，/new 换绑的新会话同源触发
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
-        ChatAgent agent = PresenterAssembly.chatAgent(llm, tools, session, prompts,
-                maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                requestVariants, visionEnabled, fileDelivery, planBashDetector(workspacePolicy),
-                memory, agentsMd);
+        dev.duo.harness.tools.fs.ReadOnlyBashDetector cliPlanGate = planBashDetector(workspacePolicy);
+        ChatAgent agent = PresenterAssembly.chatAgent(new AgentSpec(llm, tools, session, prompts,
+                maxIterations, maxParallelToolCalls, ChatAgent.PRESENTER_CLI,
+                new AgentCapabilities(governance, requestVariants, visionEnabled, fileDelivery,
+                        cliPlanGate == null ? null : cliPlanGate::isReadOnlyBash,
+                        memory == null ? null : memory::metaUserSection,
+                        agentsMd == null ? null : agentsMd::section)));
         ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out, resolvePermissionRules(ctx));
         this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
@@ -262,7 +268,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         PresenterAssembly.registerTodoWriteTool(ctx, tools, holder::current);
         // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
         PresenterAssembly.registerPresentTool(ctx, tools, holder::current,
-                Path.of(System.getProperty("user.dir")));
+                Cwd.path());
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重——
         // CLI 无补全 UI（一期文本直打），指南照常注入
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
@@ -561,12 +567,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
         commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
                 CommandScope.CLI, false, context -> {
                 Session previous = holder.session;
-                holder.session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+                holder.session = Session.create(sessionsDir, Cwd.path());
                 dev.duo.harness.agent.deliverable.ChangeSummary.markStart(holder.session);
-                agentHolder.agent = PresenterAssembly.chatAgent(llm, tools, holder.session, prompts,
-                        maxIterations, maxParallelToolCalls, governance, ChatAgent.PRESENTER_CLI,
-                        requestVariants, visionEnabled, fileDelivery,
-                        planBashDetector(workspacePolicy), memory, agentsMd);
+                dev.duo.harness.tools.fs.ReadOnlyBashDetector replanGate = planBashDetector(workspacePolicy);
+                agentHolder.agent = PresenterAssembly.chatAgent(new AgentSpec(llm, tools, holder.session,
+                        prompts, maxIterations, maxParallelToolCalls, ChatAgent.PRESENTER_CLI,
+                        new AgentCapabilities(governance, requestVariants, visionEnabled, fileDelivery,
+                                replanGate == null ? null : replanGate::isReadOnlyBash,
+                                memory == null ? null : memory::metaUserSection,
+                                agentsMd == null ? null : agentsMd::section)));
                 SessionTitles.attach(holder.session, llm);
                 attachSubagentTrace(holder.session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）

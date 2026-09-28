@@ -1,11 +1,14 @@
 package dev.duo.harness.agent.presenter;
 
+import dev.duo.harness.agent.AgentCapabilities;
+import dev.duo.harness.agent.AgentSpec;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.agent.commands.CommandDefinition;
 import dev.duo.harness.agent.commands.CommandScope;
 import dev.duo.harness.agent.commands.CommandsRegistry;
 import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.plan.ExitPlanModeTool;
+import dev.duo.harness.agent.plan.PlanSessionBinder;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.agent.subagent.SubagentHost;
@@ -20,6 +23,7 @@ import dev.duo.harness.tools.AskUserTool;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.PipelineTimeout;
 import dev.duo.harness.tools.ToolDefinition;
+import dev.duo.harness.tools.fs.VisionGateAware;
 import dev.duo.harness.tools.fs.WorkspacePolicy;
 import dev.duo.harness.tools.ToolsService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -185,153 +189,22 @@ public final class PresenterAssembly {
         return parsed;
     }
 
-    /** 对话执行者：工具循环 + prompt 注册表 + 治理，迭代上限取内核缺省。 */
+    /** 对话执行者（治理版便捷形态）：迭代上限与并发取内核缺省、能力全缺席——
+     * 短装配与测试用；带能力/呈现位的装配走 {@link #chatAgent(AgentSpec)}。 */
     public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
                                       PromptRegistry prompts, ContextGovernance governance) {
-        return chatAgent(llm, tools, session, prompts, ToolCallingAgent.MAX_ITERATIONS, governance);
-    }
-
-    /** 对话执行者（迭代上限显式版，BUG-20260917-03）：呈现位经 {@link #parseMaxIterations} 传入。 */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      ContextGovernance governance) {
-        return new ToolCallingAgent(llm, tools, session, prompts, maxIterations, governance);
+        return new ToolCallingAgent(new AgentSpec(llm, tools, session, prompts,
+                ToolCallingAgent.MAX_ITERATIONS, ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+                null, AgentCapabilities.of(governance)));
     }
 
     /**
-     * 对话执行者（并发度显式 + 呈现位标记版，M19 亲和路由 ADR-0020 决策 7）：
-     * 标记随 agent 的工具执行进管线——审批/提问的 ask 请求据此路由给发起呈现位的
-     * 回答者（"谁发起谁作答"）。
+     * 对话执行者（唯一全参形态，M28 工单 04）：AgentSpec 装配——重载族 11 → 2，
+     * 「每加功能 +1 参 +2 重载 + 三处锁步」根因收口；新能力进 {@link AgentCapabilities}，
+     * 本签名不再增长。能力缺席语义见 {@link AgentCapabilities}。
      */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance,
-                                      String presenterId) {
-        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, null, false);
-    }
-
-    /**
-     * 对话执行者（呈现位标记 + 迭代上限显式、并发取内核缺省）：不关心并发调参的
-     * 呈现位用本重载——internal 缺省常量不外泄，呈现位经公开重载即可获得缺省并发。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      ContextGovernance governance, String presenterId) {
-        return chatAgent(llm, tools, session, prompts, maxIterations,
-                ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance, presenterId);
-    }
-
-    /**
-     * 对话执行者（M25 工单 02 记忆注入版，headless 单次任务形态）：{@code memory}
-     * 非 null 时每轮请求把记忆本内容以 user 角色置于消息序列最前；null = 未装配，
-     * 零注入。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      ContextGovernance governance, String presenterId,
-                                      dev.duo.harness.agent.memory.MemoryBook memory) {
-        return chatAgent(llm, tools, session, prompts, maxIterations,
-                ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance, presenterId,
-                null, false, null, null, memory);
-    }
-
-    /**
-     * 对话执行者（M25 工单 07 meta_user 版，headless 单次任务形态）：memory 与
-     * agentsMd 任一在场即注入对应 meta_user 段；均 null 零注入。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      ContextGovernance governance, String presenterId,
-                                      dev.duo.harness.agent.memory.MemoryBook memory,
-                                      dev.duo.harness.agent.prompt.AgentsMdChain agentsMd) {
-        return chatAgent(llm, tools, session, prompts, maxIterations,
-                ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS, governance, presenterId,
-                null, false, null, null, memory, agentsMd);
-    }
-
-    /**
-     * 对话执行者（M21 工单 05 视觉版，ADR-0022）：{@code variants} 非空且
-     * {@code vision=true} 时，消息附件引用解析为请求变体并以 base64 图片部件进请求。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance,
-                                      String presenterId,
-                                      dev.duo.harness.attachment.RequestVariants variants,
-                                      boolean vision) {
-        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, variants, vision, null);
-    }
-
-    /**
-     * 对话执行者（M21 工单 06 files 投递版）：{@code fileDelivery} 非空时图片变体
-     * 上传 Files API 换 file_id 进请求（上传失败自动回退 inline base64）。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance,
-                                      String presenterId,
-                                      dev.duo.harness.attachment.RequestVariants variants,
-                                      boolean vision,
-                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery) {
-        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, variants, vision, fileDelivery, null);
-    }
-
-    /**
-     * 对话执行者（M24 工单 04 plan 硬禁版）：{@code planBashDetector} 非 null 时
-     * plan 态到达的 bash 经只读判定器参数级裁决（只读放行/写命令 deny）；null 时
-     * plan 态 bash 一律 fail-closed 拒。注入收缩与执行兜底均在 agent 内生效。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance,
-                                      String presenterId,
-                                      dev.duo.harness.attachment.RequestVariants variants,
-                                      boolean vision,
-                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
-                                      dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector) {
-        return chatAgent(llm, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                governance, presenterId, variants, vision, fileDelivery, planBashDetector, null);
-    }
-
-    /**
-     * 对话执行者（M25 工单 02 记忆注入版）：{@code memory} 非 null 时每轮请求把
-     * 记忆本内容以 user 角色置于消息序列最前（meta_user 通道，请求视图专用）；
-     * null = 未装配，零注入。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance,
-                                      String presenterId,
-                                      dev.duo.harness.attachment.RequestVariants variants,
-                                      boolean vision,
-                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
-                                      dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
-                                      dev.duo.harness.agent.memory.MemoryBook memory) {
-        return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance, presenterId, variants, vision, fileDelivery,
-                planBashDetector, memory);
-    }
-
-    /**
-     * 对话执行者（M25 工单 07 meta_user 版）：{@code agentsMd} 非 null 时每轮请求把
-     * AGENTS.md 链以 user 角色置于消息序列最前（先于 memory 段）；null = 未装配零注入。
-     */
-    public static ChatAgent chatAgent(LlmAdapter llm, ToolsService tools, Session session,
-                                      PromptRegistry prompts, int maxIterations,
-                                      int maxParallelToolCalls, ContextGovernance governance,
-                                      String presenterId,
-                                      dev.duo.harness.attachment.RequestVariants variants,
-                                      boolean vision,
-                                      dev.duo.harness.attachment.ImageFileDelivery fileDelivery,
-                                      dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector,
-                                      dev.duo.harness.agent.memory.MemoryBook memory,
-                                      dev.duo.harness.agent.prompt.AgentsMdChain agentsMd) {
-        return new ToolCallingAgent(llm, tools, session, prompts, maxIterations,
-                maxParallelToolCalls, governance, presenterId, variants, vision, fileDelivery,
-                planBashDetector, memory, agentsMd);
+    public static ChatAgent chatAgent(AgentSpec spec) {
+        return new ToolCallingAgent(spec);
     }
 
     /**
@@ -407,8 +280,8 @@ public final class PresenterAssembly {
                 .findFirst()
                 .ifPresentOrElse(
                         existing -> {
-                            if (existing instanceof ExitPlanModeTool tool) {
-                                tool.bindSession(presenterId, currentSession, onPlanExited);
+                            if (existing instanceof PlanSessionBinder binder) {
+                                binder.bindSession(presenterId, currentSession, onPlanExited);
                             } else {
                                 LOG.warn("exit_plan_mode 已被非本库实现占用（{}），呈现位 [{}] 的"
                                         + "会话供给与批准回调未记账——计划状态可能串位",
@@ -640,7 +513,7 @@ public final class PresenterAssembly {
                 .filter(definition -> "read_image".equals(definition.name()))
                 .findFirst()
                 .ifPresent(definition -> {
-                    if (definition instanceof dev.duo.harness.tools.fs.ReadImageTool tool) {
+                    if (definition instanceof VisionGateAware tool) {
                         tool.setVisionGate(() -> vision);
                     } else {
                         LOG.warn("read_image 已被非本库实现占用（{}），视觉闸门未回填",

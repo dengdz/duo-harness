@@ -1,6 +1,8 @@
 package dev.duo.harness.agent.memory;
 
+import dev.duo.harness.agent.AgentCapabilities;
 import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.AgentSpec;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Context;
@@ -92,11 +94,12 @@ class MemoryInjectionTest {
         Files.writeString(file, "- 用户偏好中文回复\n");
         Session session = newSession();
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        MemoryBook memory = new MemoryBook(file, MemoryBook.DEFAULT_BUDGET_CHARS);
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 capturingAdapter(captured), new NoTools(), session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null,
-                new MemoryBook(file, MemoryBook.DEFAULT_BUDGET_CHARS));
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                new AgentCapabilities(null, null, false, null, null,
+                        memory::metaUserSection, null)));
 
         agent.send("这个项目记了什么", AgentListener.NONE);
 
@@ -154,7 +157,7 @@ class MemoryInjectionTest {
             }
         };
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 new LlmAdapter() {
                     private int turn;
 
@@ -174,8 +177,9 @@ class MemoryInjectionTest {
                         textSink.accept("已记住");
                         return new LlmTurn("已记住", List.of());
                     }
-                }, singleTool, session, prompts, 10, 1,
-                null, null, null, false, null, null, memory);
+                }, singleTool, session, prompts, 10, 1, null,
+                new AgentCapabilities(null, null, false, null, null,
+                        memory::metaUserSection, null)));
 
         agent.send("记住：事件痕验证", AgentListener.NONE);
 
@@ -191,11 +195,12 @@ class MemoryInjectionTest {
     void 文件缺席零注入() throws IOException {
         Session session = newSession();
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 capturingAdapter(captured), new NoTools(), session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null,
-                new MemoryBook(tempDir.resolve("MEMORY.md"), MemoryBook.DEFAULT_BUDGET_CHARS));
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                new AgentCapabilities(null, null, false, null, null,
+                        new MemoryBook(tempDir.resolve("MEMORY.md"),
+                                MemoryBook.DEFAULT_BUDGET_CHARS)::metaUserSection, null)));
 
         agent.send("你好", AgentListener.NONE);
 
@@ -212,13 +217,13 @@ class MemoryInjectionTest {
         Files.writeString(file, "- 记忆条目\n");
         Session session = newSession();
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 capturingAdapter(captured), new NoTools(), session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null,
-                new MemoryBook(file, MemoryBook.DEFAULT_BUDGET_CHARS),
-                new dev.duo.harness.agent.prompt.AgentsMdChain(
-                        tempDir, tempDir.resolve("无.md"), 16 * 1024));
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                new AgentCapabilities(null, null, false, null, null,
+                        new MemoryBook(file, MemoryBook.DEFAULT_BUDGET_CHARS)::metaUserSection,
+                        new dev.duo.harness.agent.prompt.AgentsMdChain(
+                                tempDir, tempDir.resolve("无.md"), 16 * 1024)::section)));
         java.nio.file.Files.writeString(tempDir.resolve("无.md"), "根约定。");
 
         agent.send("你好", AgentListener.NONE);
@@ -245,10 +250,10 @@ class MemoryInjectionTest {
     void 未装配记忆服务零注入() throws IOException {
         Session session = newSession();
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 capturingAdapter(captured), new NoTools(), session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                AgentCapabilities.none()));
 
         agent.send("你好", AgentListener.NONE);
 

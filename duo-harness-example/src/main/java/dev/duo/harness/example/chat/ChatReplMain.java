@@ -1,6 +1,7 @@
 package dev.duo.harness.example.chat;
 
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.ChatChunk;
 import dev.duo.harness.llm.ChatMessage;
@@ -74,7 +75,7 @@ public final class ChatReplMain {
         }
         boolean resumed = session != null;
         if (session == null) {
-            session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+            session = Session.create(sessionsDir, Cwd.path());
         }
         out.println((resumed
                 ? "继续会话 " + session.id() + "（已有 " + session.deriveMessages().size() + " 条消息）"
@@ -90,7 +91,7 @@ public final class ChatReplMain {
             }
             if (line.strip().equals("/new")) {
                 Session previous = session;
-                session = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+                session = Session.create(sessionsDir, Cwd.path());
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
                 out.println("已开新会话 " + session.id());
                 continue;

@@ -76,8 +76,10 @@ class WebFileCompleteEndpointTest {
         };
         face = WebFace.start(0, ctx, ctx.as(ToolsView.class).tools(), session, stub,
                 null, null, tempDir.resolve("out"), 50, null, () -> false, null);
-        // 补全服务经装配器直传（与 WebPlugin 同路径；不走服务声明）
-        face.setFileRefs(fileRefs);
+        // 补全服务走服务注册表（与 WebPlugin 同路径，M28 工单 07 服务化）
+        if (fileRefs != null) {
+            ctx.provide(FileReferenceService.SERVICE_NAME, fileRefs);
+        }
         return face;
     }
 

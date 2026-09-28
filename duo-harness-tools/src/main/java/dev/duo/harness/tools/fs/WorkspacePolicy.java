@@ -87,6 +87,11 @@ public final class WorkspacePolicy {
         return root;
     }
 
+    /** 相对路径按 workspace 根解析、绝对路径原样，统一规范化（两消费方共用形态，M28 工单 08 消重）。 */
+    private Path resolveAgainstRoot(Path target) {
+        return target.isAbsolute() ? target.normalize() : root.resolve(target).normalize();
+    }
+
     /**
      * 路径包含性判定：目标规范化（现存路径 realpath 解析符号链接）后必须落在
      * workspace 根之内。相对路径按根解析；`..` 穿越在规范化后自然落到根外。
@@ -94,7 +99,7 @@ public final class WorkspacePolicy {
     public boolean contains(Path target) {
         // 统一符号链接基准：现存文件 toRealPath（解析符号链接），不存在的路径
         // realpath 最近存在祖先 + 拼接文件名——避免 macOS /var → /private/var 基准漂移
-        Path resolved = target.isAbsolute() ? target.normalize() : root.resolve(target).normalize();
+        Path resolved = resolveAgainstRoot(target);
         // 现存文件（含符号链接）→ realpath 检测越界
         if (Files.exists(resolved)) {
             try {
@@ -156,8 +161,7 @@ public final class WorkspacePolicy {
         if (raw == null || raw.isBlank()) {
             return null;
         }
-        Path target = Path.of(raw);
-        return target.isAbsolute() ? target.normalize() : root.resolve(target).normalize();
+        return resolveAgainstRoot(Path.of(raw));
     }
 
     /** realpath 或退化 normalize（macOS /var → /private/var 等符号链接路径必须在同一基准上比较）。 */

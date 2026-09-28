@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  *
  * @param approveCallback 批准后的装配侧回调（摘除计划指导片段等；由装配层提供）
  */
-public final class ExitPlanModeTool implements ToolDefinition {
+public final class ExitPlanModeTool implements ToolDefinition, PlanSessionBinder {
 
     /** 工具名（模型侧调用名）。 */
     public static final String NAME = "exit_plan_mode";
@@ -64,6 +64,7 @@ public final class ExitPlanModeTool implements ToolDefinition {
      * 补记一个呈现位的装配绑定（后来呈现位装配时调用——工具实例先到先得，各记各账）。
      * 换绑感知由供给器自身保证（呈现位传 holder::current 同款）。
      */
+    @Override
     public void bindSession(String presenterId, java.util.function.Supplier<Session> session,
                             Runnable approvedCallback) {
         Objects.requireNonNull(session, "session");

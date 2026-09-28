@@ -4,6 +4,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 
+import dev.duo.harness.core.api.boot.Cwd;
 import java.util.Set;
 
 /**
@@ -31,7 +32,7 @@ public final class PermissionRulesPlugin implements Plugin<Void> {
     @Override
     public Disposable apply(Context ctx, Void config) {
         PermissionRules rules = PermissionRules.load(
-                PermissionRules.findProjectRoot(java.nio.file.Path.of(System.getProperty("user.dir"))));
+                PermissionRules.findProjectRoot(Cwd.path()));
         return ctx.provide(PermissionRules.SERVICE_NAME, rules);
     }
 }

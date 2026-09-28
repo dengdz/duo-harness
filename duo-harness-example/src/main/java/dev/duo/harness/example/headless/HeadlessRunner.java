@@ -7,6 +7,7 @@ import dev.duo.harness.agent.governance.ContextGovernance;
 import dev.duo.harness.agent.presenter.PresenterAssembly;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.llm.LlmAdapter;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
@@ -59,7 +60,7 @@ public final class HeadlessRunner {
     public static int run(Services s, String prompt, int maxIterations) {
         PrintStream out = s.out();
         Projector projector = new Projector(out);
-        out.println(NdjsonFrames.sessionFrame(s.session().id(), System.getProperty("user.dir")));
+        out.println(NdjsonFrames.sessionFrame(s.session().id(), Cwd.text()));
         s.session().addListener((index, event) -> projector.onSessionEvent(event));
         try {
             ContextGovernance governance = PresenterAssembly.governance(s.llm());
@@ -84,9 +85,13 @@ public final class HeadlessRunner {
             dev.duo.harness.agent.prompt.AgentsMdChain agentsMd =
                     s.root().hasService(dev.duo.harness.agent.prompt.AgentsMdChain.SERVICE_NAME)
                             ? s.root().as(HeadlessAgentsMdView.class).agentsMd() : null;
-            ChatAgent agent = PresenterAssembly.chatAgent(s.llm(), s.tools(), s.session(),
-                    s.prompts(), maxIterations, governance, HeadlessAnswerer.PRESENTER_ID,
-                    memory, agentsMd);
+            ChatAgent agent = PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
+                    s.llm(), s.tools(), s.session(), s.prompts(), maxIterations,
+                    dev.duo.harness.agent.internal.ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+                    HeadlessAnswerer.PRESENTER_ID,
+                    new dev.duo.harness.agent.AgentCapabilities(governance, null, false, null, null,
+                            memory == null ? null : memory::metaUserSection,
+                            agentsMd == null ? null : agentsMd::section)));
             AgentReply reply = agent.send(prompt, projector.listener());
             var endFields = NdjsonFrames.fields("phase", "turn_end");
             if (projector.lastUsage() != null) {

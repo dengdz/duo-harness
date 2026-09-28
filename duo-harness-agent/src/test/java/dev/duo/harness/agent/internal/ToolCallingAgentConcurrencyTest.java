@@ -232,7 +232,7 @@ class ToolCallingAgentConcurrencyTest {
                         new ProbeTool("alpha", 1, ProbeTool.Safety.SAFE, serialJournal),
                         new ProbeTool("beta", 1, ProbeTool.Safety.SAFE, serialJournal),
                         new ProbeTool("gamma", 1, ProbeTool.Safety.SAFE, serialJournal)),
-                serialSession, new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 1, null);
+                serialSession, new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 1, null, null);
 
         parallel.send("问", AgentListener.NONE);
         serial.send("问", AgentListener.NONE);
@@ -325,7 +325,7 @@ class ToolCallingAgentConcurrencyTest {
                 new ToolCallRequest("c1", "one", "{}"),
                 new ToolCallRequest("c2", "two", "{}"),
                 new ToolCallRequest("c3", "three", "{}"))),
-                tools, session, new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 1, null);
+                tools, session, new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 1, null, null);
 
         long start = System.nanoTime();
         agent.send("串行排障", AgentListener.NONE);
@@ -401,7 +401,7 @@ class ToolCallingAgentConcurrencyTest {
         Session session = newSession();
         ToolCallingAgent agent = new ToolCallingAgent(twoTurnAdapter(calls),
                 toolsWith(probes), session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 2, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("你是助手"), 10, 2, null, null);
 
         agent.send("排队补位", AgentListener.NONE);
 

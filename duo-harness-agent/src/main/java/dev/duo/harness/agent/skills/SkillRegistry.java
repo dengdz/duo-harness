@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.duo.harness.core.api.Disposable;
+import dev.duo.harness.core.api.boot.Cwd;
 import java.nio.file.WatchKey;
 import dev.duo.harness.core.api.boot.DuoHome;
 
@@ -107,7 +108,7 @@ public final class SkillRegistry {
 
     /** 默认发现根（优先级降序）：项目 .duo/skills → 项目 .agents/skills → ~/.duo/skills → ~/.agents/skills。 */
     public static List<Path> defaultRoots() {
-        Path cwd = Path.of(System.getProperty("user.dir"));
+        Path cwd = Cwd.path();
         Path projectRoot = findProjectRoot(cwd);
         Path userHome = Path.of(System.getProperty("user.home"));
         List<Path> roots = new ArrayList<>();

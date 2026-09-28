@@ -5,6 +5,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolsService;
 
@@ -151,7 +152,7 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
             }
         }
         Path workspaceRoot = root != null
-                ? Path.of(root) : Path.of(System.getProperty("user.dir"));
+                ? Path.of(root) : Cwd.path();
         return new WorkspacePolicy(workspaceRoot, mode);
     }
 

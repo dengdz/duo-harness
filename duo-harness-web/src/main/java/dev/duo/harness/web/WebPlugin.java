@@ -9,6 +9,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.agent.ChatAgent;
@@ -136,13 +137,18 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ctx.hasService(dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME)
                         ? ctx.as(WebSessionQueryView.class).sessionQuery() : null;
         // @file 补全服务（M21 工单 07，ADR-0022 决策 7）：workspace 在场才建——
-        // 索引以 workspace 根为界。本插件自产自用（补全端点直取），**不进
-        // optionalInject 声明**：自产自依赖会让内核 recheck 循环重跑 apply
+        // 索引以 workspace 根为界。M28 工单 07 服务化：构建即 provide 发布（服务注册表
+        // 从此有常驻提供方，第三方可替换/补全实现），消费方（补全端点）经 ctx 惰性寻址
+        // 取用。本插件**不进 inject/optionalInject 声明**：自产自依赖会让内核 recheck
+        // 循环重跑 apply（旁路时代的注释保留此坑位记录）
         dev.duo.harness.agent.fileref.FileReferenceService fileRefs =
                 ctx.hasService(WorkspacePolicy.SERVICE_NAME)
                         ? new dev.duo.harness.agent.fileref.FileReferenceService(
                                 ctx.as(WebWorkspaceView.class).workspace().root())
                         : null;
+        if (fileRefs != null) {
+            ctx.provide(dev.duo.harness.agent.fileref.FileReferenceService.SERVICE_NAME, fileRefs);
+        }
         // plan 态 bash 只读判定器（M24 工单 04）：workspace 在场时构建（与裁决链 detector
         // 同源同参，只读无状态）；缺席即 null，plan 态 bash 到达 fail-closed 拒
         dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector =
@@ -165,7 +171,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 永远失效。自建的空会话由 Session.latest 的空会话跳过规则隔离，不污染 CLI 的
         // 下次续接；恢复上次 Web 对话走 /switch。
         Session session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
-                Path.of(System.getProperty("user.dir")));
+                Cwd.path());
         dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
         // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置；governance 段
         // 可省（缺省常量，0.7.0 行为），配置错误（未知字段/类型/越界）启动即 FAILED 点名
@@ -177,10 +183,14 @@ public final class WebPlugin implements Plugin<JsonNode> {
         int maxParallelToolCalls = PresenterAssembly.parseMaxParallelToolCalls(config);
         // 管线缺省超时（ADR-0018）：config.pipelineTimeoutMs 可省，缺省 120s——挂工具执行段兜底
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
-        ChatAgent agent = PresenterAssembly.chatAgent(
-                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls, governance,
-                ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery, planBashDetector,
-                memory, agentsMd);
+        ChatAgent agent = PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
+                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls,
+                ChatAgent.PRESENTER_WEB,
+                new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
+                        fileDelivery,
+                        planBashDetector == null ? null : planBashDetector::isReadOnlyBash,
+                        memory == null ? null : memory::metaUserSection,
+                        agentsMd == null ? null : agentsMd::section)));
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -226,7 +236,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         PresenterAssembly.registerTodoWriteTool(ctx, tools, face::currentSession);
         // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
         PresenterAssembly.registerPresentTool(ctx, tools, face::currentSession,
-                Path.of(System.getProperty("user.dir")));
+                Cwd.path());
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, adapter, governanceTuning, face::currentSession);
@@ -234,7 +244,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 会话变更回调重建 agent（ToolCallingAgent 持有 final 会话引用，不重建即分脑）。
         // 回调**返回**新 agent 归标签上下文（M24 工单 07）——不再有全局单槽 setAgent
         face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
-                Path.of(System.getProperty("user.dir"))));
+                Cwd.path()));
         // 会话变更回调是单回调槽（覆盖式 setter，非多播）——全部换绑动作必须合并在这一次
         // 注册里。教训（BUG-20260916-01）：第二处注册会覆盖"换绑重建 agent"，切回分脑
         //（agent 写已 close 的旧会话，发消息必报错）。标题生成（工单 M13-06）随换绑同源
@@ -255,16 +265,18 @@ public final class WebPlugin implements Plugin<JsonNode> {
                     }
                 });
             }
-            return PresenterAssembly.chatAgent(
-                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls, governance,
-                    ChatAgent.PRESENTER_WEB, variants, llm.vision(), fileDelivery,
-                    planBashDetector, memory, agentsMd);
+            return PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
+                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls,
+                    ChatAgent.PRESENTER_WEB,
+                    new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
+                            fileDelivery,
+                            planBashDetector == null ? null : planBashDetector::isReadOnlyBash,
+                            memory == null ? null : memory::metaUserSection,
+                            agentsMd == null ? null : agentsMd::section)));
         });
         SessionTitles.attach(session, adapter);
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
-        // 补全服务交给 face（自产自用直传，不走服务声明——见上方 fileRefs 注释）
-        face.setFileRefs(fileRefs);
         // tool/result 后台重建（bash/write 改文件树后索引陈旧）：初始会话监听——
         // 换绑在 onSessionChanged 回调里重挂；旧会话 close 清空监听器，不泄漏
         if (fileRefs != null) {

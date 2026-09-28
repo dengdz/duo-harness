@@ -7,6 +7,7 @@ import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.agent.prompt.PromptFragment;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.prompt.PromptsView;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.tools.ToolsService;
 
 import java.nio.file.Path;
@@ -63,7 +64,7 @@ public final class MemoryPlugin implements Plugin<JsonNode> {
         long budget = config != null && config.hasNonNull(BUDGET_CHARS_CONFIG)
                 && config.get(BUDGET_CHARS_CONFIG).asLong() > 0
                 ? config.get(BUDGET_CHARS_CONFIG).asLong() : MemoryBook.DEFAULT_BUDGET_CHARS;
-        MemoryBook memory = MemoryBook.load(Path.of(System.getProperty("user.dir")), budget);
+        MemoryBook memory = MemoryBook.load(Cwd.path(), budget);
         Disposable published = ctx.provide(MemoryBook.SERVICE_NAME, memory);
         PromptRegistry prompts = ctx.as(PromptsView.class).prompts();
         // 写通道：tools 行在场注册 memory_write（追加式独占工具，事件痕走工具

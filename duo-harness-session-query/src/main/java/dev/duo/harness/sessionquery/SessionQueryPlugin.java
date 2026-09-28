@@ -5,6 +5,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.tools.ToolsService;
 
@@ -49,7 +50,7 @@ public final class SessionQueryPlugin implements Plugin<JsonNode> {
         int maxResults = parseMaxResults(config);
         // cwd 授权边界（M26-03，ADR-0028 决策三）：检索只出本目录会话——取值与会话落盘侧同源
         FtsSessionIndex index = new FtsSessionIndex(sessionsDir,
-                Path.of(System.getProperty("user.dir")));
+                Cwd.path());
         Disposable published = ctx.provide(SessionQueryService.SERVICE_NAME, index);
         if (ctx.hasService(ToolsService.SERVICE_NAME)) {
             ctx.as(SessionQueryToolsView.class).tools()

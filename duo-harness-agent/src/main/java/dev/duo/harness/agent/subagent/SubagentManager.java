@@ -4,6 +4,7 @@ import dev.duo.harness.agent.subagent.backend.SubagentBackend;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
 
@@ -235,7 +236,7 @@ public final class SubagentManager {
         // 子会话继承父会话 cwd（检索授权按目录归属——父子同域；父无 cwd 的旧会话回退进程目录）
         Path childCwd = parentSession.cwd() != null
                 ? parentSession.cwd()
-                : Path.of(System.getProperty("user.dir"));
+                : Cwd.path();
         Session child = Session.create(subagentsDir, childCwd);
         String agentId = child.id();
 

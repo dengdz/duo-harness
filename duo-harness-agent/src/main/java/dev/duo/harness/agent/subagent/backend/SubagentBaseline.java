@@ -1,5 +1,6 @@
 package dev.duo.harness.agent.subagent.backend;
 
+import dev.duo.harness.core.api.boot.Cwd;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -63,7 +64,7 @@ final class SubagentBaseline {
      */
     static String environmentBlock() {
         return "## 运行环境\n"
-                + "- 工作目录：" + System.getProperty("user.dir") + "\n"
+                + "- 工作目录：" + Cwd.text() + "\n"
                 + "- 操作系统：" + System.getProperty("os.name") + "\n"
                 + "- 当前时间：" + LocalDateTime.now().format(TIME_FORMATTER);
     }

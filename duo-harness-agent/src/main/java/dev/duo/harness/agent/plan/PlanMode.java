@@ -1,5 +1,6 @@
 package dev.duo.harness.agent.plan;
 
+import dev.duo.harness.agent.PlanBashGate;
 import dev.duo.harness.agent.todo.TodoWriteTool;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
@@ -89,19 +90,19 @@ public final class PlanMode {
     /**
      * 执行兜底裁决（M24 工单 04，ADR-0026 决策三）：plan 态下白名单外工具到达
      * pre-execute 即拒——返回 deny 理由（回模型，走 tool/result 错误形态，无悬置态）；
-     * 放行返回 null。非 plan 态恒放行。bash 经只读判定器参数级裁决（判定器 null 时
+     * 放行返回 null。非 plan 态恒放行。bash 经只读裁决端口参数级裁决（端口 null 时
      * fail-closed 一律拒——无法证明只读即不冒险）。
      *
-     * @param bashReadonlyDetector bash 只读判定器（可 null——fs 工具缺席的纯对话装配
-     *                             无 bash 可言，此时 plan 态 bash 到达即拒）
+     * @param bashReadonlyGate bash 只读裁决端口（可 null——fs 工具缺席的纯对话装配
+     *                         无 bash 可言，此时 plan 态 bash 到达即拒）
      */
     public static String denyReason(Session session, String toolName, String argsJson,
-                                    dev.duo.harness.tools.fs.ReadOnlyBashDetector bashReadonlyDetector) {
+                                    PlanBashGate bashReadonlyGate) {
         if (!isActive(session) || WHITELIST.contains(toolName)) {
             return null;
         }
-        if (TOOL_BASH.equals(toolName) && bashReadonlyDetector != null
-                && bashReadonlyDetector.isReadOnlyBash(extractCommand(argsJson))) {
+        if (TOOL_BASH.equals(toolName) && bashReadonlyGate != null
+                && bashReadonlyGate.isReadOnlyBash(extractCommand(argsJson))) {
             return null; // ADR：只读 bash 策略表判定通过者在白名单（参数级裁决落点）
         }
         return "[plan] 计划模式下工具 " + toolName + " 不可用（仅只读探索、web_fetch/web_search、"

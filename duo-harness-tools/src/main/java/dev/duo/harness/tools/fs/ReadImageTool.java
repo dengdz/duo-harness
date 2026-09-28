@@ -18,7 +18,7 @@ import java.nio.file.Path;
  * 读类三档放行（WorkspacePolicy.READ_TOOLS）；纯只读无共享可变状态（附件库写入
  * 幂等——内容寻址），并发安全。</p>
  */
-public final class ReadImageTool implements ToolDefinition {
+public final class ReadImageTool implements ToolDefinition, VisionGateAware {
 
     public static final String NAME = "read_image";
 
@@ -42,7 +42,7 @@ public final class ReadImageTool implements ToolDefinition {
      * 注册时拿不到 vision 真值——呈现位装配后按 llm.vision 回填（setAgent 同款
      * 装配器直传模式）。
      */
-    public void setVisionGate(java.util.function.BooleanSupplier gate) {
+    @Override public void setVisionGate(java.util.function.BooleanSupplier gate) {
         this.visionGate = java.util.Objects.requireNonNull(gate, "gate");
     }
 

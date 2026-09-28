@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.agent.AgentReply;
 import dev.duo.harness.agent.ChatAgent;
 import dev.duo.harness.core.api.Context;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.session.Session;
 import dev.duo.harness.session.SessionEvent;
 import dev.duo.harness.tools.ToolsPlugin;
@@ -38,7 +39,7 @@ public final class SubagentWebDemoMain {
         Files.createDirectories(sessionsDir);
 
         // 父会话：两轮对话 + 三张子任务卡的引用事件（SSE 尾部快照整窗回放给页面）
-        Session parent = Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+        Session parent = Session.create(sessionsDir, Cwd.path());
         parent.append(SessionEvent.userMessage("帮我调研一下 X 的可行性"));
         parent.append(SessionEvent.toolCall("c1", "spawn",
                 "{\"template\":\"researcher\",\"task\":\"调研 X 的可行性\"}"));

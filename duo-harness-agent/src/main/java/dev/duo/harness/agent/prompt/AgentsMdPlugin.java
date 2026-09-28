@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 
 import java.nio.file.Path;
@@ -40,7 +41,7 @@ public final class AgentsMdPlugin implements Plugin<JsonNode> {
         long budget = budgetNode != null && budgetNode.canConvertToLong() && budgetNode.asLong() > 0
                 ? budgetNode.asLong() : AgentsMd.DEFAULT_BUDGET_CHARS;
         AgentsMdChain chain = new AgentsMdChain(
-                Path.of(System.getProperty("user.dir")),
+                Cwd.path(),
                 DuoHome.resolve().root().resolve(AgentsMd.FILE_NAME), budget);
         return ctx.provide(AgentsMdChain.SERVICE_NAME, chain);
     }

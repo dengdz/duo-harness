@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.core.api.events.WaterfallListener;
 import dev.duo.harness.tools.ToolExecution;
@@ -259,7 +260,7 @@ public final class HooksPlugin implements Plugin<Void> {
         payload.put("hook_event_name", event);
         payload.put("tool_name", toolName);
         payload.set("tool_input", toolInput);
-        payload.put("cwd", System.getProperty("user.dir"));
+        payload.put("cwd", Cwd.text());
         if (presenterId != null) {
             payload.put("presenter_id", presenterId);
         }

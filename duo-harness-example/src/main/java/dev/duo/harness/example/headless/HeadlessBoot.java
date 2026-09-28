@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.Boot;
+import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
 import dev.duo.harness.agent.presenter.PresenterAssembly;
@@ -77,7 +78,7 @@ public final class HeadlessBoot {
         Path sessionsDir = DuoHome.resolve().resolveDir("agent-sessions");
         try {
             if (sessionId == null) {
-                return Session.create(sessionsDir, Path.of(System.getProperty("user.dir")));
+                return Session.create(sessionsDir, Cwd.path());
             }
             Path jsonl = sessionsDir.resolve(sessionId + ".jsonl");
             if (!Files.isRegularFile(jsonl)) {

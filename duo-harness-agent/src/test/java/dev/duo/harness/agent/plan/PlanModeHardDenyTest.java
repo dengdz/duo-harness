@@ -2,8 +2,10 @@ package dev.duo.harness.agent.plan;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import dev.duo.harness.agent.AgentCapabilities;
 import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.AgentReply;
+import dev.duo.harness.agent.AgentSpec;
 import dev.duo.harness.agent.internal.ToolCallingAgent;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Context;
@@ -152,10 +154,10 @@ class PlanModeHardDenyTest {
         ScriptedTools tools = new ScriptedTools(List.of(
                 tool("read"), tool("glob"), tool("write"), tool("bash"), tool("edit")));
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(), captured), tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                AgentCapabilities.none()));
 
         agent.send("帮我看看", none());
 
@@ -178,10 +180,10 @@ class PlanModeHardDenyTest {
         session.append(PlanMode.exitedEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("read"), tool("write")));
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(), captured), tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                AgentCapabilities.none()));
 
         agent.send("开工", none());
 
@@ -201,12 +203,12 @@ class PlanModeHardDenyTest {
         session.append(PlanMode.enteredEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("write")));
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(new ToolCallRequest("c1", "write", "{\"path\":\"x\",\"content\":\"y\"}")),
                         captured),
                 tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                AgentCapabilities.none()));
 
         AgentReply reply = agent.send("帮我写文件", none());
 
@@ -227,12 +229,13 @@ class PlanModeHardDenyTest {
         Session session = newSession();
         session.append(PlanMode.enteredEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("bash")));
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(new ToolCallRequest("c1", "bash", "{\"command\":\"ls\"}")),
                         new ArrayList<>()),
                 tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 4,
-                null, null, null, false, null, new ReadOnlyBashDetector(tempDir));
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 4, null,
+                new AgentCapabilities(null, null, false, null,
+                        new ReadOnlyBashDetector(tempDir)::isReadOnlyBash, null, null)));
 
         agent.send("看看目录", none());
 
@@ -246,12 +249,13 @@ class PlanModeHardDenyTest {
         Session session = newSession();
         session.append(PlanMode.enteredEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("bash")));
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(new ToolCallRequest("c1", "bash", "{\"command\":\"rm -rf /tmp/x\"}")),
                         new ArrayList<>()),
                 tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, new ReadOnlyBashDetector(tempDir));
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                new AgentCapabilities(null, null, false, null,
+                        new ReadOnlyBashDetector(tempDir)::isReadOnlyBash, null, null)));
 
         agent.send("清目录", none());
 
@@ -270,12 +274,12 @@ class PlanModeHardDenyTest {
         Session session = newSession();
         session.append(PlanMode.enteredEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("bash")));
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(new ToolCallRequest("c1", "bash", "{\"command\":\"ls\"}")),
                         new ArrayList<>()),
                 tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                AgentCapabilities.none()));
 
         agent.send("看看目录", none());
 
@@ -292,14 +296,14 @@ class PlanModeHardDenyTest {
         Session session = newSession();
         session.append(PlanMode.enteredEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("write")));
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(
                         new ToolCallRequest("c1", "write", "{\"path\":\"a\"}"),
                         new ToolCallRequest("c2", "write", "{\"path\":\"b\"}")),
                         new ArrayList<>()),
                 tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 4,
-                null, null, null, false, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 4, null,
+                AgentCapabilities.none()));
 
         agent.send("写两个文件", none());
 
@@ -319,12 +323,12 @@ class PlanModeHardDenyTest {
         session.append(PlanMode.enteredEvent());
         ScriptedTools tools = new ScriptedTools(List.of(tool("read"), tool("exit_plan_mode")));
         List<ChatRequest> captured = new ArrayList<>();
-        ToolCallingAgent agent = new ToolCallingAgent(
+        ToolCallingAgent agent = new ToolCallingAgent(new AgentSpec(
                 twoTurnAdapter(List.of(new ToolCallRequest("c1", "read", "{}")),
                         captured),
                 tools, session,
-                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1,
-                null, null, null, false, null, null);
+                new dev.duo.harness.agent.prompt.PromptRegistry("测试提示"), 10, 1, null,
+                AgentCapabilities.none()));
 
         agent.send("先探索", none());
 
