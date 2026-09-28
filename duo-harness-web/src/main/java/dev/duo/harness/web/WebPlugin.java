@@ -184,14 +184,30 @@ public final class WebPlugin implements Plugin<JsonNode> {
         int maxParallelToolCalls = PresenterAssembly.parseMaxParallelToolCalls(config);
         // 管线缺省超时（ADR-0018）：config.pipelineTimeoutMs 可省，缺省 120s——挂工具执行段兜底
         PresenterAssembly.mountPipelineTimeout(ctx, tools, PresenterAssembly.parsePipelineTimeoutMs(config));
-        ChatAgent agent = PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
-                adapter, tools, session, prompts, maxIterations, maxParallelToolCalls,
-                PRESENTER_ID,
-                new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
-                        fileDelivery,
-                        planBashDetector == null ? null : planBashDetector::isReadOnlyBash,
-                        memory == null ? null : memory::metaUserSection,
-                        agentsMd == null ? null : agentsMd::section)));
+        // agent 构建单点（C2 工单 06）：初始会话与 onSessionChanged 换绑共用同一构建
+        // 函数——此前两处逐参平行展开，新增能力项漏改一处即「初始与换绑行为分叉」
+        java.util.function.Function<dev.duo.harness.session.Session, ChatAgent> buildAgent =
+                s -> PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
+                        adapter, tools, s, prompts, maxIterations, maxParallelToolCalls,
+                        PRESENTER_ID,
+                        new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
+                                fileDelivery,
+                                planBashDetector == null ? null : planBashDetector::isReadOnlyBash,
+                                memory == null ? null : memory::metaUserSection,
+                                agentsMd == null ? null : agentsMd::section)));
+        ChatAgent agent = buildAgent.apply(session);
+        // fileRefs 失效监听挂载单点（C2 工单 06）：初始会话与换绑回调共用——
+        // 此前同一段监听器代码两份展开
+        java.util.function.Consumer<dev.duo.harness.session.Session> attachFileRefs =
+                s -> {
+                    if (fileRefs != null) {
+                        s.addListener((index, event) -> {
+                            if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
+                                fileRefs.markStale();
+                            }
+                        });
+                    }
+                };
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
         WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
 
@@ -259,36 +275,17 @@ public final class WebPlugin implements Plugin<JsonNode> {
             // 会话级规则随会话生命周期（ADR-0026 决策一）：新会话无规则事件即清空
             PresenterAssembly.restorePermissionRules(ctx, fresh);
             // 换绑后的会话同样挂 tool/result 监听（旧会话随 close 清空监听器，不泄漏）
-            if (fileRefs != null) {
-                fresh.addListener((index, event) -> {
-                    if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
-                        fileRefs.markStale();
-                    }
-                });
-            }
-            return PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
-                    adapter, tools, fresh, prompts, maxIterations, maxParallelToolCalls,
-                    PRESENTER_ID,
-                    new dev.duo.harness.agent.AgentCapabilities(governance, variants, llm.vision(),
-                            fileDelivery,
-                            planBashDetector == null ? null : planBashDetector::isReadOnlyBash,
-                            memory == null ? null : memory::metaUserSection,
-                            agentsMd == null ? null : agentsMd::section)));
+            attachFileRefs.accept(fresh);
+            return buildAgent.apply(fresh);
         });
         SessionTitles.attach(session, adapter);
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
         // 补全服务交给 face（自产自用直传，不走服务声明——见上方 fileRefs 注释）
         face.setFileRefs(fileRefs);
-        // tool/result 后台重建（bash/write 改文件树后索引陈旧）：初始会话监听——
-        // 换绑在 onSessionChanged 回调里重挂；旧会话 close 清空监听器，不泄漏
-        if (fileRefs != null) {
-            session.addListener((index, event) -> {
-                if (dev.duo.harness.session.SessionEvent.TOOL_RESULT.equals(event.type())) {
-                    fileRefs.markStale();
-                }
-            });
-        }
+        // tool/result 后台重建（bash/write 改文件树后索引陈旧）：初始会话与换绑共用
+        // 同一监听器挂载单点（旧会话 close 清空监听器，不泄漏）
+        attachFileRefs.accept(session);
         if (authToken != null) {
             System.out.println("Web 面已启动（鉴权开启）: http://127.0.0.1:" + face.port()
                     + "/?token=" + authToken);
