@@ -1,8 +1,7 @@
 package dev.duo.harness.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.duo.harness.agent.AgentCapabilities;
-import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.AgentCapabilities;import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.AgentSpec;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.ChatAgent;
@@ -41,6 +40,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * CLI 呈现位插件（ADR-0011，与 WebPlugin 对称）：终端 REPL——LLM 自主调用工具
@@ -89,6 +90,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     /** 呈现位身份（M28 工单 05）：id 由呈现位自行声明——内核不再钉死合法 id 集，
      * 第三呈现位零内核改动接入（回答者注册面即在场登记）。 */
     public static final String PRESENTER_ID = "cli";
+
+    private static final Logger log = LoggerFactory.getLogger(CliPlugin.class);
 
     private final BufferedReader in;
     private final PrintStream out;
@@ -424,12 +427,19 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
     }
 
-    /** 权限规则服务可选解析：缺席（未挂 permission-rules 插件）或解析失败返回 null。 */
+    /**
+     * 权限规则服务可选解析（C2 工单 17 语义修正）：未挂载（缺席 permission-rules
+     * 插件）返回 null 属正常；服务在场但解析/视图失败是<b>故障</b>——留 warn 日志
+     * 排障（此前 catch 一切混同两态，a/s 键静默失灵只能盲猜根因）。
+     */
     private static dev.duo.harness.tools.fs.PermissionRules resolvePermissionRules(Context ctx) {
+        if (!ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)) {
+            return null;
+        }
         try {
-            return ctx.hasService(dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME)
-                    ? ctx.as(CliPermissionRulesView.class).permissionRules() : null;
+            return ctx.as(CliPermissionRulesView.class).permissionRules();
         } catch (Exception e) {
+            log.warn("permission-rules 服务解析失败（a/s 键与规则管理本会话不可用）: {}", e.toString());
             return null;
         }
     }
@@ -1061,13 +1071,17 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
     }
 
-    /** 摘除计划指导片段（Disposable 声明受检异常；失败不阻断流程）。 */
+    /**
+     * 摘除计划指导片段（C2 工单 17 合一）：失败不阻断流程——树已停止时注销器可能
+     * 失效。此前本方法 rethrow（与 javadoc「不阻断」相反）且 goIdle 另有一份真吞
+     * 的内联同型——同一动作两种失败语义收敛为本单点。
+     */
     private static void disposeGuidance(PlanHolder plan) {
         if (plan.guidance != null) {
             try {
                 plan.guidance.dispose();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+            } catch (Exception ignored) {
+                // 树已停止时注销器可能失效，忽略（不阻断收尾/换绑主流程）
             }
             plan.guidance = null;
         }
@@ -1075,14 +1089,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
     /** idle 收尾：循环退出（/exit、EOF 或 stop）后的统一清理——锁释放、回答者摘除、指导片段摘除。 */
     private void goIdle(SessionHolder holder, PlanHolder plan) {
-        if (plan.guidance != null) {
-            try {
-                plan.guidance.dispose();
-            } catch (Exception ignored) {
-                // 树已停止时注销器可能失效，忽略
-            }
-            plan.guidance = null;
-        }
+        disposeGuidance(plan);
         holder.current().close(); // 释放会话独占锁（他处可续接）
         detachAnswerer();
         out.println("=== 对话结束 ===");

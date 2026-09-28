@@ -95,6 +95,11 @@ public final class WorkspacePolicy {
     /**
      * 路径包含性判定：目标规范化（现存路径 realpath 解析符号链接）后必须落在
      * workspace 根之内。相对路径按根解析；`..` 穿越在规范化后自然落到根外。
+     *
+     * <p>异常方向 fail-closed（C2 工单 17）：realpath 失败按<b>区外</b>处理——
+     * 返回 false 后写类经 {@code decide} 走 ask（多一道审批），而非免审批放行；
+     * 此前两处兜底放行（注释误称「保守放行」）意味着权限受限子树 / FUSE /
+     * 竞态下区外写免审批，方向性错误。</p>
      */
     public boolean contains(Path target) {
         // 统一符号链接基准：现存文件 toRealPath（解析符号链接），不存在的路径
@@ -104,8 +109,9 @@ public final class WorkspacePolicy {
         if (Files.exists(resolved)) {
             try {
                 return resolved.toRealPath().startsWith(root);
-            } catch (IOException ignored) { }
-            return true; // realpath 失败保守放行（不误判已有文件）
+            } catch (IOException ignored) {
+                return false; // realpath 失败：按区外走 ask（fail-closed）
+            }
         }
         // 不存在 → 逐级向上找最近存在的祖先，realpath 后拼接剩余文件名
         Path suffix = resolved.getFileName();
@@ -120,7 +126,7 @@ public final class WorkspacePolicy {
                 parent = parent.getParent();
             }
         }
-        return true; // 整条链都不存在：保守放行
+        return false; // 全链 realpath 失败（连文件系统根都解析不了）：按区外走 ask（fail-closed）
     }
 
     /**

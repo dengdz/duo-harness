@@ -3,6 +3,7 @@ package dev.duo.harness.mcp.internal;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
+import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.tools.ConnectorStatusBoard;
 import dev.duo.harness.tools.ToolsService;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -83,14 +84,20 @@ public final class McpClientSupport {
     }
 
     /**
-     * 状态板服务发布（幂等兜底）：多连接行理论上由 Boot 串行装配不会竞态，
-     * 此处对「已发布再 provide」的重复注册吞掉异常按复用处理（防埋雷）。
+     * 状态板服务发布（幂等兜底，C2 工单 17 收紧）：hasService 预探测已发布场景；
+     * provide 仍失败时只对 {@link PluginException}（探测与发布窗口内另一连接行
+     * 抢先注册的重复发布、树停止期拒绝）按复用/忽略处理——此前
+     * {@code catch (RuntimeException)} 吞掉一切失败（含真正的注册故障），状态板
+     * 可能实际未发布而无人知晓。
      */
     private static Disposable provideBoardService(Context ctx, ConnectorStatusBoard board) {
+        if (ctx.hasService(ConnectorStatusBoard.SERVICE_NAME)) {
+            return () -> { }; // 已被首行发布：按复用处理
+        }
         try {
             return ctx.provide(ConnectorStatusBoard.SERVICE_NAME, board);
-        } catch (RuntimeException e) {
-            return () -> { }; // 已被首行发布：按复用处理
+        } catch (PluginException e) {
+            return () -> { }; // 探测窗口内的重复发布按复用；停止期注册按忽略
         }
     }
 }
