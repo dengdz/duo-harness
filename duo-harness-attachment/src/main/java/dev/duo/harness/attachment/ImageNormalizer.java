@@ -66,33 +66,46 @@ final class ImageNormalizer {
     /** 缩放至规范化预算（像素 + 边长），重编码至字节预算内；逐次缩边降质，封顶尝试后接受。 */
     private static Normalized transform(BufferedImage source, String format, AttachmentConfig config) {
         boolean alpha = source.getColorModel().hasAlpha();
-        // 初始 scale 由像素/边长预算驱动（只缩不放）：字节预算超限时循环内再逐次缩边
+        // 初始 scale 由像素/边长预算驱动（只缩不放）：字节预算超限时单点实现内逐次缩边
         double pixels = (long) source.getWidth() * source.getHeight();
         double scale = Math.min(
                 Math.sqrt(config.normalizedImageMaxPixels() / pixels),
                 (double) config.normalizedImageMaxDimension() / Math.max(source.getWidth(), source.getHeight()));
-        if (scale > 1.0) {
-            scale = 1.0;
-        }
-        for (int attempt = 0; attempt < MAX_ENCODE_ATTEMPTS; attempt++) {
-            int targetW = Math.max(1, (int) Math.round(source.getWidth() * scale));
-            int targetH = Math.max(1, (int) Math.round(source.getHeight() * scale));
-            BufferedImage scaled;
-            try {
-                scaled = scale < 1.0
-                        ? Thumbnails.of(source).size(targetW, targetH).asBufferedImage() : source;
-            } catch (IOException e) {
-                throw new AttachmentException("图片缩放失败: " + e.getMessage());
+        ScaledEncode result = scaledEncode(source, scale, format,
+                alpha || format.equals("png"), config.normalizedImageMaxBytes());
+        return new Normalized(result.bytes(), "image/" + format, result.width(), result.height());
+    }
+
+    /** 缩放重编码产物：字节 + 最终尺寸（规范化与请求变体两条管线共用载体）。 */
+    record ScaledEncode(byte[] bytes, int width, int height) {
+    }
+
+    /**
+     * 缩放 + 质量阶梯重编码单点（C2 工单 11）：按初始 scale 只缩不放，编码超字节
+     * 预算则逐次缩边（×0.8）降质（0.9 起步、每次 -0.2、下限 0.4），封顶尝试后
+     * 接受最后一次结果。规范化与请求变体两条管线共用——此前双份实现已现分叉
+     * 前兆（尝试次数一处常量一处裸写），调参自此只改一处。
+     */
+    static ScaledEncode scaledEncode(BufferedImage source, double initialScale, String format,
+                                     boolean keepAlpha, long byteBudget) {
+        double scale = Math.min(1.0, initialScale);
+        try {
+            for (int attempt = 0; attempt < MAX_ENCODE_ATTEMPTS; attempt++) {
+                int w = Math.max(1, (int) Math.round(source.getWidth() * scale));
+                int h = Math.max(1, (int) Math.round(source.getHeight() * scale));
+                BufferedImage scaled = scale < 1.0
+                        ? Thumbnails.of(source).size(w, h).asBufferedImage() : source;
+                double quality = Math.max(0.4, 0.9 - attempt * 0.2);
+                byte[] encoded = encode(keepAlpha ? scaled : flatten(scaled), format, quality);
+                if (encoded.length <= byteBudget || attempt == MAX_ENCODE_ATTEMPTS - 1) {
+                    return new ScaledEncode(encoded, scaled.getWidth(), scaled.getHeight());
+                }
+                scale *= 0.8;
             }
-            double quality = Math.max(0.4, 0.9 - attempt * 0.2);
-            byte[] encoded = encode(alpha || format.equals("png") ? scaled : flatten(scaled),
-                    format, quality);
-            if (encoded.length <= config.normalizedImageMaxBytes() || attempt == MAX_ENCODE_ATTEMPTS - 1) {
-                return new Normalized(encoded, "image/" + format, scaled.getWidth(), scaled.getHeight());
-            }
-            scale *= 0.8;
+        } catch (IOException e) {
+            throw new AttachmentException("图片缩放失败: " + e.getMessage());
         }
-        throw new AttachmentException("图片规范化失败——请缩小后再试");
+        throw new AttachmentException("图片重编码失败——请缩小后再试");
     }
 
     /** 质量参数编码（包内复用：请求变体管线同款编码语义）。 */

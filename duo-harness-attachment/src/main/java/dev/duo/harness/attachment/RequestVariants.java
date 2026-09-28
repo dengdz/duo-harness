@@ -131,32 +131,15 @@ public class RequestVariants {
         return variant;
     }
 
-    /** 只缩不放的长边缩放 + 字节预算适配（质量阶梯逐次降质，封顶后接受）。 */
+    /** 只缩不放的长边缩放 + 字节预算适配（缩放/质量阶梯单点收敛，C2 工单 11——与规范化管线共用 scaledEncode）。 */
     private RequestVariant transform(BufferedImage source, VariantTarget target, String variantId) {
         boolean alpha = source.getColorModel().hasAlpha();
         String format = alpha ? "png" : "jpeg";
         int longEdge = Math.max(source.getWidth(), source.getHeight());
-        double scale = Math.min(1.0, (double) target.longEdge() / longEdge);
-        try {
-            for (int attempt = 0; attempt < 4; attempt++) {
-                int w = Math.max(1, (int) Math.round(source.getWidth() * scale));
-                int h = Math.max(1, (int) Math.round(source.getHeight() * scale));
-                BufferedImage scaled = scale < 1.0
-                        ? net.coobird.thumbnailator.Thumbnails.of(source).size(w, h).asBufferedImage()
-                        : source;
-                double quality = Math.max(0.4, 0.9 - attempt * 0.2);
-                byte[] encoded = ImageNormalizer.encode(
-                        alpha ? scaled : ImageNormalizer.flatten(scaled), format, quality);
-                if (encoded.length <= target.byteBudget() || attempt == 3) {
-                    return new RequestVariant(variantId, "image/" + format, encoded,
-                            scaled.getWidth(), scaled.getHeight());
-                }
-                scale *= 0.8;
-            }
-        } catch (IOException e) {
-            throw new AttachmentException("请求变体计算失败: " + e.getMessage());
-        }
-        throw new AttachmentException("请求变体计算失败");
+        ImageNormalizer.ScaledEncode result = ImageNormalizer.scaledEncode(source,
+                (double) target.longEdge() / longEdge, format, alpha, target.byteBudget());
+        return new RequestVariant(variantId, "image/" + format, result.bytes(),
+                result.width(), result.height());
     }
 
     /** 原子落缓存：tmp 写入后 move（REPLACE_EXISTING——并发写同 id 收敛到同字节）。 */
