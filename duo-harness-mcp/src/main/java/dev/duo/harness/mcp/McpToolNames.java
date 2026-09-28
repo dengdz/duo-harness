@@ -32,9 +32,46 @@ public final class McpToolNames {
      */
     public static String publicName(String serverName, String rawToolName) {
         Objects.requireNonNull(rawToolName, "rawToolName");
-        String normalized = rawToolName.replaceAll("[^A-Za-z0-9_-]", "_");
-        String base = "mcp__" + serverName + "__" + normalized;
-        return base + "__" + shortHash(serverName + '\n' + rawToolName);
+        return baseName(serverName, rawToolName) + "__" + shortHash(serverName + '\n' + rawToolName);
+    }
+
+    /**
+     * 稳定匹配（C2 工单 15）：剥去公开名尾部的哈希段后，与「该 server + 该原始
+     * 工具名」的展示形态<b>精确</b>比较——工具名带短哈希后缀后 {@code equals}
+     * 不再成立，消费方（安全策略、权限规则）被迫前缀匹配（前缀碰撞会误伤同名
+     * 前缀的其他工具，如 {@code write_file} 与 {@code write_file_x}）。本原语是
+     * 「去哈希后的精确匹配」的单一出口。
+     *
+     * @param publicToolName 执行时的公开工具名（带哈希段）
+     * @param serverName     服务器名（yml 声明）
+     * @param rawToolName    远端原始工具名
+     */
+    public static boolean matches(String publicToolName, String serverName, String rawToolName) {
+        if (publicToolName == null) {
+            return false;
+        }
+        return baseName(serverName, rawToolName).equals(stripHash(publicToolName));
+    }
+
+    /** 展示形态：{@code mcp__<server>__<清洗名>}（哈希前的 base）。 */
+    private static String baseName(String serverName, String rawToolName) {
+        return "mcp__" + serverName + "__" + rawToolName.replaceAll("[^A-Za-z0-9_-]", "_");
+    }
+
+    /** 剥尾部哈希段（{@code __<8 hex>}）：非该形态原样返回（本地工具名等）。 */
+    private static String stripHash(String publicToolName) {
+        int idx = publicToolName.lastIndexOf("__");
+        if (idx < 0) {
+            return publicToolName;
+        }
+        String tail = publicToolName.substring(idx + 2);
+        return tail.length() == HASH_BYTES * 2 && tail.chars().allMatch(c -> isHex(c))
+                ? publicToolName.substring(0, idx)
+                : publicToolName;
+    }
+
+    private static boolean isHex(int c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
     }
 
     /** SHA-256 前 {@value #HASH_BYTES} 字节的 hex（{@code HASH_BYTES} × 2 字符）。 */

@@ -27,9 +27,6 @@ public final class WriteProtectorPlugin implements Plugin<Void> {
     /** guard 拦截的文件名关键字。 */
     static final String SECRET_KEYWORD = "secret";
 
-    /** MCP 文件服务器的公开工具名前缀（mcp__&lt;serverName&gt;__）。 */
-    static final String TOOL_PREFIX = "mcp__files__";
-
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME);
@@ -43,16 +40,17 @@ public final class WriteProtectorPlugin implements Plugin<Void> {
     @Override
     public Disposable apply(Context ctx, Void config) {
         ToolsService tools = ctx.as(WriteProtectorView.class).tools();
-        // 前缀匹配（M24 命名哈希后工具名带短哈希后缀，精确等于不再成立）
+        // 稳定匹配（C2 工单 15）：去哈希精确匹配取代前缀匹配——M24 命名哈希后
+        // 前缀碰撞会误伤（write_file 与 write_file_x 互为前缀）
         Disposable ask = ctx.on(ToolsService.PRE_EXECUTE,
                 (WaterfallListener<ToolExecution, Boolean>) (exec, next) -> {
-                    if (exec.toolName().startsWith(TOOL_PREFIX + "write_file")) {
+                    if (dev.duo.harness.mcp.McpToolNames.matches(exec.toolName(), "files", "write_file")) {
                         exec.requestApproval();
                     }
                     return next.invoke(exec);
                 });
         Disposable guard = tools.guard(ctx,
-                exec -> exec.toolName().startsWith(TOOL_PREFIX + "read_file")
+                exec -> dev.duo.harness.mcp.McpToolNames.matches(exec.toolName(), "files", "read_file")
                         && exec.args().path("path").asText("").contains(SECRET_KEYWORD)
                         ? "禁止读取涉密文件" : null);
         ctx.emit(dev.duo.harness.example.DemoMain.DEMO_LOG_CHANNEL,
