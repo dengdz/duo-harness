@@ -90,6 +90,36 @@ class WebAnswererTest {
         assertEquals(List.of("B"), got.get().values(), "提问回答值原样回传");
     }
 
+    /** C2 工单 07：多项挂起按卡片 id 精确回填（前端提问/计划四处发点已迁 id 形态）。 */
+    @Test
+    void concurrentPendingCompletedByIdNotByOrder() throws Exception {
+        root = Context.root();
+        root.plugin(new InteractionPlugin(), null).awaitStartup();
+        InteractionService answers = root.as(AnswersView4Web.class).answers();
+        WebAnswerer webAnswerer = new WebAnswerer(5_000);
+        answers.register(root, webAnswerer);
+
+        InteractionRequest firstCard = new InteractionRequest("card-1",
+                InteractionRequest.KIND_QUESTION, "第一问", "", List.of("A"), false, null, null);
+        InteractionRequest secondCard = new InteractionRequest("card-2",
+                InteractionRequest.KIND_QUESTION, "第二问", "", List.of("B"), false, null, null);
+        AtomicReference<InteractionAnswer> first = new AtomicReference<>();
+        AtomicReference<InteractionAnswer> second = new AtomicReference<>();
+        Thread t1 = Thread.ofVirtual().start(() -> first.set(answers.ask(firstCard)));
+        Thread t2 = Thread.ofVirtual().start(() -> second.set(answers.ask(secondCard)));
+        while (webAnswerer.pendingCount() < 2) {
+            Thread.sleep(20);
+        }
+
+        // 先答第二张卡：无 id 旧形态（答最旧）会把答案串给第一张卡——id 形态必须精确命中
+        assertTrue(webAnswerer.completeById("card-2", "answer", List.of("B")), "按 id 命中第二张卡");
+        assertTrue(webAnswerer.completeById("card-1", "answer", List.of("A")), "再答第一张卡");
+        t1.join(2_000);
+        t2.join(2_000);
+        assertEquals(List.of("A"), first.get().values(), "第一张卡拿到自己的答案（不串卡）");
+        assertEquals(List.of("B"), second.get().values(), "第二张卡拿到自己的答案（乱序作答不串）");
+    }
+
     @Test
     void disconnectFailsClosedAllPending() throws Exception {
         root = Context.root();

@@ -117,7 +117,10 @@ public final class WebAnswerer implements Answerer {
     }
 
     /**
-     * 无 id 的旧形态作答（兼容缓存页）：完成<b>最旧</b>的悬空请求。
+     * 无 id 的旧形态作答（兜底缓存页，C2 工单 07 起前端活跃路径——提问卡与计划卡
+     * 的四处发点——已全部迁 {@link #completeById}）：完成<b>最旧</b>的悬空请求。
+     * 多项/多标签并发下会答错对象（M23 记档坑的存活半边），计划 0.25.0 移除——
+     * 缓存页兼容窗口一个版本。
      *
      * @param approved 审批语义（提问/计划恒 true）
      * @param values   回答值

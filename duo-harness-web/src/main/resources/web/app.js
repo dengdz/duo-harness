@@ -901,25 +901,24 @@ const app = (() => {
       } else if (action === 'answer-value') {
         const value = btn.dataset.value || '';
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        await api.answer({ answers: [value] });
+        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: [value] });
       } else if (action === 'answer-free') {
         const input = $('.free-input input', card);
         const value = input ? input.value.trim() : '';
         if (!value) return;
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        await api.answer({ answers: [value] });
+        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: [value] });
       } else if (action === 'plan-approve') {
-        // ExitPlanModeTool 口径：values[0] 精确等于批准选项（计划单飞，按最旧完成——
-        // 与提问卡同走无 id 旧形态）
+        // values[0] = 批准选项（options[0] 位置约定，InteractionRequest.isApproved 单点判定）
         render.resolveCard(card, '✓ 已批准，开始执行', true);
-        await api.answer({ answers: ['批准，开始执行'] });
+        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: ['批准，开始执行'] });
       } else if (action === 'plan-reject') {
         const input = $('.free-input input', card);
         const feedback = input ? input.value.trim() : '';
         const verdict = feedback || '继续计划（可直接输入你的修改意见）';
         render.resolveCard(card, feedback ? '✗ 已打回，反馈：' + feedback : '✗ 已打回', false);
-        // 打回走 answers 形态（批准选项文本即"继续计划"语义；decision 形态属审批卡专用）
-        await api.answer({ answers: [verdict] });
+        // 打回走 answer 形态（按卡片 id 精确回填，C2 工单 07）
+        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: [verdict] });
       } else if (action === 'open-subagent') {
         // 子任务回放入口（M15 工单 05）：完成态子任务卡 → 右侧抽屉只读回放
         await openSubagentReplay(btn.dataset.agentId || '', btn.dataset.task || '');
