@@ -66,7 +66,7 @@ public class FilesApiUploader {
         }
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new FilesApiException("Files API 返回 HTTP " + response.statusCode()
-                    + ": " + response.body());
+                    + ": " + response.body(), null, response.statusCode(), response.body());
         }
         // 解析 file_id
         try {
@@ -79,10 +79,34 @@ public class FilesApiUploader {
         }
     }
 
-    /** Files API 业务异常（调用方转为 inline 回退）。 */
+    /** Files API 业务异常（调用方转为 inline 回退）；携带结构化状态码与响应体（C2 工单 14）。 */
     public static class FilesApiException extends RuntimeException {
-        public FilesApiException(String message) { super(message); }
-        public FilesApiException(String message, Throwable cause) { super(message, cause); }
+        /** HTTP 状态码；0 = 无状态（网络/超时/解析类失败）。 */
+        private final int statusCode;
+        /** 响应体原文（判 provider 措辞用）；无响应体为 null。 */
+        private final String responseBody;
+
+        public FilesApiException(String message) {
+            this(message, null, 0, null);
+        }
+
+        public FilesApiException(String message, Throwable cause) {
+            this(message, cause, 0, null);
+        }
+
+        public FilesApiException(String message, Throwable cause, int statusCode, String responseBody) {
+            super(message, cause);
+            this.statusCode = statusCode;
+            this.responseBody = responseBody;
+        }
+
+        public int statusCode() {
+            return statusCode;
+        }
+
+        public String responseBody() {
+            return responseBody;
+        }
     }
 
     /**
@@ -109,17 +133,25 @@ public class FilesApiUploader {
             return; // 已不存在 = 回收目标达成
         }
         if (status < 200 || status >= 300) {
-            throw new FilesApiException("Files API 删除返回 HTTP " + status + ": " + response.body());
+            throw new FilesApiException("Files API 删除返回 HTTP " + status + ": " + response.body(),
+                    null, status, response.body());
         }
     }
 
-    /** 配额类失败启发判定：4xx/429 且响应体提及 quota/limit/exceed/full（provider 间措辞有差异）。 */
+    /**
+     * 配额类失败启发判定（C2 工单 14）：状态码走<b>结构化字段</b>（此前从异常消息
+     * 文本捞 {@code "http 400"}——消息格式一变判定即静默失效、配额回收不触发）；
+     * 响应体关键词（quota/limit/exceed/full）判 provider 间的措辞差异。
+     */
     public boolean looksLikeQuotaFailure(FilesApiException e) {
-        String message = e.getMessage() == null ? "" : e.getMessage();
-        String lower = message.toLowerCase(java.util.Locale.ROOT);
-        boolean statusShape = lower.contains("http 400") || lower.contains("http 403")
-                || lower.contains("http 413") || lower.contains("http 429");
-        return statusShape && (lower.contains("quota") || lower.contains("limit")
-                || lower.contains("exceed") || lower.contains("full"));
+        boolean statusShape = e.statusCode() == 400 || e.statusCode() == 403
+                || e.statusCode() == 413 || e.statusCode() == 429;
+        if (!statusShape) {
+            return false;
+        }
+        String body = e.responseBody() == null
+                ? "" : e.responseBody().toLowerCase(java.util.Locale.ROOT);
+        return body.contains("quota") || body.contains("limit")
+                || body.contains("exceed") || body.contains("full");
     }
 }

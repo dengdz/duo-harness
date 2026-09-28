@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -61,6 +62,29 @@ class FilesApiUploaderTest {
                 () -> uploader.upload("test".getBytes(StandardCharsets.UTF_8), "image/png", "test.png"));
         assertTrue(e.getMessage().contains("429"), "应点名状态码: " + e.getMessage());
         assertTrue(e.getMessage().contains("quota"), "应含服务端原文: " + e.getMessage());
+        assertEquals(429, e.statusCode(), "状态码结构化字段（C2 工单 14）");
+        assertTrue(uploader.looksLikeQuotaFailure(e), "429 + quota 措辞判配额");
         server.stop(0);
+    }
+
+    @Test
+    void 配额判定走结构化字段不依赖消息格式() {
+        // C2 工单 14：判定按 statusCode/responseBody 字段——消息文案改写（本地化、
+        // 改格式）不再影响判定；此前从 message 文本捞 "http 400" 一变即静默失效
+        var uploader = new FilesApiUploader("http://localhost:1", "k", Duration.ofSeconds(1));
+        FilesApiUploader.FilesApiException quota = new FilesApiUploader.FilesApiException(
+                "任意措辞的消息（不含状态码字样）", null, 429, "{\"error\":\"quota exceeded\"}");
+        assertTrue(uploader.looksLikeQuotaFailure(quota), "429 + quota 措辞 → 配额（消息无 http 字样）");
+
+        FilesApiUploader.FilesApiException noKeyword = new FilesApiUploader.FilesApiException(
+                "msg", null, 429, "{\"error\":\"other\"}");
+        assertFalse(uploader.looksLikeQuotaFailure(noKeyword), "状态码形态但无配额措辞 → 非配额");
+
+        FilesApiUploader.FilesApiException serverError = new FilesApiUploader.FilesApiException(
+                "msg", null, 503, "{\"error\":\"quota\"}");
+        assertFalse(uploader.looksLikeQuotaFailure(serverError), "5xx 不在配额状态码形态");
+
+        FilesApiUploader.FilesApiException network = new FilesApiUploader.FilesApiException("网络失败");
+        assertFalse(uploader.looksLikeQuotaFailure(network), "无状态码的网络类失败非配额");
     }
 }
