@@ -111,4 +111,22 @@ public record InteractionRequest(String id, String kind, String subject, String 
                                           String presenterId) {
         return new InteractionRequest(null, KIND_PLAN, toolName, plan, options, false, presenterId, null);
     }
+
+    /**
+     * 批准判定单点（C2 工单 05）：该请求的该回答是否构成批准——审批类请求看
+     * {@code approved} 布尔；计划复核的 {@code approved} 只表示「有人作答」
+     * （answered 语义），批准与否看回答值是否命中 {@code options[0]}（计划请求
+     * 的批准项约定置于首选项，见 {@link #plan}）。此前审批工具按批准文案精确
+     * 匹配、审计桥按位置约定两套判据分立——改批准文案或调整选项顺序只改一处，
+     * 审计事件即与真实批准状态相反（卡片冻结为「✓ 已获批准」）；收敛本单点后
+     * 审批工具与审计桥共用同一判据。
+     */
+    public static boolean isApproved(InteractionRequest request, InteractionAnswer answer) {
+        if (!KIND_PLAN.equals(request.kind())) {
+            return answer.approved();
+        }
+        return !answer.values().isEmpty()
+                && !request.options().isEmpty()
+                && request.options().get(0).equals(answer.values().get(0));
+    }
 }

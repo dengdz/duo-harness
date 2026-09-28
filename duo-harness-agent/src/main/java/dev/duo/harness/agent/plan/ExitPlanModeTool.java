@@ -125,21 +125,24 @@ public final class ExitPlanModeTool implements ToolDefinition, PlanSessionBinder
         // 计划复核走 KIND_PLAN（BUG-20260917-04）：subject 携工具名——审计桥据此把
         // 请求/决定写进作答呈现位会话，浏览器计划卡与终端提示都以此身份键渲染；
         // 发起呈现位随请求走（亲和路由 + 会话供给按发起方，M19 ADR-0020 决策 7）
-        InteractionAnswer answer = answers.ask(InteractionRequest.plan(
-                NAME, plan, List.of(APPROVE_OPTION, RETYPE_OPTION), execution.presenterId()));
+        InteractionRequest request = InteractionRequest.plan(
+                NAME, plan, List.of(APPROVE_OPTION, RETYPE_OPTION), execution.presenterId());
+        InteractionAnswer answer = answers.ask(request);
         if (answer == null || !answer.approved() || answer.values().isEmpty()) {
             // fail-closed：无回答者 / 未作答 → 计划不批准（对齐 DSH：保持计划模式，
             // 不写 exited——模型可继续修改计划或由用户 /plan off 手动退出）
             return "计划复核无人应答（fail-closed），计划未获批准。请继续完善计划，"
                     + "或等待用户回来后再次呈交（用户也可用 /plan off 手动退出计划模式）。";
         }
-        String verdict = answer.values().get(0);
-        if (APPROVE_OPTION.equals(verdict)) {
+        // 批准判定单点（C2 工单 05）：与审计桥共用同一判据（options[0] 位置约定），
+        // 此前按批准文案精确匹配的私有判据删除——改文案或调选项顺序不再两处分叉
+        if (InteractionRequest.isApproved(request, answer)) {
             PresenterBinding binding = bindingFor(execution.presenterId());
             binding.session().get().append(PlanMode.exitedEvent());
             binding.approvedCallback().run();
             return "计划已获批准（回答者: " + answer.source() + "）。请立即开始执行计划。";
         }
+        String verdict = answer.values().get(0);
         return "计划未获批准，用户要求继续修改计划。用户反馈：" + verdict
                 + "（回答者: " + answer.source() + "）。请按反馈修改后再次呈交。";
     }

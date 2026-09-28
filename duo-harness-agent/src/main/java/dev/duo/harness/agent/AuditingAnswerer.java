@@ -49,25 +49,12 @@ public final class AuditingAnswerer implements Answerer {
         session.get().append(SessionEvent.approvalRequested(request.subject(), request.detail(), request.id()));
         InteractionAnswer answer = delegate.answer(request);
         if (answer != null) {
-            String decision = (isApproved(request, answer) ? "allow" : "deny")
+            // 批准判定单点（C2 工单 05）：与审批工具共用同一判据——计划复核按
+            // options[0] 命中、审批按 approved 布尔，见 InteractionRequest.isApproved
+            String decision = (InteractionRequest.isApproved(request, answer) ? "allow" : "deny")
                     + "（回答者: " + answer.source() + "）";
             session.get().append(SessionEvent.approvalDecided(request.subject(), decision));
         }
         return answer;
-    }
-
-    /**
-     * 决定语义：审批看 {@code approved} 布尔；计划复核的 approved 只表示"有人作答"
-     * （answered 语义恒真），批准与否看回答值是否命中首个选项（计划请求的批准项
-     * 约定置于 options[0]，见 {@link InteractionRequest#plan}）——否则打回会被
-     * 记成 allow，卡片冻结为"✓ 计划已获批准"（错判）。
-     */
-    private static boolean isApproved(InteractionRequest request, InteractionAnswer answer) {
-        if (!InteractionRequest.KIND_PLAN.equals(request.kind())) {
-            return answer.approved();
-        }
-        return !answer.values().isEmpty()
-                && !request.options().isEmpty()
-                && request.options().get(0).equals(answer.values().get(0));
     }
 }
