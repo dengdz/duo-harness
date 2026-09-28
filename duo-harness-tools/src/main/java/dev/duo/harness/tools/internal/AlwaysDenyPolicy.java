@@ -14,8 +14,9 @@ public final class AlwaysDenyPolicy implements ApprovalPolicyService {
     /** 策略来源标识（配置取值与审计署名共用）。 */
     public static final String SOURCE = "always-deny";
 
+    /** 恒拒与标记无关（C2 工单 12 方向翻转后的唯一实现形态）。 */
     @Override
-    public ApprovalDecision decide(String toolName, JsonNode args) {
+    public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
         return ApprovalDecision.deny("被审批策略拒绝", SOURCE);
     }
 }

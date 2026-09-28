@@ -23,25 +23,28 @@ public interface ApprovalPolicyService {
     String SOURCE_UNCONFIGURED = "none";
 
     /**
-     * 裁决一次被声明的工具调用。
+     * 裁决一次被声明的工具调用（无发起呈现位形态，C2 工单 12 方向翻转后的便捷
+     * 缺省）：等价于 {@code decide(toolName, args, null)}。
      *
      * @param toolName 工具名
      * @param args     调用参数（策略可按参数内容裁决）
      * @return 审批决策（含结果、理由与策略来源）
      */
-    ApprovalDecision decide(String toolName, JsonNode args);
+    default ApprovalDecision decide(String toolName, JsonNode args) {
+        return decide(toolName, args, null);
+    }
 
     /**
-     * 裁决一次被声明的工具调用（携发起呈现位标记，M19 亲和路由 ADR-0020 决策 7）：
-     * 委托交互 seam 的策略（interactive 等）把标记带进 ask 请求——回答者路由据此
-     * 发起方优先。缺省忽略标记（实现未升级时行为不变）。
+     * 裁决一次被声明的工具调用（携发起呈现位标记，M19 亲和路由 ADR-0020 决策 7；
+     * C2 工单 12 升为抽象方法）：委托交互 seam 的策略（interactive 等）把标记带进
+     * ask 请求——回答者路由据此发起方优先。此前「两参抽象 + 三参缺省忽略」是
+     * M19 加参的过渡形态——过渡已结束，方向翻转后新实现不再可能静默丢弃标记；
+     * 不关心标记的策略（always-deny / auto-approve）在实现里忽略参数即可。
      *
      * @param toolName    工具名
      * @param args        调用参数
      * @param presenterId 发起呈现位标记（直调/无发起方为 null）
      * @return 审批决策（含结果、理由与策略来源）
      */
-    default ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
-        return decide(toolName, args);
-    }
+    ApprovalDecision decide(String toolName, JsonNode args, String presenterId);
 }

@@ -27,12 +27,7 @@ public final class ReadOnlyBashPolicy implements ApprovalPolicyService {
         this.inner = Objects.requireNonNull(inner, "inner");
     }
 
-    @Override
-    public ApprovalDecision decide(String toolName, JsonNode args) {
-        return decide(toolName, args, null);
-    }
-
-    /** 携发起呈现位版：只读命中与标记无关，未命中委托内层时原样转发（亲和路由）。 */
+    /** 只读命中与标记无关，未命中委托内层时原样转发（亲和路由）。 */
     @Override
     public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
         return ReadOnlyBashDetector.allowIfReadonly(detector, toolName, args)

@@ -30,11 +30,6 @@ public final class InteractivePolicy implements ApprovalPolicyService {
     }
 
     @Override
-    public ApprovalDecision decide(String toolName, JsonNode args) {
-        return decide(toolName, args, null);
-    }
-
-    @Override
     public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
         InteractionService answers;
         try {

@@ -30,12 +30,7 @@ public final class WorkspaceGatePolicy implements ApprovalPolicyService {
         this.workspace = workspace;
     }
 
-    @Override
-    public ApprovalDecision decide(String toolName, JsonNode args) {
-        return decide(toolName, args, null);
-    }
-
-    /** 携发起呈现位版：档位判定与标记无关，ask 委托内层时原样转发（亲和路由）。 */
+    /** 档位判定与标记无关，ask 委托内层时原样转发（亲和路由）。 */
     @Override
     public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
         Path targetPath = null;

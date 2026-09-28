@@ -35,7 +35,8 @@ class WorkspaceGatePolicyTest {
         innerCalls = new ArrayList<>();
         inner = new ApprovalPolicyService() {
             @Override
-            public ApprovalDecision decide(String toolName, com.fasterxml.jackson.databind.JsonNode args) {
+            public ApprovalDecision decide(String toolName, com.fasterxml.jackson.databind.JsonNode args,
+                                           String presenterId) {
                 innerCalls.add(toolName);
                 return ApprovalDecision.deny("内层裁决", "test-inner");
             }

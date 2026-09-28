@@ -30,12 +30,7 @@ public final class PermissionRulePolicy implements ApprovalPolicyService {
         this.inner = Objects.requireNonNull(inner, "inner");
     }
 
-    @Override
-    public ApprovalDecision decide(String toolName, JsonNode args) {
-        return decide(toolName, args, null);
-    }
-
-    /** 携发起呈现位版：前三段裁决与标记无关，未命中委托内层时原样转发（亲和路由）。 */
+    /** 前三段裁决与标记无关，未命中委托内层时原样转发（亲和路由）。 */
     @Override
     public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
         // ① deny 恒优先（查全部命令——只读命令也逃不出 deny）

@@ -24,8 +24,9 @@ public final class AutoApprovePolicy implements ApprovalPolicyService {
         this.allowedTools = allowedTools == null ? Set.of() : Set.copyOf(allowedTools);
     }
 
+    /** 白名单匹配与标记无关（C2 工单 12 方向翻转后的唯一实现形态）。 */
     @Override
-    public ApprovalDecision decide(String toolName, JsonNode args) {
+    public ApprovalDecision decide(String toolName, JsonNode args, String presenterId) {
         if (allowedTools.contains(toolName)) {
             return ApprovalDecision.allow(SOURCE);
         }
