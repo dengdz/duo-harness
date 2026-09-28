@@ -29,16 +29,16 @@ public final class BackgroundTask {
     private volatile int exitCode = -1;
 
     BackgroundTask(String taskId, String command, String owner, Process process,
-                   BashOutputConfig config, java.nio.file.Path spillDir) {
+                   BashOutputConfig config, SpillLedger spillLedger) {
         this.taskId = taskId;
         this.command = command;
         this.owner = owner == null || owner.isBlank() ? null : owner;
         this.process = process;
         this.config = config == null ? BashOutputConfig.DEFAULTS : config;
         this.stdout = new FsBashTool.StreamCapture(this.config.inlineTailChars(),
-                this.config.spillMaxChars(), spillDir.resolve(taskId + "-stdout.txt"));
+                this.config.spillMaxChars(), spillLedger.next(taskId + "-stdout"));
         this.stderr = new FsBashTool.StreamCapture(this.config.inlineTailChars(),
-                this.config.spillMaxChars(), spillDir.resolve(taskId + "-stderr.txt"));
+                this.config.spillMaxChars(), spillLedger.next(taskId + "-stderr"));
         Thread.ofVirtual().name("bg-out-" + taskId)
                 .start(() -> FsBashTool.capture(process.getInputStream(), stdout));
         Thread.ofVirtual().name("bg-err-" + taskId)

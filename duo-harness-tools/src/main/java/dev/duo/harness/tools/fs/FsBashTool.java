@@ -40,9 +40,8 @@ public final class FsBashTool implements ToolDefinition {
     private final BackgroundTaskRegistry registry;
     /** 输出三层预算（M23 工单 05）：inline 尾窗 / spill 帽 / task-output 尾窗。 */
     private final BashOutputConfig outputConfig;
-    /** spill 文件序列（bash-out-<n>-stdout/stderr.txt）。 */
-    private static final java.util.concurrent.atomic.AtomicInteger SPILL_SEQ =
-            new java.util.concurrent.atomic.AtomicInteger();
+    /** spill 路径登记簿（C2 工单 01）：装配级分配与回收（跨装配隔离）。 */
+    private final SpillLedger spillLedger;
 
     public FsBashTool(WorkspacePolicy workspace) {
         this(workspace, null, BashOutputConfig.DEFAULTS);
@@ -54,9 +53,16 @@ public final class FsBashTool implements ToolDefinition {
 
     public FsBashTool(WorkspacePolicy workspace, BackgroundTaskRegistry registry,
                       BashOutputConfig outputConfig) {
+        this(workspace, registry, outputConfig, new SpillLedger());
+    }
+
+    /** 装配路径构造（C2 工单 01）：与后台任务注册表共用同一登记簿——停止统一回收自有 spill。 */
+    public FsBashTool(WorkspacePolicy workspace, BackgroundTaskRegistry registry,
+                      BashOutputConfig outputConfig, SpillLedger spillLedger) {
         this.workspace = workspace;
         this.registry = registry;
         this.outputConfig = outputConfig == null ? BashOutputConfig.DEFAULTS : outputConfig;
+        this.spillLedger = spillLedger;
     }
 
     @Override public String name() { return NAME; }
@@ -134,9 +140,9 @@ public final class FsBashTool implements ToolDefinition {
         // 输出分层（M23 工单 05）：内存尾窗 + 懒 spill 落盘（超 inline 预算才创建文件）
         int inlineTail = outputConfig.inlineTailChars();
         StreamCapture stdout = new StreamCapture(inlineTail, outputConfig.spillMaxChars(),
-                spillPath("stdout"));
+                spillLedger.next("stdout"));
         StreamCapture stderr = new StreamCapture(inlineTail, outputConfig.spillMaxChars(),
-                spillPath("stderr"));
+                spillLedger.next("stderr"));
         Thread stdoutReader = Thread.ofVirtual().start(() -> capture(process.getInputStream(), stdout));
         Thread stderrReader = Thread.ofVirtual().start(() -> capture(process.getErrorStream(), stderr));
 
@@ -273,12 +279,6 @@ public final class FsBashTool implements ToolDefinition {
             sb.append('[').append(label).append(" spill 超帽] 达上限停止写入，其后 ")
               .append(capture.droppedAfterFullCount()).append(" 字符未保留——请拆分命令或重定向到文件\n");
         }
-    }
-
-    /** spill 文件路径：Duo home 临时区 bash-spill 子目录（进程退出由插件清理路径删除）。 */
-    private static java.nio.file.Path spillPath(String stream) {
-        return dev.duo.harness.core.api.boot.DuoHome.resolve().resolveDir("tmp/bash-spill")
-                .resolve("bash-" + SPILL_SEQ.incrementAndGet() + "-" + stream + ".txt");
     }
 
     /**

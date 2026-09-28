@@ -65,9 +65,12 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
         // 通知路由），bash 转后台 + task-output/task-stop 构造注入同一实例。
         // 输出三层预算（M23 工单 05）：config.output 段可配，缺席缺省
         BashOutputConfig outputConfig = parseOutput(config);
-        BackgroundTaskRegistry backgroundTasks = new BackgroundTaskRegistry(outputConfig);
+        // spill 登记簿（C2 工单 01）：bash 前台与后台任务共用，停止时只回收本装配在册
+        // 文件——跨装配/跨进程并存下不误删他方活 spill
+        SpillLedger spillLedger = new SpillLedger();
+        BackgroundTaskRegistry backgroundTasks = new BackgroundTaskRegistry(outputConfig, spillLedger);
         Disposable registryPublished = ctx.provide(BackgroundTaskRegistry.SERVICE_NAME, backgroundTasks);
-        tools.register(ctx, new FsBashTool(policy, backgroundTasks, outputConfig));
+        tools.register(ctx, new FsBashTool(policy, backgroundTasks, outputConfig, spillLedger));
         tools.register(ctx, new TaskOutputTool(backgroundTasks, outputConfig.taskOutputTailChars()));
         tools.register(ctx, new TaskStopTool(backgroundTasks));
 
@@ -76,7 +79,7 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
                 backgroundTasks.clearListeners(); // 先摘通知路由：shutdown 的 KILLED 不再路由进拆树中的呈现位
                 backgroundTasks.shutdownAll(); // 插件树停止：杀全部后台进程树（防孤儿）
                 backgroundTasks.finishAllSpills(); // 刷 spill 缓冲后再清理（防回读缺尾）
-                cleanupSpillDir(); // spill 文件清理（进程退出无残渣，M23 工单 05）
+                spillLedger.dispose(); // 回收本装配在册 spill（C2 工单 01：只删自有，不删共享目录全部）
                 registryPublished.dispose();
                 published.dispose();
             } catch (Exception ignored) {
@@ -120,24 +123,6 @@ public final class FsToolsPlugin implements Plugin<JsonNode> {
             throw new IllegalArgumentException(name + " 须为正整数: " + value);
         }
         return (int) value;
-    }
-
-    /** spill 文件清理（插件停止路径）：删 bash-spill 目录全部文件——进程退出无残渣。 */
-    private void cleanupSpillDir() {
-        try {
-            var dir = dev.duo.harness.core.api.boot.DuoHome.resolve().resolveDir("tmp/bash-spill");
-            if (java.nio.file.Files.isDirectory(dir)) {
-                try (var files = java.nio.file.Files.list(dir)) {
-                    files.filter(java.nio.file.Files::isRegularFile)
-                            .forEach(f -> {
-                                try { java.nio.file.Files.deleteIfExists(f); }
-                                catch (java.io.IOException ignored) { }
-                            });
-                }
-            }
-        } catch (Exception ignored) {
-            // 清理失败不阻断拆树
-        }
     }
 
     private static WorkspacePolicy parsePolicy(JsonNode config) {

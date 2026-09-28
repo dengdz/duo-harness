@@ -26,18 +26,25 @@ public final class BackgroundTaskRegistry {
     private final java.util.concurrent.atomic.AtomicInteger seq =
             new java.util.concurrent.atomic.AtomicInteger();
     private final BashOutputConfig outputConfig;
-    private final java.nio.file.Path spillDir;
+    private final SpillLedger spillLedger;
 
-    /** 缺省预算构造（spill 落 Duo home 临时区）。 */
+    /** 缺省预算构造（spill 落 Duo home 临时区；独立登记簿——测试/直挂场景）。 */
     public BackgroundTaskRegistry() {
         this(BashOutputConfig.DEFAULTS);
     }
 
     /** 指定预算构造（fs-tools 行 config 的 output 段，M23 工单 05）。 */
     public BackgroundTaskRegistry(BashOutputConfig outputConfig) {
+        this(outputConfig, new SpillLedger());
+    }
+
+    /**
+     * 指定预算 + 共享登记簿构造（装配路径）：与 bash 前台共用同一 {@link SpillLedger}
+     * ——插件停止时统一回收本装配在册 spill（C2 工单 01：只删自有，不删共享目录全部）。
+     */
+    public BackgroundTaskRegistry(BashOutputConfig outputConfig, SpillLedger spillLedger) {
         this.outputConfig = outputConfig == null ? BashOutputConfig.DEFAULTS : outputConfig;
-        this.spillDir = dev.duo.harness.core.api.boot.DuoHome.resolve()
-                .resolveDir("tmp/bash-spill");
+        this.spillLedger = spillLedger;
     }
 
     /**
@@ -52,7 +59,7 @@ public final class BackgroundTaskRegistry {
     /** 指定归属呈现位的启动（M23 工单 06 验收修正：呈现位按归属过滤，互不串显）。 */
     public BackgroundTask start(Process process, String command, String owner) {
         BackgroundTask task = new BackgroundTask("bg-" + seq.incrementAndGet(), command, owner,
-                process, outputConfig, spillDir);
+                process, outputConfig, spillLedger);
         tasks.add(task);
         Thread.ofVirtual().name("bg-watch-" + task.taskId()).start(() -> {
             task.awaitExit();
