@@ -52,30 +52,10 @@ public final class InterruptAgentTool implements ToolDefinition {
 
     @Override
     public Object execute(ToolExecution execution) {
-        String agentId = requireText(execution.args(), "agentId");
-        requireCurrentSession(agentId);
+        String agentId = SubagentArgs.requireText(NAME, execution.args(), "agentId");
+        SubagentArgs.requireCurrentSession(NAME, manager, currentSession, agentId);
         return manager.interrupt(agentId);
     }
 
-    /** 会话归属校验：长驻呈现位换绑后，旧会话的子代理对新会话不可达（治理边界）。 */
-    private void requireCurrentSession(String agentId) {
-        var session = currentSession.get();
-        if (session == null) {
-            throw new PluginException(NAME + ": 无可用父会话（装配不完整）");
-        }
-        var entry = manager.byId(agentId)
-                .orElseThrow(() -> new PluginException("子代理不存在: " + agentId));
-        if (!entry.parentSessionId().equals(session.id())) {
-            throw new PluginException("子代理 " + agentId + " 属于会话 " + entry.parentSessionId()
-                    + "，不属于当前会话 " + session.id());
-        }
-    }
 
-    private static String requireText(JsonNode args, String field) {
-        JsonNode node = args.get(field);
-        if (node == null || node.isNull() || node.asText().isBlank()) {
-            throw new PluginException(NAME + " 缺少必填参数 " + field);
-        }
-        return node.asText();
-    }
 }

@@ -8,10 +8,15 @@
 验收标准（用户可感）：Pre 与 Post 钩子的阻断消息口径永远一致；子代理工具的参数错误提示口径统一。
 
 ## Status
-ready-for-agent
+in-progress（实现完成待手动验收，2026-09-28）
 
 ## Checklist
-- [ ] 钩子 detail 提取 + 消息拼装 helper（消四份拷贝）
-- [ ] 子代理工具族参数校验 helper（取文本/会话归属，消六份拷贝）
-- [ ] Pre/Post 阻断消息一致性用例；子代理工具既有用例全绿 + 文案抽查一致
-- [ ] CHANGELOG 记账
+- [x] 钩子 detail 提取 + 消息拼装 helper（decisionDetail/blockMessage 单点，消四份逐字拷贝）
+- [x] 子代理工具族参数校验 helper（SubagentArgs：requireText ×4、requireCurrentSession ×2 收敛，调用方传各自工具名保持原文案）
+- [x] Pre/Post 阻断消息一致性（既有 HooksPluginEndToEndTest 断言两侧文案 + 子代理既有用例全绿 + 文案抽查一致——零行为变化）
+- [x] CHANGELOG：无用户可见变化（文案逐字保持），不记账（红线 6 只记用户可见）
+
+## Comments
+
+- 2026-09-28 实现：钩子侧 helper 落 HooksPlugin 私有静态（事件名经 HooksConfig 常量传参——值 "PreToolUse"/"PostToolUse" 与原文案一致）；子代理侧新建包内 SubagentArgs（SubagentManager 在父包，import 记档）。下一裁定形态（updatedInput）落地时只改单点。agent 255 + hooks 36 用例全绿。
+

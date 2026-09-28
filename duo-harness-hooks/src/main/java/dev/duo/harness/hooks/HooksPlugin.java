@@ -98,9 +98,8 @@ public final class HooksPlugin implements Plugin<Void> {
                             continue;
                         }
                         if (outcome.exitCode() == 2) {
-                            String stderr = outcome.stderr().strip();
                             return deny(exec, handler,
-                                    "被 PreToolUse 钩子阻断" + (stderr.isEmpty() ? "" : ": " + stderr));
+                                    blockMessage(HooksConfig.EVENT_PRE_TOOL_USE, outcome.stderr().strip()));
                         }
                         if (outcome.exitCode() != 0) {
                             log.warn("PreToolUse 钩子非零退出（非阻断，放行）: exit={} stderr={}",
@@ -115,10 +114,8 @@ public final class HooksPlugin implements Plugin<Void> {
                             continue;
                         }
                         if (decision.denied()) {
-                            String detail = decision.reason() != null && !decision.reason().isBlank()
-                                    ? decision.reason() : outcome.stderr().strip();
-                            return deny(exec, handler,
-                                    "被 PreToolUse 钩子阻断" + (detail.isEmpty() ? "" : ": " + detail));
+                            return deny(exec, handler, blockMessage(
+                                    HooksConfig.EVENT_PRE_TOOL_USE, decisionDetail(decision, outcome)));
                         }
                         if (decision.asksApproval()) {
                             // Claude Code 三值语义的 ask：声明需审批而非自行裁决——交审批段
@@ -157,8 +154,7 @@ public final class HooksPlugin implements Plugin<Void> {
                             String stderr = outcome.stderr().strip();
                             log.info("钩子标记工具结果: 工具={} 钩子={} 理由={}",
                                     exec.toolName(), handler.command(), stderr);
-                            exec.markError("被 PostToolUse 钩子阻断"
-                                    + (stderr.isEmpty() ? "" : ": " + stderr));
+                            exec.markError(blockMessage(HooksConfig.EVENT_POST_TOOL_USE, stderr));
                             return Boolean.TRUE;
                         }
                         if (outcome.exitCode() != 0) {
@@ -174,12 +170,10 @@ public final class HooksPlugin implements Plugin<Void> {
                             continue;
                         }
                         if (decision.denied()) {
-                            String detail = decision.reason() != null && !decision.reason().isBlank()
-                                    ? decision.reason() : outcome.stderr().strip();
+                            String detail = decisionDetail(decision, outcome);
                             log.info("钩子标记工具结果（JSON）: 工具={} 钩子={} 理由={}",
                                     exec.toolName(), handler.command(), detail);
-                            exec.markError("被 PostToolUse 钩子阻断"
-                                    + (detail.isEmpty() ? "" : ": " + detail));
+                            exec.markError(blockMessage(HooksConfig.EVENT_POST_TOOL_USE, detail));
                             return Boolean.TRUE;
                         }
                     }
@@ -192,6 +186,21 @@ public final class HooksPlugin implements Plugin<Void> {
         log.info("钩子阻断工具调用: 工具={} 钩子={} 理由={}", exec.toolName(), handler.command(), reason);
         exec.deny(reason);
         return Boolean.FALSE;
+    }
+
+    /**
+     * 裁定 detail 提取（Pre/Post 共用单点，C2 工单 10）：reason 优先呈现，
+     * 空白回退 stderr——此前 Pre/Post 双段各两份逐字拷贝，规则调整漏改一处
+     * 即两侧阻断消息口径分裂。
+     */
+    private static String decisionDetail(PreDecision decision, HookRunner.Outcome outcome) {
+        String reason = decision.reason();
+        return reason != null && !reason.isBlank() ? reason : outcome.stderr().strip();
+    }
+
+    /** 阻断消息拼装（Pre/Post 共用单点）：事件名 + detail（空白省略冒号后缀）。 */
+    private static String blockMessage(String event, String detail) {
+        return "被 " + event + " 钩子阻断" + (detail.isEmpty() ? "" : ": " + detail);
     }
 
     /**

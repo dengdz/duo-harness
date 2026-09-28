@@ -69,8 +69,8 @@ public final class SpawnTool implements ToolDefinition {
 
     @Override
     public Object execute(ToolExecution execution) {
-        String template = requireText(execution.args(), "template");
-        String task = requireText(execution.args(), "task");
+        String template = SubagentArgs.requireText(NAME, execution.args(), "template");
+        String task = SubagentArgs.requireText(NAME, execution.args(), "task");
         Session parent = currentSession.get();
         if (parent == null) {
             throw new PluginException("spawn 无可用父会话（装配不完整）");
@@ -80,11 +80,4 @@ public final class SpawnTool implements ToolDefinition {
     }
 
     /** 必填文本参数严格读取：缺失或空白点名（模型可见错误后自行补参重调）。 */
-    private static String requireText(JsonNode args, String field) {
-        JsonNode node = args.get(field);
-        if (node == null || node.isNull() || node.asText().isBlank()) {
-            throw new PluginException(NAME + " 缺少必填参数 " + field);
-        }
-        return node.asText();
-    }
 }
