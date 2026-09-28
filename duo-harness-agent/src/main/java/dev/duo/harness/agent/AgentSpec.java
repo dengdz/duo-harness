@@ -28,6 +28,14 @@ public record AgentSpec(
         String presenterId,
         AgentCapabilities capabilities) {
 
+    /** 单轮并行池同时在飞的内核缺省（转发 internal 常量——下游取缺省不经 internal 包，M28 工单 04）。 */
+    public static final int DEFAULT_MAX_PARALLEL_TOOL_CALLS =
+            dev.duo.harness.agent.internal.ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS;
+
+    /** 迭代上限的内核缺省（同上转发）。 */
+    public static final int DEFAULT_MAX_ITERATIONS =
+            dev.duo.harness.agent.internal.ToolCallingAgent.MAX_ITERATIONS;
+
     public AgentSpec {
         java.util.Objects.requireNonNull(llm, "llm");
         java.util.Objects.requireNonNull(tools, "tools");

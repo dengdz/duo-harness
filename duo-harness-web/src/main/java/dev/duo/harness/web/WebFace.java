@@ -14,7 +14,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.function.Function;
@@ -218,7 +217,9 @@ public final class WebFace {
                         .min(java.util.Comparator.comparingLong(t -> t.seq))
                         .orElse(tabs.defaultTab());
                 ChatAgent current = target.agent;
-                if (current == null) return;
+                if (current == null) {
+                    return;
+                }
                 String notice = task.notice();
                 if (target.busy.compareAndSet(false, true)) {
                     startAgentTurn(notice, target);

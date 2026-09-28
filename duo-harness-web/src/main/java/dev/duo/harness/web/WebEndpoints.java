@@ -205,6 +205,7 @@ final class WebEndpoints {
                 return;
             }
         } catch (Exception e) {
+            WebFace.log.debug("/api/answer 载荷解析失败（按协议错误拒绝）: {}", e.toString());
             WebHttp.respondEmpty(exchange, 400);
             return;
         }
@@ -239,6 +240,7 @@ final class WebEndpoints {
         try {
             node = WebHttp.JSON.readTree(new String(raw, StandardCharsets.UTF_8));
         } catch (Exception e) {
+            WebFace.log.debug("附件上传载荷解析失败: {}", e.toString());
             WebHttp.respondEmpty(exchange, 400);
             return;
         }
@@ -491,8 +493,7 @@ final class WebEndpoints {
             // queryParam 不做 URL 解码——路径 token 显式 decode
             String q;
             try {
-                q = java.net.URLDecoder.decode(WebHttp.queryParam(exchange, "q"),
-                        java.nio.charset.StandardCharsets.UTF_8);
+                q = WebHttp.urlDecode(WebHttp.queryParam(exchange, "q"));
             } catch (IllegalArgumentException e) {
                 WebHttp.respondText(exchange, 400, "token 编码非法");
                 return;
@@ -505,7 +506,7 @@ final class WebEndpoints {
             WebHttp.respondJson(exchange, 200, root.toString());
         } catch (Throwable t) {
             WebFace.log.error("/api/file-complete 处理失败", t);
-            WebHttp.respondText(exchange, 500, "补全处理失败: " + t);
+            WebHttp.respondText(exchange, 500, "补全处理失败（详情见服务端日志）");
         }
     }
 

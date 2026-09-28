@@ -10,7 +10,7 @@ import dev.duo.harness.session.Session;
  * 依赖本契约。构造与装配参数见实现类。</p>
  *
  * <p>呈现位身份（M28 工单 05，H-03）：内核不预定义合法 id 集——各呈现位
- * 自declare id（如 cli 插件 {@code PRESENTER_ID = "cli"}）并随工具执行携带，
+ * 自行声明 id（如 cli 插件 {@code PRESENTER_ID = "cli"}）并随工具执行携带，
  * 回答者注册面（InteractionService）即在场登记，第三呈现位零内核改动接入。</p>
  */
 public interface ChatAgent {

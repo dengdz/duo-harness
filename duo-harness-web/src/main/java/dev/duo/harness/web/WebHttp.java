@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
  */
 final class WebHttp {
 
-    private static final LoggerHolder LOG = new LoggerHolder();
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(WebHttp.class);
 
     /** JSON 序列化共享实例（ObjectMapper 创建重量级；配置后只读使用线程安全）。 */
     static final ObjectMapper JSON = new ObjectMapper();
@@ -122,14 +122,12 @@ final class WebHttp {
         }
     }
 
-    /** 日志持有（静态工具类的 logger 单点）。 */
-    private static final class LoggerHolder {
-
-        private final org.slf4j.Logger log =
-                org.slf4j.LoggerFactory.getLogger(WebHttp.class);
-
-        void debug(String format, Object... args) {
-            log.debug(format, args);
+    /** 查询参数 URL 解码（UTF-8；非法序列由调用方按 400 处理——搜索词/路径 token 两处共用）。 */
+    static String urlDecode(String raw) {
+        try {
+            return java.net.URLDecoder.decode(raw, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw e;
         }
     }
 }

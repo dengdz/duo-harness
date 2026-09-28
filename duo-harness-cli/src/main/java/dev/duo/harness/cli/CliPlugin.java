@@ -86,7 +86,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class CliPlugin implements Plugin<JsonNode> {
 
-    /** 呈现位身份（M28 工单 05）：id 由呈现位自declare——内核不再钉死合法 id 集，
+    /** 呈现位身份（M28 工单 05）：id 由呈现位自行声明——内核不再钉死合法 id 集，
      * 第三呈现位零内核改动接入（回答者注册面即在场登记）。 */
     public static final String PRESENTER_ID = "cli";
 

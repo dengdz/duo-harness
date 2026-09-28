@@ -92,8 +92,7 @@ final class WebSessionEndpoints {
         // queryParam 不做 URL 解码——中文检索词必须显式 decode（浏览器 fetch 百分号编码）
         String q;
         try {
-            q = java.net.URLDecoder.decode(WebHttp.queryParam(exchange, "q"),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            q = WebHttp.urlDecode(WebHttp.queryParam(exchange, "q"));
         } catch (IllegalArgumentException e) {
             WebHttp.respondText(exchange, 400, "检索词编码非法");
             return;
@@ -196,7 +195,7 @@ final class WebSessionEndpoints {
             }
         } catch (Throwable t) {
             log.error("/api/session/export 处理失败", t);
-            WebHttp.respondText(exchange, 500, "导出失败: " + t);
+            WebHttp.respondText(exchange, 500, "导出失败（详情见服务端日志）");
         }
     }
 
@@ -248,7 +247,7 @@ final class WebSessionEndpoints {
             WebHttp.respondJson(exchange, 200, "{\"switched\":true}");
         } catch (dev.duo.harness.session.SessionLockedException e) {
             // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
-            log.info("会话切换被拒（占用冲突）: {}", e.getMessage());
+            log.info("会话切换被拒（占用冲突）: {}", e.getMessage(), e);
             WebHttp.respondText(exchange, 409, e.brief());
         } catch (Exception e) {
             // 异常细节（含文件系统路径）仅服务端日志留痕，不回显给响应体（M10-02 脱敏）

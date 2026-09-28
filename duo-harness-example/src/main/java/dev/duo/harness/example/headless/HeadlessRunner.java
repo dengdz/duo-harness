@@ -87,7 +87,7 @@ public final class HeadlessRunner {
                             ? s.root().as(HeadlessAgentsMdView.class).agentsMd() : null;
             ChatAgent agent = PresenterAssembly.chatAgent(new dev.duo.harness.agent.AgentSpec(
                     s.llm(), s.tools(), s.session(), s.prompts(), maxIterations,
-                    dev.duo.harness.agent.internal.ToolCallingAgent.DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+                    dev.duo.harness.agent.AgentSpec.DEFAULT_MAX_PARALLEL_TOOL_CALLS,
                     HeadlessAnswerer.PRESENTER_ID,
                     new dev.duo.harness.agent.AgentCapabilities(governance, null, false, null, null,
                             memory == null ? null : memory::metaUserSection,
