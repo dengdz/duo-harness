@@ -75,6 +75,7 @@ export default defineConfig({
         text: '参考',
         items: [
           { text: '插件配置参考', link: '/05-参考/插件配置参考' },
+          { text: '插件扩展点清单', link: '/05-参考/插件扩展点清单' },
           { text: '工具目录', link: '/05-参考/工具目录' },
           { text: '术语表', link: '/05-参考/术语表' },
           { text: '技能写作规范', link: '/05-参考/技能写作规范' },
