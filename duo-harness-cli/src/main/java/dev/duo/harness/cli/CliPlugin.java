@@ -101,6 +101,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private final LlmAdapter llmOverride;
     /** 当前 LLM 配置（loadLlm 刷新；/model 白名单与当前模型来源，M24 工单 09）。 */
     private volatile dev.duo.harness.llm.LlmConfig activeConfig;
+    /** 状态板耗尽监听注销句柄（C2 工单 16）：板是 JVM 共享实例，监听须随树销毁摘除。 */
+    private final java.util.List<Runnable> boardDetachers = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** 可换执行链（apply 构建；/model 的 swap 入口；注入 mock 模式为 null）。 */
     private volatile dev.duo.harness.llm.SwappableLlmAdapter swappableLlm;
     /** 请求变体解析器（M21 工单 05；apply 时按附件库与 vision 构建，null = 视觉未启用）。 */
@@ -324,13 +326,13 @@ public final class CliPlugin implements Plugin<JsonNode> {
         if (ctx.hasService(dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME)) {
             dev.duo.harness.tools.ConnectorStatusBoard board =
                     ctx.as(ConnectorStatusView.class).connectorStatus();
-            board.onGaveUp(notice -> {
+            boardDetachers.add(board.onGaveUp(notice -> {
                 if (agentBusy.compareAndSet(false, true)) {
                     startTurn(notice, agentHolder, agentBusy, interruptArmed); // 空闲：开新轮消费
                 } else {
                     agentHolder.agent.injectNextTurn(notice);
                 }
-            });
+            }));
         }
         registerCommands(ctx, commands, new CommandChain(llm, tools, prompts, governance,
                 maxIterations, maxParallelToolCalls, memory, agentsMd),
@@ -1141,6 +1143,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         if (!stopped.compareAndSet(false, true)) {
             return;
         }
+        boardDetachers.forEach(Runnable::run); // 摘状态板监听（C2 工单 16：随树销毁，防累积泄漏）
+        boardDetachers.clear();
         try {
             in.close(); // 解除读者线程 readLine 阻塞（System.in 的关闭无害——进程正在退出）
         } catch (IOException ignored) {

@@ -47,6 +47,25 @@ class ConnectorStatusBoardTest {
         assertEquals(2, hits.get(), "全部订阅者触达");
     }
 
+    /** C2 工单 16 回归锁：装配-销毁-再装配循环下监听不累积、已注销监听不再收到通知。 */
+    @Test
+    void detacherRemovesListenerAcrossAssemblyCycles() {
+        ConnectorStatusBoard board = new ConnectorStatusBoard();
+        AtomicInteger firstGen = new AtomicInteger();
+        AtomicInteger secondGen = new AtomicInteger();
+        Runnable detachFirst = board.onGaveUp(n -> firstGen.incrementAndGet());
+        detachFirst.run(); // 第一代装配销毁（stop 路径的注销）
+
+        Runnable detachSecond = board.onGaveUp(n -> secondGen.incrementAndGet()); // 第二代装配
+        board.fireGaveUp("notice");
+        assertEquals(0, firstGen.get(), "已注销的第一代监听不再收到（旧监听不发给已死呈现位）");
+        assertEquals(1, secondGen.get(), "第二代监听正常触达");
+
+        detachSecond.run();
+        board.fireGaveUp("notice");
+        assertEquals(1, secondGen.get(), "第二代注销后同样静默——无累积");
+    }
+
     @Test
     void viewBridgeReturnsSelf() {
         ConnectorStatusBoard board = new ConnectorStatusBoard();

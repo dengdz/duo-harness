@@ -50,9 +50,15 @@ public final class ConnectorStatusBoard {
         return List.copyOf(entries.values());
     }
 
-    /** 订阅「预算耗尽」通知（呈现位接线用；CopyOnWriteArrayList 自身线程安全，重复订阅重复收到）。 */
-    public void onGaveUp(Consumer<String> listener) {
+    /**
+     * 订阅「预算耗尽」通知，返回<b>注销句柄</b>（C2 工单 16）——订阅方随自身装配
+     * 销毁时执行注销。此前无摘除 API：状态板是 JVM 共享实例（多连接行聚合），
+     * 监听器只增不减，长驻进程多轮装配累积引用已销毁呈现位的监听（泄漏 + 通知
+     * 发给已死呈现位）。CopyOnWriteArrayList 自身线程安全，重复订阅重复收到。
+     */
+    public Runnable onGaveUp(Consumer<String> listener) {
         gaveUpListeners.add(java.util.Objects.requireNonNull(listener, "listener"));
+        return () -> gaveUpListeners.remove(listener);
     }
 
     /** 触发耗尽通知（连接器侧调用；监听器在锁外回调，避免回调重入死锁）。 */
