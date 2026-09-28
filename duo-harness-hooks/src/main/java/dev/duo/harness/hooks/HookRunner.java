@@ -27,6 +27,9 @@ final class HookRunner {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** 输出收集承载：共享虚拟线程执行器（长生命周期，无核心线程成本）。 */
+    /** 进程退出后输出收集的宽限窗口（秒）——超窗放弃余量按已有部分交付。 */
+    private static final long OUTPUT_DRAIN_GRACE_SECONDS = 2;
+
     private static final ExecutorService STREAM_READERS = Executors.newVirtualThreadPerTaskExecutor();
 
     private HookRunner() {
@@ -97,8 +100,8 @@ final class HookRunner {
         }
         try {
             return new Outcome(process.exitValue(),
-                    stdout.get(2, TimeUnit.SECONDS),
-                    stderr.get(2, TimeUnit.SECONDS),
+                    stdout.get(OUTPUT_DRAIN_GRACE_SECONDS, TimeUnit.SECONDS),
+                    stderr.get(OUTPUT_DRAIN_GRACE_SECONDS, TimeUnit.SECONDS),
                     false, null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 
@@ -17,7 +18,7 @@ import java.util.Set;
  * 每请求现发现现读见 {@link AgentsMd}。消费方为呈现位装配（CLI/Web/headless，
  * optionalInject 接线）；子代理不注入（M7#4 口径不变）。
  *
- * <p>配置（块内字段可省；非法值（≤0/非数值）静默回退缺省 64KB）：</p>
+ * <p>配置（块内字段可省；非法值（≤0/非数值）启动 FAILED 点名——C2 工单 19 起与全库「配置错误不做静默纠正」口径统一，此前静默回退 64KB 掩盖配错）：</p>
  * <pre>{@code config:
  *   budgetChars: 65536   # 总预算字符数（省略即 64KB）}</pre>
  */
@@ -38,8 +39,10 @@ public final class AgentsMdPlugin implements Plugin<JsonNode> {
     @Override
     public Disposable apply(Context ctx, JsonNode config) {
         JsonNode budgetNode = config == null ? null : config.get(BUDGET_CHARS_CONFIG);
-        long budget = budgetNode != null && budgetNode.canConvertToLong() && budgetNode.asLong() > 0
-                ? budgetNode.asLong() : AgentsMd.DEFAULT_BUDGET_CHARS;
+        if (budgetNode != null && (!budgetNode.canConvertToLong() || budgetNode.asLong() <= 0)) {
+            throw new PluginException("agents-md.budgetChars 须为正整数: " + budgetNode);
+        }
+        long budget = budgetNode != null ? budgetNode.asLong() : AgentsMd.DEFAULT_BUDGET_CHARS;
         AgentsMdChain chain = new AgentsMdChain(
                 Cwd.path(),
                 DuoHome.resolve().root().resolve(AgentsMd.FILE_NAME), budget);

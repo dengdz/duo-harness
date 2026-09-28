@@ -8,7 +8,7 @@ import java.util.Map;
 
 /**
  * NDJSON 帧构建与 bounding 降级链（M23 工单 07，ADR-0025）：headless --json 的
- * stdout 逐行 JSON 事件流。词汇七类——session/status/thinking/text/tool_call/
+ * stdout 逐行 JSON 事件流。词汇八类——session/status/thinking/text/tool_call/
  * tool_result/error/final（grill Q9 全量；thinking 当前装配无独立思考事件源，
  * 有源才发帧，同 DSH「缺样本宁缺勿假」纪律）。
  *

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
+import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.agent.prompt.PromptFragment;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 import dev.duo.harness.agent.prompt.PromptsView;
@@ -61,9 +62,11 @@ public final class MemoryPlugin implements Plugin<JsonNode> {
 
     @Override
     public Disposable apply(Context ctx, JsonNode config) {
-        long budget = config != null && config.hasNonNull(BUDGET_CHARS_CONFIG)
-                && config.get(BUDGET_CHARS_CONFIG).asLong() > 0
-                ? config.get(BUDGET_CHARS_CONFIG).asLong() : MemoryBook.DEFAULT_BUDGET_CHARS;
+        JsonNode budgetNode = config == null ? null : config.get(BUDGET_CHARS_CONFIG);
+        if (budgetNode != null && (!budgetNode.canConvertToLong() || budgetNode.asLong() <= 0)) {
+            throw new PluginException("memory.budgetChars 须为正整数: " + budgetNode);
+        }
+        long budget = budgetNode != null ? budgetNode.asLong() : MemoryBook.DEFAULT_BUDGET_CHARS;
         MemoryBook memory = MemoryBook.load(Cwd.path(), budget);
         Disposable published = ctx.provide(MemoryBook.SERVICE_NAME, memory);
         PromptRegistry prompts = ctx.as(PromptsView.class).prompts();

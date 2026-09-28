@@ -181,7 +181,7 @@ public final class WebAnswerer implements Answerer {
         return queue.size();
     }
 
-    /** 当前最旧待答请求（SSE 推送用；无待答为 null）。 */
+    /** 当前最旧待答请求（测试观测用——SSE 不消费，卡片经会话事件流推送；无待答为 null）。 */
     Pending currentPending() {
         return queue.peek();
     }

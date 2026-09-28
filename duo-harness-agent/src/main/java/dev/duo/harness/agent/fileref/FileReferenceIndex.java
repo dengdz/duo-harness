@@ -9,6 +9,9 @@ import java.util.List;
 /** 工作区路径索引（M21 工单 07）：懒遍历，路径 only——不读文件内容。 */
 final class FileReferenceIndex {
 
+    /** 索引遍历深度上限（防符号链接环与超深目录）。 */
+    private static final int MAX_DEPTH = 15;
+
     private final Path workspaceRoot;
     private final int maxEntries;
     private final dev.duo.harness.tools.fs.IgnorePolicy ignore;
@@ -29,7 +32,7 @@ final class FileReferenceIndex {
     }
 
     private void collect(Path dir, String prefix, List<Candidate> out, int depth) {
-        if (out.size() >= maxEntries || depth > 15) return;
+        if (out.size() >= maxEntries || depth > MAX_DEPTH) return;
         try (var entries = Files.list(dir)) {
             for (var entry : entries.sorted().toList()) {
                 if (out.size() >= maxEntries) return;

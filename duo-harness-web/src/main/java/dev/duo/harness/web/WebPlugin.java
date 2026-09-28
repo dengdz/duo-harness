@@ -28,7 +28,7 @@ import java.util.Set;
  * （对话/状态双区）、`/api/status` 状态 JSON（含上下文占用）、`/api/events` SSE
  * 会话事件流（首连快照 / 重连游标增量，ADR-0010）、`/api/message` 对话入口、
  * `/api/session/*` 会话列换与切换（切换有独占锁语义）。只绑 127.0.0.1，
- * 无鉴权（本地个人工具场景，鉴权按需再加）。
+ * 默认 token 鉴权（config.auth: token|none，M24 工单 06——显式关闭时启动横幅警示）。
  *
  * <p>inject tools + prompts + answers：状态面与对话面的三个数据源（标准服务注入
  * 模式）。技能清单 / AGENTS.md 片段由对应插件（SkillsPlugin / AgentsMdPlugin）
@@ -55,6 +55,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     /** 默认监听端口。 */
     public static final int DEFAULT_PORT = 8080;
+
+    /** 悬空作答的兜底超时（无断连触发时的最终收口，10 分钟）。 */
+    private static final long ANSWER_TIMEOUT_MS = 10 * 60 * 1000L;
 
     private WebFace face;
 
@@ -209,7 +212,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
                     }
                 };
         // HITL Web answerer：注册进交互 seam（断连 fail-closed 由 WebFace 联动）
-        WebAnswerer webAnswerer = new WebAnswerer(10 * 60 * 1000L);
+        WebAnswerer webAnswerer = new WebAnswerer(ANSWER_TIMEOUT_MS);
 
         // 页长解析在 start 之前——PluginException 不入下方 IOException catch，
         // 确保配置错误路径也走 session.close() 释放独占锁（OCR #17）
