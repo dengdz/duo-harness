@@ -42,7 +42,7 @@
 | H-09 接线三连抄 | ⚠️ 残差待裁 | 见④组A；参数堆主病灶已消 |
 | H-10 WebFace 单体 | ✅ 销号 | 1812 → 门面 365 + 七协作域（工单 06） |
 | H-15 user.dir 散落 | ✅ 销号 | Cwd 单一取值源（工单 08） |
-| H-12 fileRefs 旁路 | ✅ 销号 | provide + 惰性寻址，注册表正门（工单 07） |
+| H-12 fileRefs 旁路 | ⚠️ 残差挂账 | 服务化实测断链（声明检查 + epoch 循环两难）回退直传；正解（提供方归位 fs 插件）挂 backlog，后续结构域立项 |
 | H-01 类型下探 ×2 | ✅ 销号 | PlanSessionBinder / VisionGateAware 能力探测（工单 03） |
 | H-04 执行链依赖倒挂 | ✅ 销号（三端口） | MemoryInjector/AgentsMdInjector/PlanBashGate；attachment 两类残差归 H-11（M28+ 既定） |
 | H-03 常量钉死 | ✅ 销号 | 常量出内核，身份呈现位自declare（工单 05） |

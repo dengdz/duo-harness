@@ -12,7 +12,6 @@
 
 - **子代理宿主服务改名 `presenter` → `host`（H-13）**：呈现位发布、子代理插件 inject 的服务名变更（语义归位——它是子代理宿主，不是呈现位）；部署面无需动作（引用均走插件内部声明），自写第三方子代理消费者需同步 inject 声明
 - **呈现位常量出内核（H-03）**：`ChatAgent.PRESENTER_CLI/PRESENTER_WEB` 删除——呈现位 id 由各呈现位插件自declare（`CliPlugin.PRESENTER_ID` / `WebPlugin.PRESENTER_ID` / headless 同款），回答者注册面即在场登记，第三呈现位零内核改动接入；引用旧常量的第三方代码改引对应插件常量或自有 id
-- **fileRefs 服务正门化（H-12）**：文件引用补全服务从 Web 插件自产自用直传改为服务注册表发布（workspace 在场时常驻提供方）——第三方可消费或替换补全实现
 - **agent 装配面重整（H-04/H-09/H-01）**：`PresenterAssembly.chatAgent` 重载族 11 → 2（唯一全参形态改 `AgentSpec` 参数对象 + `AgentCapabilities` 能力集）；`ToolCallingAgent` 构造同款；`PlanMode.denyReason` 改收 `PlanBashGate` 端口；两处工具类型下探改 `PlanSessionBinder` / `VisionGateAware` 能力探测接口——换实现/第三方替换不再静默失效
 
 ## 0.22.0（2026-09-28）

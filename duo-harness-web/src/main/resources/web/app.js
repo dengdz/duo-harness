@@ -829,8 +829,10 @@ const sse = (() => {
       return;
     }
     // 渲染单源（render.dispatch）；chunk 逐帧仅渲染——一次回复可达数百帧，状态面
-    // 刷新交给 5s 轮询，其余事件帧后刷新一次
-    render.dispatch(event);
+    // 刷新交给 5s 轮询，其余事件帧后刷新一次。回放标志随帧传递（M28 验收实测修复）：
+    // replay/start 与 done 之间的历史事件带 replaying=true——/export 等命令的实时
+    // 副作用（自动下载）不得随刷新/切换的历史重放再次触发（与分页/抽屉路径同口径）
+    render.dispatch(event, replaying);
     if (event.type === 'assistant/message' || event.type === 'run/error'
         || event.type === 'assistant/interrupted') app.clearSendBusy();
     if (event.type !== 'assistant/chunk') app.refreshStatus();

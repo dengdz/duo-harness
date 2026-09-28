@@ -483,12 +483,8 @@ final class WebEndpoints {
 
     private void handleFileComplete(HttpExchange exchange) throws IOException {
         try {
-            // 服务化取用（M28 工单 07）：fileRefs 经服务注册表惰性寻址（装配期 provide
-            // 发布），装配缺 workspace 行时缺席 503——不再走门面直传字段
-            dev.duo.harness.agent.fileref.FileReferenceService refs;
-            try {
-                refs = face.ctx.as(WebServiceViews.FileRefs.class).fileRefs();
-            } catch (Exception e) {
+            dev.duo.harness.agent.fileref.FileReferenceService refs = face.fileRefs;
+            if (refs == null) {
                 WebHttp.respondText(exchange, 503, "补全服务未装配（无 workspace）");
                 return;
             }

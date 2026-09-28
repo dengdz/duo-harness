@@ -9,7 +9,7 @@
 无（顺带小单）。
 
 ## Status
-in-progress（待手动验收，攒统一拍板）
+done（2026-09-28 用户手动验收通过——三件套实测：CLI 命令族、Web 走查、headless、子代理）
 
 ## Checklist
 - [x] javadoc 修订，与实现事实一致（含 BootYmlTest 按实现断言的口径说明）

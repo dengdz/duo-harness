@@ -14,8 +14,9 @@ target/
 .env
 *.env.local
 
-# 个人记忆本（M25）：项目级记忆不入库——spec 决策四
+# 个人配置（M25 记忆本 + M24 权限规则等）：项目级个人配置不入库——红线 2 精神
 /.duo/MEMORY.md
+/.duo/settings.json
 
 # 日志
 logs/

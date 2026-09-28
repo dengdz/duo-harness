@@ -294,3 +294,13 @@
 - **症状**：M26-01 验收中 REPL 对话报 `LLM 调用失败: HTTP 404`；同次验收 v0 旧会话续接与新会话创建均正常（会话层无涉）。
 - **初判根因**：环境问题——config `model: deepseek-flash` 在 DeepSeek anthropic 兼容端点 404（模型名疑似过期）；M26-01 diff 与 LLM 路径零交集已排除。待用户核对模型名后收尾。
 - **防复发**：待收尾时定（候选：LLM 失败提示携带 model/endpoint 的改进项）。
+
+---
+
+## BUG-20260928-02 · Web 面 /export 刷新/重进会话重复触发下载——回放标志漏传（查无 M28 关联，既有缺陷顺手修）
+
+- **日期**：2026-09-28（M28 里程碑验收实测报告）
+- **症状**：Web 输入框敲 `/export` 下载一次后，刷新页面或重新进入该会话都再次自动触发下载（应只渲染历史 URL 文本）。
+- **根因**：`app.js` §3 SSE `handle()` 调 `render.dispatch(event)` 未传 `replaying` 标志（缺省 false）——replay/start 与 done 之间的**历史** command/done(export) 事件被当实时命令再次触发下载副作用。对照：分页路径（replayInto `dispatch(ev, true)`）与子会话抽屉均正确传标志，唯独主会话回放漏传。app.js 本期（M28）零改动——git diff 实证为既有缺陷，非重构引入。
+- **修复**：`render.dispatch(event, replaying)` 一行——回放标志随帧传递，与另两条回放路径同口径；replay/done 后的实时事件仍带 false 正常触发下载。
+- **防复发**：「实时副作用挂回放标志」的判定已有两处正确先例，第三处（主回放）漏网——前端新增实时副作用时须自问「这条渲染路径的 replaying 从哪来」；验收走查「刷新/切换」组合是抓此类缺陷的固定动作。

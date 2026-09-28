@@ -9,15 +9,15 @@
 06（消费面在拆分后的门面 / 端点形态上接线）。
 
 ## Status
-in-progress（待手动验收，攒统一拍板）
+done（2026-09-28 用户手动验收通过——服务化实测回退改判残差挂账，直传行为恢复经三件套实测）
 
 ## Checklist
-- [x] 装配改 provide 发布（workspace 在场时构建即 `ctx.provide("fileRefs", …)`），服务注册表从此有常驻提供方
-- [x] 消费方（补全端点）改 ctx 惰性寻址（WebServiceViews.FileRefs 视图，缺席 503 语义不变）；WebFace 直传字段与 setFileRefs 删除
-- [x] 「发布 fileRefs 服务」这一挂载场景在服务注册表可查（不再旁路）；第三方可替换/补全实现
-- [x] 既有文件引用行为不变（WebFileCompleteEndpointTest 改走服务注册表同路径，全绿）+ 全仓 `mvn verify` 绿（2026-09-28 exit 0）
+- [x] ~~装配改 provide 发布 + 消费方惰性寻址~~ **已回退（2026-09-28 用户验收实测 @ 补全 503）**：直传行为恢复（WebFace.setFileRefs + handleFileComplete 直读），18083 实例实测 200 + 14 候选
+- [x] 回退缘由两条内核机制实锤：①消费端 `ctx.as` 撞「未声明服务拒绝读取」（`injectedServices` 白名单——测试用 root 上下文豁免声明检查，**测试绿生产断链**的缝隙）；②提供方自产自声明撞 epoch 指纹循环（provide 新实例 → 指纹翻动 → recheck 无限重载）
+- [x] 正解挂账 backlog：提供方归位 fs 插件（自建同根实例处 provide，提供方≠声明方无循环）+ web optionalInject 跨插件消费——涉及 fileRefs 所有权归一，超出接口手术精度，后续结构域立项
+- [x] 文档同 diff 回退：扩展点清单 fileRefs 行、CHANGELOG 删该条、backlog 挂账正解
+- [x] 全仓 `mvn verify` 绿（回退后 exit 0）
 
 ## Comments
 
-- 2026-09-28：**消费形态裁定**——扫描册原建议「消费方 optionalInject 服务化」，落地时发现旁路注释自述「自产自依赖会让内核 recheck 循环重跑 apply」（WebPlugin 自产 fileRefs 又自消费）——optionalInject 自声明会踩同一坑。落地为 provide + 端点惰性寻址（与 commands/skills 同款模式），recheck 规避且服务化目标（注册表有提供方、可替换）全达成。
-- 待手动验收（攒统一拍板）。
+- 2026-09-28：本单为 M28 唯一验收实测打回的工单。教训三则：**「修法轻」的预判未经生产形态实测**（扫描册标注轻修的依据是旁路注释，注释本身就是坑位记录）；**测试形态与生产形态有缝**（root 上下文豁免声明检查——端点类测试应尽量走插件上下文装配）；**「服务正门化」的前提是提供方所有权清晰**（自产自用的服务没有正门可走）。H-12 维持 M27 原判「病但触发不足」——@补全可用性未受损，正解随结构域立项。

@@ -141,18 +141,15 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ctx.hasService(dev.duo.harness.sessionquery.SessionQueryService.SERVICE_NAME)
                         ? ctx.as(WebSessionQueryView.class).sessionQuery() : null;
         // @file 补全服务（M21 工单 07，ADR-0022 决策 7）：workspace 在场才建——
-        // 索引以 workspace 根为界。M28 工单 07 服务化：构建即 provide 发布（服务注册表
-        // 从此有常驻提供方，第三方可替换/补全实现），消费方（补全端点）经 ctx 惰性寻址
-        // 取用。本插件**不进 inject/optionalInject 声明**：自产自依赖会让内核 recheck
-        // 循环重跑 apply（旁路时代的注释保留此坑位记录）
+        // 索引以 workspace 根为界。本插件自产自用（补全端点经门面直传取用），**不进
+        // inject/optionalInject 声明**：自产自依赖会让内核 epoch 指纹随每次 provide
+        // 的新实例翻动、recheck 循环重跑 apply（M28 工单 07 实测验证后回退——服务化
+        // 正解需提供方归位 fs 插件，见 backlog 挂账）
         dev.duo.harness.agent.fileref.FileReferenceService fileRefs =
                 ctx.hasService(WorkspacePolicy.SERVICE_NAME)
                         ? new dev.duo.harness.agent.fileref.FileReferenceService(
                                 ctx.as(WebWorkspaceView.class).workspace().root())
                         : null;
-        if (fileRefs != null) {
-            ctx.provide(dev.duo.harness.agent.fileref.FileReferenceService.SERVICE_NAME, fileRefs);
-        }
         // plan 态 bash 只读判定器（M24 工单 04）：workspace 在场时构建（与裁决链 detector
         // 同源同参，只读无状态）；缺席即 null，plan 态 bash 到达 fail-closed 拒
         dev.duo.harness.tools.fs.ReadOnlyBashDetector planBashDetector =
@@ -281,6 +278,8 @@ public final class WebPlugin implements Plugin<JsonNode> {
         SessionTitles.attach(session, adapter);
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
+        // 补全服务交给 face（自产自用直传，不走服务声明——见上方 fileRefs 注释）
+        face.setFileRefs(fileRefs);
         // tool/result 后台重建（bash/write 改文件树后索引陈旧）：初始会话监听——
         // 换绑在 onSessionChanged 回调里重挂；旧会话 close 清空监听器，不泄漏
         if (fileRefs != null) {

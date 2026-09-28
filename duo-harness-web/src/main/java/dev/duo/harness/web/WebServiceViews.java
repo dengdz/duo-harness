@@ -26,10 +26,4 @@ final class WebServiceViews {
 
         dev.duo.harness.tools.ConnectorStatusBoard connectorStatus();
     }
-
-    /** @file 补全服务视图接口（服务名 fileRefs，M28 工单 07 服务化）。 */
-    interface FileRefs {
-
-        dev.duo.harness.agent.fileref.FileReferenceService fileRefs();
-    }
 }

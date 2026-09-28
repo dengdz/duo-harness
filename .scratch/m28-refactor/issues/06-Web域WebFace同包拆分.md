@@ -11,7 +11,7 @@
 无（与装配链 03~05 逻辑独立，可并行）。
 
 ## Status
-in-progress（待手动验收，攒统一拍板）
+done（2026-09-28 用户手动验收通过——三件套实测：CLI 命令族、Web 走查、headless、子代理）
 
 ## Checklist
 - [x] 拆分落位（8 件协作域）：门面 WebFace 365 + WebEntryGate 91 / TabContext 47 / WebSseHub 266 / WebTabs 207 / WebEndpoints 583 / WebSessionEndpoints 380 / WebHttp 135 / WebServiceViews 33——web 域最大文件 583 ≤600 行（度量①达标；WebFace 1812 → 门面 365 退出全仓 top10）

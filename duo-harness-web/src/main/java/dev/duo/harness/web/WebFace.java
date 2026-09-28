@@ -64,6 +64,9 @@ public final class WebFace {
     final java.util.function.BooleanSupplier visionGate;
     /** 会话检索服务（M21 工单 08，可选依赖：null = session-query 行未装——端点 503）。 */
     final SessionQueryService sessionQuery;
+    /** @file 补全服务（M21 工单 07，可选依赖：装配层经 {@link #setFileRefs} 直传，不走服务声明——
+     * M28 工单 07 服务化实测回退，正解见 backlog 挂账）。 */
+    volatile dev.duo.harness.agent.fileref.FileReferenceService fileRefs;
     /** HITL Web answerer（审批/提问的 Web 呈现位）。 */
     final WebAnswerer webAnswerer;
     /** 上下文治理（状态面占用查询的同源数据源；null = 无治理装配，状态面省略占用）。 */
@@ -288,6 +291,11 @@ public final class WebFace {
     /** 测试与装配层用：替换匿名上下文的对话执行者（start 初始接线；标签 agent 走回调）。 */
     void setAgent(ChatAgent agent) {
         tabs.setDefaultAgent(agent);
+    }
+
+    /** 补全服务直传（装配层调用；WebPlugin 自产自用不经服务声明，见 WebPlugin fileRefs 注释）。 */
+    void setFileRefs(dev.duo.harness.agent.fileref.FileReferenceService service) {
+        this.fileRefs = service;
     }
 
     /**
