@@ -8,6 +8,14 @@
 
 ---
 
+## BUG-20260928-01 · 全仓 verify 首轮 SkillRegistryTest 偶发 1 error——watch 时序敏感（观察中）
+
+- **日期**：2026-09-28（M28 工单 01 基线采集发现）
+- **症状**：全仓 `verify` 首轮 `SkillRegistryTest.watchPicksUpEditsAndDedupesCatalog` 1 error——`SkillRegistry.find(String)` 返回 null（SkillRegistryTest.java:204）；同轮其余 139 测试类全绿。工作树零代码改动（`0.23.0` 分支 = main 7b409f7 + 纯文档），排除回归。
+- **排查**：单跑（`-pl duo-harness-agent -am`）通过——测试环境 watch 不可用时走「降级启动扫描」路径（日志 WARN 在案）；全量并发构建下 watch 线程时序紧张，疑似热加载轮询窗口内目录重载未完成即断言。
+- **结论**：暂判环境敏感偶发，查无代码缺陷；**已销观察（同日复跑全仓 verify 全绿，exit 0）**——偶发坐实，不立案；若后续再现同点即升级正式条目（方向：watch 注册后等待轮询的超时/重试形态）。
+- **防复发**：watch 类热加载测试对并发环境的时序敏感性记档；基线单已注「首轮偶发」。
+
 ## BUG-20260919-03 · 双开重启后权限档恢复被覆盖——占用改开的新会话把恢复档重置回缺省
 
 - **日期**：2026-09-19（M19 工单 06 验收实测报告）
