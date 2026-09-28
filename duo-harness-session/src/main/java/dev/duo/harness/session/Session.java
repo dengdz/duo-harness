@@ -925,82 +925,55 @@ public final class Session {
     }
 
     /**
-     * 静态权限档读取（M19 占用继承用）：不持锁打开 JSONL 逐行找最新 permission/mode
-     * 事件——与 {@link #titleOf} 同款只读扫描（坏行跳过）。文件缺失/不可读返回 null。
-     *
-     * <p>POSIX 释放陷阱防线（OCR 终审 #15）：若该文件正被**本进程**另一 Session 实例
-     * 独占持锁（占用继承的主用例——双开下 CLI 对被占会话调本方法），关闭任何新开 fd
-     * 都会释放本进程在该文件上的全部锁（{@link #load} / {@link #isOccupied} 注释两次
-     * 记档）——此时只读 fd **有意不关**（占用继承低频路径，fd 泄漏有界，进程退出由
-     * 内核回收）；他进程持锁或无人持锁时照常关闭。</p>
+     * 静态权限档读取（M19 占用继承用）：最新 {@code permission/mode} 事件的档位。
+     * 本进程持有的活跃会话经注册表内存直取（不落盘）；未持锁的外部文件走共享扫描
+     * 入口（坏行跳过）。文件缺失/不可读返回 null。
      */
     public static String permissionModeOf(Path jsonl) {
-        if (!Files.isRegularFile(jsonl)) {
-            return null;
-        }
-        Path key = jsonl.toAbsolutePath().normalize();
-        boolean heldHere;
-        synchronized (LOCK_GATE) {
-            heldHere = HELD_LOCKS.containsKey(key);
-        }
-        java.nio.channels.FileChannel channel;
-        try {
-            channel = java.nio.channels.FileChannel.open(jsonl, StandardOpenOption.READ);
-        } catch (IOException e) {
-            return null;
-        }
-        String latest = null;
-        try {
-            var reader = new java.io.BufferedReader(new java.io.InputStreamReader(
-                    java.nio.channels.Channels.newInputStream(channel), StandardCharsets.UTF_8));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                try {
-                    JsonNode node = JSON.readTree(line);
-                    if (SessionEvent.PERMISSION_MODE.equals(node.path("type").asText())) {
-                        latest = node.path("text").asText();
-                    }
-                } catch (IOException ignored) {
-                    // 坏行跳过
-                }
-            }
-        } catch (IOException ignored) {
-            // 读取失败按无记录处理
-        } finally {
-            if (!heldHere) {
-                try {
-                    channel.close();
-                } catch (IOException ignored) {
-                    // 关闭失败无碍（无锁可释放）
-                }
-            }
-            // heldHere：fd 有意不关（见方法 javadoc）——关了会释放属主的独占锁
-        }
-        return latest;
+        Session held = heldSession(jsonl);
+        return held != null
+                ? held.permissionMode()
+                : latestEventTextFromDisk(jsonl, SessionEvent.PERMISSION_MODE);
     }
 
     /**
-     * 静态标题读取（侧栏列表用）：不持锁打开 JSONL 逐行找最新 title 事件——
-     * 与 load 的严格解析不同，损坏行跳过不抛（标注是锦上添花，不因脏行失败）。
+     * 静态标题读取（侧栏列表用）：最新 {@code session/title} 事件的文本。
+     * 本进程持有的活跃会话经注册表内存直取（C2 工单 02，P1：侧栏每次刷新对全部
+     * 会话调本方法——原 try-with-resources 必关 fd，POSIX 释放陷阱下活跃会话的
+     * 独占锁每次刷新被放掉，双进程双写分脑的保护由此失效；收敛后零 fd 触碰）；
+     * 未持锁的外部文件走共享扫描入口（坏行跳过——标注是锦上添花，不因脏行失败）。
      * 文件缺失/不可读返回 null。
      */
     public static String titleOf(Path jsonl) {
+        Session held = heldSession(jsonl);
+        return held != null
+                ? held.title()
+                : latestEventTextFromDisk(jsonl, SessionEvent.TITLE);
+    }
+
+    /**
+     * 静态事件文本扫描（titleOf / permissionModeOf 共用半边，C2 工单 02 收敛）：
+     * 逐行流式扫描找最新指定类型事件（latest-wins，大会话不做全量驻留）。
+     * 只服务本进程**未持锁**的文件——本进程无锁可释放，fd 正常开关；持锁会话
+     * 永不走此路径（调用方先经注册表内存直取）——任何 fd 的开关都会释放本进程
+     * 在该文件上的全部锁（POSIX 陷阱，{@link #load} / {@link #isOccupied} 注释
+     * 两次记档）。
+     */
+    private static String latestEventTextFromDisk(Path jsonl, String eventType) {
         if (!Files.isRegularFile(jsonl)) {
             return null;
         }
-        // 逐行流式扫描（大会话不做全量驻留）：标题事件极少（精简版只生成一次），
-        // 顺序扫到最后一个标题即为所求（latest-wins 语义）
         String latest = null;
         try (var reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 try {
                     JsonNode node = JSON.readTree(line);
-                    if (SessionEvent.TITLE.equals(node.path("type").asText())) {
+                    if (eventType.equals(node.path("type").asText())) {
                         latest = node.path("text").asText();
                     }
                 } catch (IOException ignored) {
-                    // 坏行跳过（标题是锦上添花）
+                    // 坏行跳过（静态读取是锦上添花，不因脏行失败）
                 }
             }
         } catch (IOException e) {

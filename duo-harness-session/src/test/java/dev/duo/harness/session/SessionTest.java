@@ -851,9 +851,9 @@ class SessionTest {
 
     @Test
     void permissionModeOfDoesNotReleaseHeldLock() throws IOException {
-        // OCR #15 回归：本进程持锁期间经 permissionModeOf 读同文件——只读 fd 有意不关
-        // （POSIX 陷阱：关闭任意 fd 释放进程全部锁）。探测方式：新通道 tryLock 必须
-        // 因重叠锁失败；若失败前被读取路径释放，tryLock 会意外成功
+        // OCR #15 回归 + C2 工单 02 升级：本进程持锁期间经 permissionModeOf 读同文件——
+        // 收敛后走注册表内存直取（零 fd），独占锁不可能被读取路径触碰；探测方式：
+        // 新通道 tryLock 必须因重叠锁失败（若读取路径开并关过 fd，锁已被 POSIX 陷阱释放）
         Session holder = Session.create(sessionsDir());
         holder.append(SessionEvent.permissionMode("read-only"));
 
@@ -874,6 +874,34 @@ class SessionTest {
         other.append(SessionEvent.permissionMode("danger-full-access"));
         other.close();
         assertEquals("danger-full-access", Session.permissionModeOf(other.jsonl()));
+        holder.close();
+    }
+
+    @Test
+    void titleOfDoesNotReleaseHeldLockAndReadsFromMemory() throws IOException {
+        // C2 工单 02（P1-2）回归锁：Web 侧栏每次刷新对目录全部会话逐个调 titleOf——
+        // 原实现 try-with-resources 必关 fd，POSIX 陷阱下**每次侧栏刷新都放掉活跃
+        // 会话的独占锁**（双进程双写分脑的保护失效，且 isOccupied 查注册表仍报占用
+        // 完全掩盖）。收敛后活跃会话注册表内存直取（零 fd）；探测方式同 OCR #15 用例
+        Session holder = Session.create(sessionsDir());
+        holder.append(SessionEvent.title("活跃会话标题"));
+
+        assertEquals("活跃会话标题", Session.titleOf(holder.jsonl()), "活跃会话标题内存直取");
+
+        try (var probe = java.nio.channels.FileChannel.open(holder.jsonl(),
+                java.nio.file.StandardOpenOption.READ,
+                java.nio.file.StandardOpenOption.WRITE)) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    java.nio.channels.OverlappingFileLockException.class,
+                    probe::tryLock,
+                    "侧栏读取不得触碰属主独占锁（P1：每次刷新放锁即双写分脑）");
+        }
+
+        // 无人持锁的外部文件照常磁盘扫描（latest-wins、坏行跳过语义不回退）
+        Session other = Session.create(sessionsDir());
+        other.append(SessionEvent.title("外部会话标题"));
+        other.close();
+        assertEquals("外部会话标题", Session.titleOf(other.jsonl()));
         holder.close();
     }
 
