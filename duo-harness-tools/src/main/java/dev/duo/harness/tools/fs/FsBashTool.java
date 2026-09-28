@@ -34,7 +34,6 @@ public final class FsBashTool implements ToolDefinition {
     public static final String NAME = "bash";
 
     private static final long DEFAULT_TIMEOUT_MS = 120_000;
-    private static final long MAX_TIMEOUT_MS = 600_000;
     private final WorkspacePolicy workspace;
     /** 后台任务注册表（M23 工单 04；null = 未装配——run_in_background 请求时报错）。 */
     private final BackgroundTaskRegistry registry;
@@ -84,9 +83,9 @@ public final class FsBashTool implements ToolDefinition {
     }
     @Override public boolean requiresApproval() { return true; }
 
-    /** 协作式超时优先：管线上限放宽到本调用 timeoutMs 之上 5s——杀进程树归协作式，管线只兜挂死（ADR-0018）。 */
+    /** 协作式超时优先：管线上限放宽到本调用等待之上 5s——杀进程树归协作式，管线只兜挂死（ADR-0018）。 */
     @Override public Long pipelineTimeoutMs(JsonNode args) {
-        return timeoutFor(args) + 5_000L;
+        return ToolTimeouts.pipelineTimeout(args, DEFAULT_TIMEOUT_MS);
     }
 
     /** 启动 bash 进程（前后台共用）：workspace 根 + env 硬化 + stdin 空设备。 */
@@ -177,12 +176,9 @@ public final class FsBashTool implements ToolDefinition {
         return sb.toString();
     }
 
-    /** 超时 clamp：模型可传低值，缺省 120s，上限 600s；非正数/非数值按缺省。 */
+    /** 超时 clamp（单点委托，C2 工单 09）：模型可传低值，缺省 120s，上限 600s；非正数/非数值按缺省。 */
     static long timeoutFor(JsonNode args) {
-        JsonNode node = args.path("timeoutMs");
-        return node.isNumber() && node.asLong() > 0
-                ? Math.min(node.asLong(), MAX_TIMEOUT_MS)
-                : DEFAULT_TIMEOUT_MS;
+        return ToolTimeouts.clamp(args, DEFAULT_TIMEOUT_MS);
     }
 
     /**

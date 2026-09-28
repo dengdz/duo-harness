@@ -15,7 +15,6 @@ public final class TaskOutputTool implements ToolDefinition {
 
     public static final String NAME = "task-output";
     private static final long DEFAULT_WAIT_MS = 30_000;
-    private static final long MAX_WAIT_MS = 600_000;
 
     private final BackgroundTaskRegistry registry;
     private final int tailChars;
@@ -47,6 +46,15 @@ public final class TaskOutputTool implements ToolDefinition {
     /** 读取不写、等待阻塞——保守独占（与 bash 同为审批面外的只读语义，但等待段不该并行占用）。 */
     @Override public boolean isConcurrencySafe(JsonNode args) { return false; }
 
+    /**
+     * 协作式超时优先（C2 工单 09）：task-output 自带等待语义，管线上限随请求的
+     * timeoutMs 放宽（bash 同款模式）——此前漏套，默认部署（管线缺省 120s）下
+     * 模型按契约传 {@code timeoutMs > 115000} 的长等待必被管线腰斩。
+     */
+    @Override public Long pipelineTimeoutMs(JsonNode args) {
+        return ToolTimeouts.pipelineTimeout(args, DEFAULT_WAIT_MS);
+    }
+
     @Override public String execute(ToolExecution exec) {
         JsonNode args = exec.args();
         String taskId = args.path("taskId").asText("");
@@ -56,10 +64,7 @@ public final class TaskOutputTool implements ToolDefinition {
                     + "（taskId 以 run_in_background 的返回为准）");
         }
         boolean block = !args.has("block") || args.path("block").asBoolean(true);
-        long waitMs = Math.min(
-                args.path("timeoutMs").isNumber() && args.path("timeoutMs").asLong() > 0
-                        ? args.path("timeoutMs").asLong() : DEFAULT_WAIT_MS,
-                MAX_WAIT_MS);
+        long waitMs = ToolTimeouts.clamp(args, DEFAULT_WAIT_MS);
         if (block && !task.isCompleted()) {
             try {
                 task.process().waitFor(waitMs, TimeUnit.MILLISECONDS);
