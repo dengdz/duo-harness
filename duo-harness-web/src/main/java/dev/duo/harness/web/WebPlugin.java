@@ -93,6 +93,16 @@ public final class WebPlugin implements Plugin<JsonNode> {
         ToolsService tools = ctx.as(WebToolsView.class).tools();
         PromptRegistry prompts = ctx.as(WebPromptsView.class).prompts();
         InteractionService answers = ctx.as(WebAnswersView.class).answers();
+
+        // 行序契约 fail-fast（M27 工单 05）：回答者注册序即亲和路由
+        // 兜底序（ADR-0020 决策 7）——web 必须先于既有回答者注册（agent-demo 契约：
+        // web 行先于 cli 行，审批/提问 Web 卡片优先）。既有回答者在场即本行装配过晚：
+        // 启动期点名（Boot 审计整树回滚），不再静默吞路由语义（BUG-20260923-01 实证）
+        if (answers.hasAnswerer()) {
+            throw new PluginException("行序契约：web 行必须先于任何回答者注册（典型为 cli 行先行）"
+                    + "——交互服务已有回答者在册，web 后注册将失去路由兜底优先（审批/提问应 Web"
+                    + " 卡片优先）。请将 web 行移至 cli 行之前后重启。");
+        }
         CommandsRegistry commands = ctx.as(WebCommandsView.class).commands();
 
         // 执行链装配（呈现位共享单点，ADR-0011）：LLM 配置 → 重试 adapter；

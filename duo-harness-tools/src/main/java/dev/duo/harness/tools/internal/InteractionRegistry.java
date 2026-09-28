@@ -32,6 +32,11 @@ public final class InteractionRegistry implements InteractionService {
         return removal;
     }
 
+    @Override
+    public boolean hasAnswerer() {
+        return !answerers.isEmpty();
+    }
+
     /**
      * 询问一次：请求携发起呈现位标记时**发起方回答者优先**（M19 亲和路由，
      * ADR-0020 决策 7——"谁发起谁作答"）：先问同标记的回答者，其放弃（null）

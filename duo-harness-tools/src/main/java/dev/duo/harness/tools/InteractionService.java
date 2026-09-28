@@ -29,6 +29,14 @@ public interface InteractionService {
     Disposable register(Context registrant, Answerer answerer);
 
     /**
+     * 是否已有回答者在册（只读探测）。挂载序契约检查用：呈现位插件 apply 时
+     * fail-fast 校验自身先于既有回答者注册——回答者注册序即亲和路由兜底序
+     * （ADR-0020 决策 7），后注册者失去兜底优先。M27 工单 05 将「web 行先于
+     * cli 行」的行序隐式契约显式化（扫描册 H-05）。
+     */
+    boolean hasAnswerer();
+
+    /**
      * 询问一次：按注册序遍历回答者，首个给出回答者胜出。
      *
      * @param request 交互请求（审批或提问）

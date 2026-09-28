@@ -2,6 +2,14 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 未发布
+
+### Added
+
+- **装配行序契约 fail-fast（M27 工单 05，ADR-0029）**：demo 装配的「web 行须先于 cli 行」从注释约定升级为双重启动校验——①DuoMain boot 前预检：cli 与 web 两行同在册且 web 后置即退出点名（cli 行的 apply 即 REPL 主循环，其后所有行在 REPL 退出前不装载，web 后置原为**静默缺席**——无报错无 Web 面）；②web 装配期 fail-fast：交互服务已有回答者在册时 web 行装载即失败点名（防路由兜底序翻转）。mcp 行与 cli 行的先后经复核为 optionalInject 自动重载自愈（ADR-0019），降级为建议而非硬契约
+
+- **工具统计插件（M27 demo，ADR-0029）**：新增独立模块 duo-harness-stats——第三方插件形态范例，一个插件串起事件监听、命令注册、工具注册、服务消费四个扩展点：监听 `tools/post-execute` 按工具名累计调用与失败、`/toolstats` 命令现场报表（agent 执行中可敲）、`tool_stats` 查询工具供模型侧查询；agent-demo.yml 默认装配；接入 = 依赖一行 + yml 一行 + 构建注册与文档同步，零内核改动（"后续功能挂得上"的活体验证）
+
 ## 0.21.0（2026-09-27）
 
 ### Added

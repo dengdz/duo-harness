@@ -69,6 +69,12 @@
       <artifactId>duo-harness-web</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M27 demo：工具统计插件（第三方插件形态范例，ADR-0029）——接入行之一 -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-stats</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

@@ -304,8 +304,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
             });
         }
         // MCP 重连耗尽通知（M24 工单 05）：连接器状态板订阅——通知经收件箱注入（模型+用户可见）；
-        // 状态板服务缺席（未挂 mcp 行）零感；mcp 行须先于 cli 行装配（订阅在 apply 时判定，
-        // optionalInject 声明的时序契约）
+        // 状态板服务缺席（未挂 mcp 行）零感。行序说明（M27 复核）：
+        // connectorStatus 在 optionalInject 声明内（ADR-0019）——mcp 行后置时服务出现
+        // 触发本插件 epoch 自动重载、重载后补订阅，功能自愈；mcp 行先于 cli 行仅省
+        // 一次启动期重载，是建议而非硬契约
         if (ctx.hasService(dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME)) {
             dev.duo.harness.tools.ConnectorStatusBoard board =
                     ctx.as(ConnectorStatusView.class).connectorStatus();

@@ -3,7 +3,10 @@ package dev.duo.harness.example;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.Boot;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -22,6 +25,49 @@ public final class DuoMain {
 
     public static void main(String[] args) throws Exception {
         run(args, root -> { });
+    }
+
+    /**
+     * 行序契约预检（M27 工单 05，扫描册 H-05）：cli 行的 apply 即 REPL 主循环——
+     * 其后所有行在 REPL 退出前不会装载，web 行后置 = Web 呈现位静默缺席（M27 工单 05 实测）。cli 与 web 两行同时在册时
+     * web 必须在前，违例 boot 前即点名。纯单呈现位 / 无呈现位装配零感。仅识别标准行
+     * 形态（strip 后全等）；行尾注释/引号变体不识别——漏检由 web 装配期 fail-fast 兜底。
+     */
+    static void validatePresenterRowOrder(Path yml) throws Exception {
+        int cliIdx = -1;
+        int webIdx = -1;
+        List<String> lines = Files.readAllLines(yml);
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i).strip();
+            if ("- id: cli".equals(line) && cliIdx < 0 && !hasDisabledFlag(lines, i)) {
+                cliIdx = i;
+            } else if ("- id: web".equals(line) && webIdx < 0 && !hasDisabledFlag(lines, i)) {
+                webIdx = i;
+            }
+        }
+        if (cliIdx >= 0 && webIdx >= 0 && webIdx > cliIdx) {
+            throw new IllegalArgumentException("行序契约：web 行必须先于 cli 行——cli 行的 apply"
+                    + " 即 REPL 主循环，其后的行在 REPL 退出前不会装载，web 行后置将静默缺席"
+                    + "（yml 第 " + (cliIdx + 1) + " 行 cli / 第 " + (webIdx + 1) + " 行 web）。"
+                    + "请将 web 行移至 cli 行之前。");
+        }
+    }
+
+    /**
+     * id 行之后紧邻的 disabled: true 标记（≤3 行内、遇空行或下一 id 行即止）——
+     * 停用行不参与行序契约（停用的 cli 不阻塞其后行装载）。
+     */
+    private static boolean hasDisabledFlag(List<String> lines, int idIdx) {
+        for (int i = idIdx + 1; i <= Math.min(idIdx + 3, lines.size() - 1); i++) {
+            String stripped = lines.get(i).strip();
+            if (stripped.isEmpty() || stripped.startsWith("- id:")) {
+                break;
+            }
+            if (stripped.equals("disabled: true")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 树启动后的挂载回调（允许受检异常——演示装配含文件 IO）。 */
@@ -66,6 +112,12 @@ public final class DuoMain {
         Path yml = args.length > 0 ? Path.of(args[0])
                 : Path.of(DuoMain.class.getResource(
                         dev.duo.harness.example.headless.HeadlessArgs.DEFAULT_YML_RESOURCE).toURI());
+        try {
+            validatePresenterRowOrder(yml);
+        } catch (IllegalArgumentException | IOException e) {
+            System.err.println(e.getMessage());
+            System.exit(2);
+        }
         Context root = Boot.from(yml);
         CountDownLatch stopped = new CountDownLatch(1);
         Thread hook = new Thread(() -> {

@@ -102,7 +102,8 @@ plugins:
 
   # 会话语义（BUG-20260923-01）：web 在前装配（回答者路由契约，见 cli 行注释），
   # 启动自建全新会话、不续接不抢占；cli 在后续接最近一次有内容的对话（空会话跳过）。
-  # 同一会话同一时刻仍只允许一个属主（独占锁语义不变）
+  # 同一会话同一时刻仍只允许一个属主（独占锁语义不变）。
+  # 行序违例双重点名（M27 工单 05）：DuoMain boot 前预检 + web 装配期 fail-fast
   - id: web
     name: dev.duo.harness.web.WebPlugin
     config:
@@ -111,12 +112,21 @@ plugins:
 
   # CLI 呈现位（ADR-0011）：终端 REPL 插件——与 web 对称。
   # 行序即回答者路由：cli 在 web 之后，审批/提问由 Web 卡片优先呈现
+  # cli 行的 apply 即 REPL 主循环：其后所有行在 REPL 退出前不会装载（M27 工单 05 实测）——
+  # web 行务必在 cli 行之前，否则 Web 呈现位静默缺席（DuoMain 预检会在 boot 前点名）
   - id: cli
     name: dev.duo.harness.cli.CliPlugin
     config:
       maxIterations: 30    # 与 web 同步调高（/plan 等探索型任务）
 
+
   # ask_user / exit_plan_mode 交互工具由两个呈现位插件各自查重注册（先到先得）。
   # agent demo 装配仅本机工具族（消除双写工具选型噪音）；MCP 机制演示在
   # demo-m2.yml（DemoMain 的 M2 段，mcpfs 模块保留）——想挂自己的 MCP 服务器，
   # 等价 yml 形态见插件配置参考
+
+  # 工具统计插件（M27 demo，ADR-0029）：独立模块 duo-harness-stats——第三方插件
+  # 形态范例，监听工具执行计数、/toolstats 命令 + tool_stats 查询工具。
+  # 接入仅两行（example 依赖一行 + 本行），零内核改动；不装本行即零感知
+  - id: tool-stats
+    name: dev.duo.harness.stats.ToolStatsPlugin
