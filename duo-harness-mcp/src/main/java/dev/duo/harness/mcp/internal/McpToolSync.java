@@ -85,7 +85,7 @@ final class McpToolSync {
             }
             Set<String> newNames = new HashSet<>();
             for (McpSchema.Tool tool : remoteTools) {
-                newNames.add(publicToolName(serverName, tool.name()));
+                newNames.add(McpToolNames.publicName(serverName, tool.name()));
             }
             Set<String> currentNames = new HashSet<>();
             for (ToolDefinition def : currentDefs) {
@@ -266,8 +266,4 @@ final class McpToolSync {
         return sb.toString();
     }
 
-    /** 命名（M24 工单 05）：委托契约包 {@link McpToolNames}——规范化 + 一律哈希后缀防坍缩。 */
-    static String publicToolName(String serverName, String rawToolName) {
-        return McpToolNames.publicName(serverName, rawToolName);
-    }
 }

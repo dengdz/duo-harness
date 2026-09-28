@@ -886,8 +886,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
      * 收口后消费 next-turn 队列——多条合并为一条立即开新轮（ADR-0025 决策一/二），
      * 直到队列空或收到退出/停止。
      */
-    private boolean startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
-                              AtomicBoolean interruptArmed) {
+    private void startTurn(String userText, AgentHolder agentHolder, AtomicBoolean agentBusy,
+                           AtomicBoolean interruptArmed) {
         // busy 占位由调用方 CAS 完成（M23 工单 04 审查修复：通知线程与读者线程的
         // 开轮竞争在调用方用 compareAndSet 封口，本方法信任占位无条件执行）
         Runnable turn = () -> {
@@ -913,10 +913,9 @@ public final class CliPlugin implements Plugin<JsonNode> {
         turnThread = thread;
         if (stopped.get()) {
             agentBusy.set(false);
-            return true;
+            return;
         }
         thread.start();
-        return true;
     }
 
     /** 单轮执行：send + 流式渲染 + 终态行（中断/异常收敛为提示行，不终结事件循环）。 */

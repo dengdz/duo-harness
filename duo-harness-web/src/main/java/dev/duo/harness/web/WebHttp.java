@@ -124,10 +124,6 @@ final class WebHttp {
 
     /** 查询参数 URL 解码（UTF-8；非法序列由调用方按 400 处理——搜索词/路径 token 两处共用）。 */
     static String urlDecode(String raw) {
-        try {
-            return java.net.URLDecoder.decode(raw, java.nio.charset.StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
-            throw e;
-        }
+        return java.net.URLDecoder.decode(raw, java.nio.charset.StandardCharsets.UTF_8);
     }
 }

@@ -74,7 +74,12 @@ public final class ForkTool implements ToolDefinition {
             throw new PluginException("fork 无可用父会话（装配不完整）");
         }
         String agentId = manager.fork(parent, template, task);
-        return "{\"agentId\":\"" + agentId + "\",\"template\":\"" + template + "\",\"status\":\"started\"}";
+        // ObjectNode 正规序列化（C2 工单 18）：取代字符串拼接——与 SubagentManager.spawnPayload 同风格
+        return new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("agentId", agentId)
+                .put("template", template)
+                .put("status", "started")
+                .toString();
     }
 
     /** 必填文本参数严格读取：缺失或空白点名（模型可见错误后自行补参重调）。 */

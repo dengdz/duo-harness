@@ -95,7 +95,7 @@ public interface Context {
     // === 事件 ===
 
     /**
-     * 注册普通事件监听器（emit / parallel / serial / bail 派发）。
+     * 注册普通事件监听器（emit / parallel / serial 派发）。
      * 监听器表全树共享：任意作用域注册，任意作用域派发均可见。
      *
      * @return 幂等移除器；注册同时是本作用域的副作用，随作用域销毁自动摘除
@@ -144,15 +144,6 @@ public interface Context {
      * @throws PluginException 监听器抛错时包装上抛（cause 保留原始异常）
      */
     Object serial(String event, Object args);
-
-    /**
-     * 同步投票：同步阻塞模型下与 {@link #serial} 语义等价，
-     * 保留 DSH 词汇以对齐事件分派模式命名。
-     *
-     * @throws NullPointerException event 为 null
-     * @throws PluginException 同 {@link #serial}
-     */
-    Object bail(String event, Object args);
 
     /**
      * 瀑布管线：监听器洋葱包裹终端默认行为，先注册者为最外层；

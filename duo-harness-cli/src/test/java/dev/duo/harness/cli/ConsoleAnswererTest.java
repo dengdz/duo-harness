@@ -99,7 +99,9 @@ class ConsoleAnswererTest {
 
     @Test
     void unknownKindDeclinesToAnswer() {
-        InteractionRequest unknown = new InteractionRequest("未知类型", "x", "", List.of(), false);
+        // canonical 构造直调（兼容构造已删，C2 工单 18）
+        InteractionRequest unknown = new InteractionRequest(null, "未知类型", "x", "",
+                List.of(), false, null, null);
 
         assertNull(answerer("y").answer(unknown), "未知请求类型放弃作答权（交下一个回答者）");
     }

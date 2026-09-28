@@ -50,7 +50,7 @@ public final class SubagentDemoMain {
 
     public static void main(String[] args) throws Exception {
         Path sessionsDir = Path.of("target", "duo-subagent-demo-sessions");
-        deleteRecursive(sessionsDir);
+        DemoCleanup.deleteRecursive(sessionsDir);
         Files.createDirectories(sessionsDir);
 
         System.out.println("=== duo-harness M15 subagent 功能演示（脚本化 LLM，无外部调用） ===\n");
@@ -275,21 +275,4 @@ public final class SubagentDemoMain {
         return text.length() <= 60 ? text : text.substring(0, 60) + "…";
     }
 
-    /** 递归删目录（演示目录每次重置）。 */
-    private static void deleteRecursive(Path dir) {
-        if (!Files.exists(dir)) {
-            return;
-        }
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.delete(p);
-                } catch (Exception ignored) {
-                    // 演示目录清理，失败不阻塞
-                }
-            });
-        } catch (Exception ignored) {
-            // 同上
-        }
-    }
 }

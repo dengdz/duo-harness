@@ -29,7 +29,7 @@ class EventsTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：EventsTest —— 事件五模式：emit 异常隔离、waterfall 否决/参数改写/返回包装、"
-                + "serial·bail 顺序投票、parallel 并发聚合、监听器随作用域摘除（19 用例） ===");
+                + "serial 顺序投票、parallel 并发聚合、监听器随作用域摘除（18 用例） ===");
     }
 
 
@@ -128,15 +128,6 @@ class EventsTest {
 
         PluginException e = assertThrows(PluginException.class, () -> root.serial("vote", null));
         assertEquals("投票中断", e.getCause().getMessage());
-    }
-
-    @Test
-    void bailMatchesSerialSemantics() {
-        Context root = Context.root();
-        root.on("gate", args -> null);
-        root.on("gate", args -> "STOP");
-
-        assertEquals("STOP", root.bail("gate", null));
     }
 
     @Test
@@ -276,7 +267,6 @@ class EventsTest {
         assertThrows(NullPointerException.class, () -> root.emit(null, null));
         assertThrows(NullPointerException.class, () -> root.parallel(null, null));
         assertThrows(NullPointerException.class, () -> root.serial(null, null));
-        assertThrows(NullPointerException.class, () -> root.bail(null, null));
         assertThrows(NullPointerException.class, () -> root.waterfall(null, "x", args -> "t"));
         assertThrows(NullPointerException.class, () -> root.waterfall("pipeline", "x", null));
     }

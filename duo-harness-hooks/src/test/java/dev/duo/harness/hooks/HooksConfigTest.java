@@ -135,8 +135,11 @@ class HooksConfigTest {
 
     @Test
     void missingOrBlankFileIsEmptyConfig() throws Exception {
-        assertTrue(HooksConfig.load(tempDir.resolve("nope.json")).isEmpty());
-        assertTrue(HooksConfig.load(write("   ")).isEmpty());
+        // isEmpty() 访问器已删（C2 工单 18：main 零调用）——按事件查空同口径
+        assertTrue(HooksConfig.load(tempDir.resolve("nope.json"))
+                .rulesFor(HooksConfig.EVENT_PRE_TOOL_USE).isEmpty());
+        assertTrue(HooksConfig.load(write("   "))
+                .rulesFor(HooksConfig.EVENT_PRE_TOOL_USE).isEmpty());
     }
 
     @Test

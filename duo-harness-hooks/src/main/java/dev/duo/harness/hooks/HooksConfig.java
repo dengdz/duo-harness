@@ -74,10 +74,6 @@ public final class HooksConfig {
         return rules.getOrDefault(event, List.of());
     }
 
-    /** 是否无任何规则（空转合法：装行而配置缺失/为空）。 */
-    boolean isEmpty() {
-        return rules.isEmpty();
-    }
 
     /** 暂不支持而跳过的事件名（点名用）。 */
     List<String> skippedEvents() {

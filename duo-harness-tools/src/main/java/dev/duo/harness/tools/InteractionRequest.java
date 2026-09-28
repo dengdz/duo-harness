@@ -44,18 +44,6 @@ public record InteractionRequest(String id, String kind, String subject, String 
     /** 计划复核类请求（模型经 exit_plan_mode 发起）。 */
     public static final String KIND_PLAN = "plan";
 
-    /** 兼容构造：无发起呈现位标记（直调与既有调用方）。 */
-    public InteractionRequest(String kind, String subject, String detail,
-                              List<String> options, boolean multiSelect) {
-        this(null, kind, subject, detail, options, multiSelect, null, null);
-    }
-
-    /** 兼容构造：携发起呈现位标记。 */
-    public InteractionRequest(String kind, String subject, String detail,
-                              List<String> options, boolean multiSelect, String presenterId) {
-        this(null, kind, subject, detail, options, multiSelect, presenterId, null);
-    }
-
     /** 构造时校验非空与防御性拷贝——错误前移到构造点；id 缺省自动生成（卡片回填关联键）。 */
     public InteractionRequest {
         if (id == null || id.isBlank()) {

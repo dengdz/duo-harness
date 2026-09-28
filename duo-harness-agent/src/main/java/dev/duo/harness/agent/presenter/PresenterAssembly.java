@@ -91,7 +91,6 @@ public final class PresenterAssembly {
         Integer prune = null;
         Double ratio = null;
         Long window = null;
-        Double keep = null;
         Integer minRemote = null;
         Boolean microcompactEnabled = null;
         Integer microcompactKeepRecent = null;
@@ -104,7 +103,10 @@ public final class PresenterAssembly {
                 case "pruneThresholdChars" -> prune = intField(name, value);
                 case "compactionThresholdRatio" -> ratio = doubleField(name, value);
                 case "contextWindowTokens" -> window = longField(name, value);
-                case "keepRecentRatio" -> keep = doubleField(name, value);
+                case "keepRecentRatio" ->
+                    // 已停用字段（C2 工单 18）：值被忽略，warn 点名不静默——此前「严格
+                    // 校验一个被丢弃的字段」自相矛盾（配错值报错、配对值看似生效实则无效）
+                    LOG.warn("governance.keepRecentRatio 已停用（压缩语义统一为压缩点前全部历史折叠），配置值被忽略");
                 case "minRemoteMessages" -> minRemote = intField(name, value);
                 case "microcompactEnabled" -> microcompactEnabled = boolField(name, value);
                 case "microcompactKeepRecent" -> microcompactKeepRecent = intField(name, value);
@@ -120,10 +122,7 @@ public final class PresenterAssembly {
         if (ratio != null && (ratio <= 0 || ratio > 1)) {
             throw new PluginException("governance.compactionThresholdRatio 须在 (0,1] 区间: " + ratio);
         }
-        if (keep != null && (keep < 0 || keep >= 1)) {
-            throw new PluginException("governance.keepRecentRatio 须在 [0,1) 区间: " + keep);
-        }
-        return new ContextGovernance.Tuning(spill, prune, ratio, window, keep, minRemote,
+        return new ContextGovernance.Tuning(spill, prune, ratio, window, null, minRemote,
                 microcompactEnabled, microcompactKeepRecent);
     }
 

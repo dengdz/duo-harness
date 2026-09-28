@@ -29,7 +29,7 @@ final class EventsImpl {
     /** 虚拟线程名前缀：事件名 + 序号拼接（thread dump 可区分监听器）。 */
     private static final String THREAD_NAME_PREFIX = "duo-event-";
 
-    /** 普通监听器表：emit/parallel/serial/bail 派发消费。值实为 CopyOnWriteArrayList。 */
+    /** 普通监听器表：emit/parallel/serial 派发消费。值实为 CopyOnWriteArrayList。 */
     private final Map<String, List<EventListener>> listeners = new ConcurrentHashMap<>();
     /** 瀑布监听器表：waterfall 派发消费；与普通表分立，避免形状错配。 */
     private final Map<String, List<WaterfallListener<Object, Object>>> waterfallListeners =

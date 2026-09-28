@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Plugin;
-import dev.duo.harness.core.api.PluginConfigException;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginHandle;
 import dev.duo.harness.core.api.PluginState;
@@ -129,9 +128,6 @@ public final class BootLoader {
             } catch (ReflectiveOperationException e) {
                 problems.add("[" + row.id() + "] 插件类不可加载或不可实例化: " + row.name()
                         + "（须有公共无参构造）");
-                causes.add(e);
-            } catch (PluginConfigException e) {
-                problems.add("[" + row.id() + "] " + e.getMessage());
                 causes.add(e);
             } catch (PluginException e) {
                 problems.add("[" + row.id() + "] " + e.getMessage());

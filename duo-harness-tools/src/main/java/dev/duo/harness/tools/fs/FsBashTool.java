@@ -303,11 +303,6 @@ public final class FsBashTool implements ToolDefinition {
             this.spillPath = spillPath;
         }
 
-        /** 无 spill 的兼容形态（纯内存尾窗，如治理层旁路的小输出场景）。 */
-        StreamCapture(int keepChars) {
-            this(keepChars, Long.MAX_VALUE, null);
-        }
-
         synchronized void accept(char[] buffer, int length) {
             kept.append(buffer, 0, length);
             // 尾窗裁头：被裁历史写 spill（懒开）；超帽/落盘失败后停写只计丢弃

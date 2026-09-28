@@ -309,7 +309,8 @@ class PresenterAssemblyTest {
         assertEquals(500, tuning.pruneThresholdChars());
         assertEquals(0.5, tuning.compactionThresholdRatio());
         assertEquals(32000L, tuning.contextWindowTokens());
-        assertEquals(0.1, tuning.keepRecentRatio());
+        // keepRecentRatio 已停用（C2 工单 18）：值被忽略 warn 点名，Tuning 恒 null
+        assertEquals(null, tuning.keepRecentRatio());
         assertEquals(2, tuning.minRemoteMessages());
 
         ContextGovernance.Tuning partial = PresenterAssembly.parseGovernance(
@@ -330,8 +331,11 @@ class PresenterAssemblyTest {
                 config("{\"governance\": {\"spillThresholdChars\": 0}}")), "阈值须为正");
         assertThrows(PluginException.class, () -> PresenterAssembly.parseGovernance(
                 config("{\"governance\": {\"compactionThresholdRatio\": 1.5}}")), "比例须在 (0,1]");
-        assertThrows(PluginException.class, () -> PresenterAssembly.parseGovernance(
-                config("{\"governance\": {\"keepRecentRatio\": 1}}")), "保留比须在 [0,1)");
+        // keepRecentRatio 越界不再报错（C2 工单 18 停用）：值被忽略——此前「严格校验
+        // 一个被丢弃的字段」自相矛盾（配错值报错、配对值看似生效实则无效）
+        assertEquals(null, PresenterAssembly.parseGovernance(
+                config("{\"governance\": {\"keepRecentRatio\": 1}}")).keepRecentRatio(),
+                "停用字段越界值同样被忽略");
     }
 
     @Test

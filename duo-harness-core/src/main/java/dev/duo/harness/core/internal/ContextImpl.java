@@ -314,12 +314,6 @@ public final class ContextImpl implements Context {
     }
 
     @Override
-    public Object bail(String event, Object args) {
-        Objects.requireNonNull(event, "event");
-        return events.serial(event, args);
-    }
-
-    @Override
     public <T, R> R waterfall(String event, T args, WaterfallNext<T, R> terminal) {
         Objects.requireNonNull(event, "event");
         Objects.requireNonNull(terminal, "terminal");

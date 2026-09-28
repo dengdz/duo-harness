@@ -99,7 +99,6 @@ final class PluginInstance {
         return pluginName;
     }
 
-    /** 插件声明的依赖服务名集合（防御拷贝，防外部变更指纹输入）。 */
     /** 是否依赖该服务（硬或可选）——服务变化传导的过滤口径（可选缺席者同样要复查重载）。 */
     boolean dependsOn(String name) {
         return inject.contains(name) || optionalInject.contains(name);

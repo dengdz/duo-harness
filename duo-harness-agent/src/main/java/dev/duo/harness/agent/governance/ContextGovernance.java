@@ -49,9 +49,6 @@ public final class ContextGovernance {
     /** 模型上下文窗口（token）：按主流 128K 量级取常量，窗口异型时改此处。 */
     public static final long CONTEXT_WINDOW_TOKENS = 128_000;
 
-    /** compaction 保留近端原文比例（对齐 DSH 保留 16% 的量级）。 */
-    public static final double KEEP_RECENT_RATIO = 0.2;
-
     /** compaction 触发的最小远端消息数：太少没有折叠价值（近端之外寥寥数条）。 */
     static final int MIN_REMOTE_MESSAGES = 4;
 

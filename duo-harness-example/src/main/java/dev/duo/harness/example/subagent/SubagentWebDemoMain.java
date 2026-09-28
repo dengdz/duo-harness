@@ -35,7 +35,7 @@ public final class SubagentWebDemoMain {
 
     public static void main(String[] args) throws Exception {
         Path sessionsDir = Path.of("target", "duo-subagent-web-sessions");
-        deleteRecursive(sessionsDir);
+        DemoCleanup.deleteRecursive(sessionsDir);
         Files.createDirectories(sessionsDir);
 
         // 父会话：两轮对话 + 三张子任务卡的引用事件（SSE 尾部快照整窗回放给页面）
@@ -106,20 +106,4 @@ public final class SubagentWebDemoMain {
         return "{\"type\":\"" + type + "\",\"at\":1,\"text\":\"" + text.replace("\"", "\\\"") + "\"}";
     }
 
-    private static void deleteRecursive(Path dir) {
-        if (!Files.exists(dir)) {
-            return;
-        }
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.delete(p);
-                } catch (Exception ignored) {
-                    // 演示目录清理，失败不阻塞
-                }
-            });
-        } catch (Exception ignored) {
-            // 同上
-        }
-    }
 }
