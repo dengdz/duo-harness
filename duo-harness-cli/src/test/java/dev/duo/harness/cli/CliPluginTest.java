@@ -63,16 +63,25 @@ class CliPluginTest {
     @TempDir
     Path tempDir;
 
-    /** 脚本输入行：text + 可选等待标记（null = 默认等第 N 个 idle 提示符「你>」）。 */
-    private record InputLine(String text, String awaitMarker) {
+    /** 脚本输入行：text + 可选等待标记（null = 默认等第 N 个 idle 提示符「你>」）+ 静置毫秒。 */
+    private record InputLine(String text, String awaitMarker, long settleMs) {
 
         static InputLine of(String text) {
-            return new InputLine(text, null);
+            return new InputLine(text, null, 0);
         }
 
         /** busy 期投递：等输出出现标记（如「[调工具]」「[待审批]」）才写行。 */
         static InputLine paced(String text, String marker) {
-            return new InputLine(text, marker);
+            return new InputLine(text, marker, 0);
+        }
+
+        /**
+         * 标记出现后静置再投递（C2 工单 03）：压过「审批呈现打印 → 应答闸门 pending
+         * 置位」的毫秒级窗口——标记命中即投会与置位竞速，行被当 busy 插队注入收件箱
+         * 而非配对在飞的审批 ask（AnswerGate 已知边界，CliPlugin 注释记档）。
+         */
+        static InputLine pacedSettled(String text, String marker) {
+            return new InputLine(text, marker, 150);
         }
     }
 
@@ -167,6 +176,9 @@ class CliPluginTest {
                         if (!ready) {
                             throw new IllegalStateException("第 " + i + " 行（" + line.text()
                                     + "）未在时限内等到节奏点");
+                        }
+                        if (line.settleMs() > 0) {
+                            Thread.sleep(line.settleMs()); // 标记静置：压过闸门置位微窗（见 InputLine.pacedSettled）
                         }
                         pipe.write((line.text() + "\n").getBytes(StandardCharsets.UTF_8));
                         pipe.flush();
@@ -402,6 +414,77 @@ class CliPluginTest {
             String out = fx.output();
             assertTrue(out.contains("[待审批] 工具 guarded_write"), "审批呈现: " + out);
             assertTrue(out.contains("[工具结果] written"), "审批放行后工具执行: " + out);
+        } finally {
+            fx.dispose();
+        }
+    }
+
+    @Test
+    void approvalCounterResetsPerTurnThroughRepl() throws Exception {
+        // C2 工单 03（P1-3）回归锁：REPL 全链路（turn 线程模型）驱动两轮对话、各一次
+        // 审批——第二轮首项审批必须零噪声（断链形态 = 误显「（本轮第 2 项审批）」）。
+        // 此前 M23 工单 04 把 REPL 重构为 turn 线程模型时丢失 beginTurn 调用，第二轮
+        // 首项误显跨轮累计序号；ConsoleAnswererTest 直调形态抓不住该断链——本用例经
+        // 真实事件循环驱动。两轮用不同工具名制造轮 2 独有投递标记；pacedSettled 静置
+        // 压过「审批呈现打印 → 闸门 pending 置位」微窗（同轮计数到 2 的正常形态由
+        // ConsoleAnswererTest 直调用例覆盖，不在此重复）
+        Path dir = tempDir.resolve("c2-03");
+        dev.duo.harness.llm.LlmAdapter llm = new dev.duo.harness.llm.LlmAdapter() {
+            int turn = 0;
+
+            @Override
+            public void stream(dev.duo.harness.llm.ChatRequest request,
+                               java.util.function.Consumer<dev.duo.harness.llm.ChatChunk> onChunk) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public dev.duo.harness.llm.LlmTurn streamTurn(dev.duo.harness.llm.ChatRequest request,
+                                                           java.util.function.Consumer<String> textSink) {
+                turn++;
+                switch (turn) {
+                    case 1 -> { return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_1", "guarded_write", "{}"))); }
+                    case 2 -> {
+                        textSink.accept("第一轮完成");
+                        return new dev.duo.harness.llm.LlmTurn("第一轮完成", List.of());
+                    }
+                    case 3 -> { return new dev.duo.harness.llm.LlmTurn("", List.of(
+                            new dev.duo.harness.llm.ToolCallRequest("call_2", "guarded_save", "{}"))); }
+                    default -> {
+                        textSink.accept("第二轮完成");
+                        return new dev.duo.harness.llm.LlmTurn("第二轮完成", List.of());
+                    }
+                }
+            }
+        };
+        Fixture fx = new Fixture(dir, List.of(
+                InputLine.of("写入一"),
+                InputLine.pacedSettled("y", "批准本次执行"),
+                InputLine.paced("写入二", "第一轮完成"),
+                InputLine.pacedSettled("y", "[待审批] 工具 guarded_save"),
+                InputLine.paced("/exit", "第二轮完成")), llm, ctx -> {
+            // 轮 2 独立审批工具：工具名即轮 2 独有的应答投递标记
+            ctx.as(ToolsView.class).tools().register(ctx, new dev.duo.harness.tools.ToolDefinition() {
+                @Override public String name() { return "guarded_save"; }
+                @Override public String description() { return "需审批的保存"; }
+                @Override public com.fasterxml.jackson.databind.JsonNode parameters() {
+                    return JsonNodeFactory.instance.objectNode().put("type", "object");
+                }
+                @Override public boolean requiresApproval() { return true; }
+                @Override public String execute(dev.duo.harness.tools.ToolExecution execution) {
+                    return "saved";
+                }
+            });
+        });
+        try {
+            fx.awaitIdle();
+            String out = fx.output();
+            assertTrue(out.contains("[工具结果] written"), "轮 1 审批经 REPL 应答放行: " + out);
+            assertTrue(out.contains("[工具结果] saved"), "轮 2 审批经 REPL 应答放行: " + out);
+            assertFalse(out.contains("（本轮第 1 项审批）"), "各轮首项零噪声: " + out);
+            assertFalse(out.contains("（本轮第 2 项审批）"),
+                    "第二轮首项零噪声——turn 边界归零（断链则误显第 2 项）: " + out);
         } finally {
             fx.dispose();
         }

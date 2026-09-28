@@ -903,6 +903,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
 
     /** 单轮执行：send + 流式渲染 + 终态行（中断/异常收敛为提示行，不终结事件循环）。 */
     private void runOneTurn(String userText, AgentHolder agentHolder, AtomicBoolean interruptArmed) {
+        consoleAnswerer.beginTurn(); // 审批计数归零（C2 工单 03：turn 线程模型重构丢失的调用补回——每轮对话边界，排队消息轮各自独立计数）
         try {
             var reply = agentHolder.agent.send(userText, turnListener());
             if (reply.interrupted()) {
