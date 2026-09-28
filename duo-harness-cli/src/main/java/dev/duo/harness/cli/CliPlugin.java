@@ -257,12 +257,10 @@ public final class CliPlugin implements Plugin<JsonNode> {
         SessionTitles.attach(session, llm);
         SessionHolder holder = new SessionHolder(session);
         dev.duo.harness.tools.fs.ReadOnlyBashDetector cliPlanGate = planBashDetector(workspacePolicy);
-        ChatAgent agent = PresenterAssembly.chatAgent(new AgentSpec(llm, tools, session, prompts,
-                maxIterations, maxParallelToolCalls, PRESENTER_ID,
-                new AgentCapabilities(governance, requestVariants, visionEnabled, fileDelivery,
-                        cliPlanGate == null ? null : cliPlanGate::isReadOnlyBash,
-                        memory == null ? null : memory::metaUserSection,
-                        agentsMd == null ? null : agentsMd::section)));
+        // 执行链参数组（M28 工单 04）上移到 agent 构建前——buildAgent 单点共用（C2 工单 08）
+        CommandChain chain = new CommandChain(llm, tools, prompts, governance,
+                maxIterations, maxParallelToolCalls, memory, agentsMd);
+        ChatAgent agent = buildAgent(chain, session, cliPlanGate);
         ConsoleAnswerer console = new ConsoleAnswerer(answerGate::awaitLine, out, resolvePermissionRules(ctx));
         this.consoleAnswerer = console;
         answererRegistration = answers.register(ctx,
@@ -334,8 +332,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 }
             }));
         }
-        registerCommands(ctx, commands, new CommandChain(llm, tools, prompts, governance,
-                maxIterations, maxParallelToolCalls, memory, agentsMd),
+        registerCommands(ctx, commands, chain,
                 new CommandState(sessionsDir(), holder, agentHolder, plan, workspacePolicy,
                         agentBusy, interruptArmed));
         // 权限档持久化（M19，ADR-0020 决策 10）：启动续接只恢复不重置——双开下另一
@@ -373,6 +370,21 @@ public final class CliPlugin implements Plugin<JsonNode> {
     private Path sessionsDir() {
         return sessionsDirOverride != null
                 ? sessionsDirOverride : DuoHome.resolve().resolveDir("agent-sessions");
+    }
+
+    /**
+     * agent 构建单点（C2 工单 08）：apply 与 /new 换绑共用同一工厂——此前两处逐参
+     * 平行展开 AgentSpec + AgentCapabilities，新增能力项漏改一处即「初始会话与换绑
+     * 会话行为分叉」且无测试能稳定拦住。
+     */
+    private ChatAgent buildAgent(CommandChain chain, Session session,
+                                 dev.duo.harness.tools.fs.ReadOnlyBashDetector planGate) {
+        return PresenterAssembly.chatAgent(new AgentSpec(chain.llm(), chain.tools(), session,
+                chain.prompts(), chain.maxIterations(), chain.maxParallelToolCalls(), PRESENTER_ID,
+                new AgentCapabilities(chain.governance(), requestVariants, visionEnabled, fileDelivery,
+                        planGate == null ? null : planGate::isReadOnlyBash,
+                        chain.memory() == null ? null : chain.memory()::metaUserSection,
+                        chain.agentsMd() == null ? null : chain.agentsMd()::section)));
     }
 
     /**
@@ -580,13 +592,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 state.holder().session = Session.create(state.sessionsDir(), Cwd.path());
                 dev.duo.harness.agent.deliverable.ChangeSummary.markStart(state.holder().session);
                 dev.duo.harness.tools.fs.ReadOnlyBashDetector replanGate = planBashDetector(state.workspacePolicy());
-                state.agentHolder().agent = PresenterAssembly.chatAgent(new AgentSpec(chain.llm(), chain.tools(),
-                        state.holder().session, chain.prompts(), chain.maxIterations(),
-                        chain.maxParallelToolCalls(), PRESENTER_ID,
-                        new AgentCapabilities(chain.governance(), requestVariants, visionEnabled, fileDelivery,
-                                replanGate == null ? null : replanGate::isReadOnlyBash,
-                                chain.memory() == null ? null : chain.memory()::metaUserSection,
-                                chain.agentsMd() == null ? null : chain.agentsMd()::section)));
+                state.agentHolder().agent = buildAgent(chain, state.holder().session, replanGate);
                 SessionTitles.attach(state.holder().session, chain.llm());
                 attachSubagentTrace(state.holder().session); // 子任务过程行随换绑重挂（旧监听随 close 失效）
                 previous.close(); // 换绑即释放旧会话独占锁（本进程不再使用它）
@@ -1171,13 +1177,14 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
     }
 
-    /** 视觉能力开关（llm.vision，M21 工单 05；loadLlm 时刷新）。 */
-    private static volatile boolean visionEnabled;
+    /** 视觉能力开关（llm.vision，M21 工单 05；loadLlm 时刷新。C2 工单 08 迁实例：
+     *  loadLlm 已是实例方法，LLM 配置不再是 JVM 全局态——多实例并存互不互踩）。 */
+    private volatile boolean visionEnabled;
 
     /** files 投递开关与 provider 连接（llm.imageDelivery=files 时，M21 工单 06；loadLlm 刷新）。 */
-    private static volatile boolean filesDeliveryEnabled;
-    private static volatile String deliveryBaseUrl;
-    private static volatile String deliveryApiKey;
+    private volatile boolean filesDeliveryEnabled;
+    private volatile String deliveryBaseUrl;
+    private volatile String deliveryApiKey;
 
     /** files 投递服务实例（apply 时按开关构建；/new 换绑 rebuild 沿用）。 */
     private volatile dev.duo.harness.attachment.ImageFileDelivery fileDelivery;
