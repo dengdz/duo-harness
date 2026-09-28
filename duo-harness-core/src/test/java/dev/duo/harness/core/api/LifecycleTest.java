@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -204,6 +205,22 @@ class LifecycleTest {
         // DISPOSED 终态：依赖回归也不复活
         assertEquals(PluginState.DISPOSED, handle.state());
         assertEquals(1, plugin.activations.get());
+    }
+
+    @Test
+    void disposedScopeRejectionsAreTyped() {
+        // C2 工单 13：作用域销毁后的加载/注册拒绝抛类型化异常（is-a PluginException
+        // 兼容既有 catch）——消费方按类型识别「停止期间可忽略」，不再文案匹配
+        Context root = Context.root();
+        root.dispose();
+        PluginException load = assertThrows(PluginException.class,
+                () -> root.plugin(new DependentPlugin(new ArrayList<>()), null),
+                "dispose 后加载被拒");
+        assertInstanceOf(ScopeDestroyedException.class, load, "加载拒绝是作用域销毁类型");
+        PluginException effect = assertThrows(PluginException.class,
+                () -> root.provide("late", new Object()),
+                "dispose 后副作用注册被拒");
+        assertInstanceOf(ScopeDestroyedException.class, effect, "副作用拒绝是作用域销毁类型");
     }
 
     @Test

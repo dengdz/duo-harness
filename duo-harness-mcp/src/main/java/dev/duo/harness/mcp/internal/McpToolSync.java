@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.core.api.ScopeDestroyedException;
 import dev.duo.harness.mcp.McpToolNames;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolExecution;
@@ -97,15 +98,15 @@ final class McpToolSync {
             }
             try {
                 apply(active, convertAll(remoteTools));
+            } catch (ScopeDestroyedException e) {
+                // 插件停止中：通知自然无效，下次连接的全量同步会带上最新清单。
+                // 类型判定（C2 工单 13）：此前 contains("作用域已销毁") 文案匹配——
+                // core 文案演进即静默失效，且反向锁死 core 文案不可改
+                log.debug("MCP 服务器 [{}] 的 tools/list_changed 在停止期间抵达，忽略",
+                        serverName);
             } catch (PluginException e) {
-                if (e.getMessage().contains("作用域已销毁")) {
-                    // 插件停止中：通知自然无效，下次连接的全量同步会带上最新清单
-                    log.debug("MCP 服务器 [{}] 的 tools/list_changed 在停止期间抵达，忽略",
-                            serverName);
-                } else {
-                    // 命名冲突等应点名的失败：warn 呈现，不静默
-                    log.warn("MCP 服务器 [{}] 的 tools/list_changed 重同步失败", serverName, e);
-                }
+                // 命名冲突等应点名的失败：warn 呈现，不静默
+                log.warn("MCP 服务器 [{}] 的 tools/list_changed 重同步失败", serverName, e);
             }
         } finally {
             syncLock.unlock();

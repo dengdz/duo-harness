@@ -10,6 +10,7 @@ import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginConfigException;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginHandle;
+import dev.duo.harness.core.api.ScopeDestroyedException;
 import java.util.List;
 import dev.duo.harness.core.api.events.WaterfallListener;
 import dev.duo.harness.core.api.events.WaterfallNext;
@@ -81,7 +82,7 @@ public final class ContextImpl implements Context {
     public <C> PluginHandle plugin(Plugin<C> plugin, Object rawConfig) {
         Objects.requireNonNull(plugin, "plugin");
         if (disposed.get()) {
-            throw new PluginException("作用域已销毁，拒绝加载插件 " + plugin.getClass().getName());
+            throw new ScopeDestroyedException("作用域已销毁，拒绝加载插件 " + plugin.getClass().getName());
         }
         String pluginName = plugin.getClass().getName();
         C config = bindConfig(plugin, rawConfig, pluginName);
@@ -122,7 +123,7 @@ public final class ContextImpl implements Context {
         try {
             // 检查必须在锁内：否则"已销毁仍注册"的副作用会压进永不回滚的栈，静默丢失
             if (disposed.get()) {
-                throw new PluginException("作用域已销毁，拒绝注册副作用");
+                throw new ScopeDestroyedException("作用域已销毁，拒绝注册副作用");
             }
             effects.push(registered);
         } finally {
