@@ -556,3 +556,15 @@
 - **计数**：合并处置 22 项——已修 13（文档同步红线 3 一项、拆分残留 import、internal 常量提升 AgentSpec、S-09/E-04/L-06/CTRL-03 五项手册违规、LoggerHolder 中间层、常量归一、URL 解码提单点、用词与记账对齐）+ 追认 1（app.js 回放标志修复，BUG-20260928-02 三重正当性）+ 不修 2（测试 seam/门面角色）+ 记档 6（CoT 泄漏 11 处入 duo-trim-cot-leakage 专项、E-03 try 收窄、busy 永真与回放驻留两处存量平移、route 兜底、token URL 面）。修复后全仓 verify 绿。
 - **模式化问题**：①「修法轻」预判未经生产形态实测的二次印证（fileRefs，见 bug-log 与 backlog）；②拆分类重构的「注释与行为偏差」「存量平移缺陷」随搬家显形——搬家不是免责，落新家时应顺手核对注释与已知缺陷清单；③**测试形态与生产形态有缝**（root ctx 豁免声明检查）升级为模式：端点类测试应走插件上下文装配。
 - **对后续的优化建议**：①CoT 泄漏专项（H-xx 编号 + 过程叙述入生产注释 15 处）随收口批走 duo-trim-cot-leakage；②fileRefs 提供方归位 fs 插件（backlog 在案）随结构域；③route() 统一异常兜底与 token URL 面随安全/结构域评估。
+
+### 2026-09-28 · C2 全库补丁式代码审计（13 模块 295 文件主代码全量，非 diff 专项）
+
+- **范围与轮次**：用户插入的 C2 阶段（继 C1 技能写作体系改造）——六类补丁式代码口径（临时条件绕过/魔法数字/重复实现/死代码残留/分支堆叠/掩盖根因的表面修复）。6 路独立新上下文子代理按模块分组并行（agent / tools / core+hooks+stats / web+session+session-query / llm+mcp+attachment / cli+example），brief 从统一骨架机械派生。报告落 `.scratch/c2-code-audit/reviews/2026-09-28-全库补丁式代码审计.md`。
+- **计数**：P1×3（全部主审亲核实证）+ P2×27 + P3×52（聚类）。P1：FsToolsPlugin spill 清理删光共享目录（跨装配数据丢失）、Session.titleOf 缺 POSIX 锁防线（侧栏刷新即放掉活跃会话独占锁）、ConsoleAnswerer.beginTurn 归零链路断线（测试直调掩盖）。
+- **模式化问题（本次新识别，供后续重点核对）**：
+  1. **同型补丁只打一处**——修 bug 按"本次发现的调用点"打补丁，不做全类同型排查（P1×3 中占 2、keepRecentRatio 半停用、按 id 回填漏提问卡、pipelineTimeout 放宽漏 task-output 均同根因）。规则：**修 bug 前先 grep 同型调用点与同族工具**。
+  2. **copy-paste 起家、乘法扩张期分叉**——M15（子代理）/M24（多协议多呈现位）/M28（呈现位重装）三次 ×2 扩张是复制高峰，后续演进被迫双处同步。规则：**新增第二实现时先抽共享骨架，禁止整拷起步**。
+  3. **字符串匹配代替类型化判定**——异常 message 子串（McpToolSync）、文案精确匹配（计划批准判定两套）、JSON 前缀、哈希工具名前缀四处同族，全部反向锁死上游演进。规则：**异常带结构化字段，业务判定收敛单点**。
+  4. **JVM 静态单例错配插件树生命周期**——ConnectorStatusBoard 静态板、CliPlugin static volatile 配置（含 apiKey）、SPILL_SEQ。规则：**跨树状态走服务注册或树根聚合，静态仅限纯常量**。
+  5. **test-only 兼容面滞留 main 掩盖生产断线**——P1-3（beginTurn）为极端案例：测试直调让全绿掩盖主链路零调用。规则：**test-only 便捷面收进测试辅助类；"字段只写不读"是断线信号**。
+- **对后续的优化建议**：①P1×3 建议三张独立小工单立即修（各需补端到端用例，现有测试形态均抓不住）；②llm 双适配器抽共享骨架是全库收益最大一刀（约 150 行重复 + 锁死协议面同构）；③core 类型化异常（ScopeDestroyedException / FilesApiException.statusCode）小改大收益；④死代码清理批可一 diff 清完（Context.bail 全家、KEEP_RECENT_RATIO、test-only 构造族、FQCN 批）；⑤五层处置清单（立即修/高收益抽象/根因还账/死代码清理/记录不改）已按优先级写入审计报告，可直接拆 M29+ 工单。
