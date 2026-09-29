@@ -385,6 +385,93 @@ const render = (() => {
     return card;
   }
 
+  /**
+   * 成果卡片（M29 工单 07）：present 工具专属卡——组头（📦 成果申报 · N 件 + 徽标）
+   * + 每文件一张 ZCode 式预览卡（AssistantPreviewCards 形态，研究文档收录：44px
+   * 图标底座 + 文件名主标题/类型·父目录副标题 + 右侧动作按钮；duo 动作映射为
+   * 复制路径——浏览器打不开本地文件）。数据源 = tool/call 参数 JSON 的 files；
+   * 校验结果由 tool/result 徽标回填（✓/✗，卡随 toolCallId 挂 toolCards 走通用
+   * 回填）；参数解析失败回退通用工具卡。回放/实时同源；deliverable/presented
+   * 事件保持静默忽略（防双卡，消费方检索/导出已有着落——术语表「成果卡片」词条）。
+   */
+  function deliverableCard(event) {
+    let files = null;
+    try {
+      const parsed = JSON.parse(event.text || '{}');
+      if (Array.isArray(parsed.files) && parsed.files.length) {
+        files = parsed.files.map(String);
+      }
+    } catch (e) { /* 参数非法落通用卡 */ }
+    if (!files) {
+      toolCall(event);
+      return;
+    }
+    showMessages();
+    const card = document.createElement('div');
+    card.className = 'card deliverable';
+    const head = document.createElement('div');
+    head.className = 'tool';
+    head.innerHTML = '📦 <b></b> <span class="deliverable-count"></span> <span class="badge badge-run">⟳ 运行中</span>';
+    head.querySelector('b').textContent = '成果申报';
+    head.querySelector('.deliverable-count').textContent = files.length + ' 件';
+    card.appendChild(head);
+    const list = document.createElement('div');
+    list.className = 'deliverable-list';
+    for (const f of files) {
+      list.appendChild(filePreviewRow(f));
+    }
+    card.appendChild(list);
+    if (event.toolCallId) {
+      t.toolCards.set(event.toolCallId, card);
+    }
+    t.container.appendChild(card);
+    scroll();
+  }
+
+  /** 文件类型描述（成果卡副标题与图标用；扩展名 → 图标 + 中文名）。 */
+  function fileTypeDescriptor(path) {
+    const leaf = path.split('/').pop() || path;
+    const ext = (leaf.includes('.') ? leaf.split('.').pop() : '').toLowerCase();
+    const table = {
+      md: ['📝', 'Markdown'], json: ['🧾', 'JSON'], html: ['🌐', 'HTML'], htm: ['🌐', 'HTML'],
+      css: ['🎨', 'CSS'], js: ['📜', 'JavaScript'], ts: ['📜', 'TypeScript'],
+      yml: ['⚙️', 'YAML'], yaml: ['⚙️', 'YAML'], xml: ['🧾', 'XML'],
+      png: ['🖼️', '图片'], jpg: ['🖼️', '图片'], jpeg: ['🖼️', '图片'], gif: ['🖼️', '图片'], svg: ['🖼️', 'SVG'],
+      txt: ['📄', '文本'], pdf: ['📕', 'PDF'],
+    };
+    const [icon, label] = table[ext] || ['📄', ext ? ext.toUpperCase() + ' 文件' : '文件'];
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) || '/' : '.';
+    return { leaf, icon, label, dir };
+  }
+
+  /** ZCode 式文件预览行（AssistantPreviewCards 形态）：图标底座 + 文件名/副标题 + 复制按钮。 */
+  function filePreviewRow(path) {
+    const desc = fileTypeDescriptor(path);
+    const row = document.createElement('div');
+    row.className = 'file-preview-card';
+    const iconBox = document.createElement('div');
+    iconBox.className = 'file-icon-box';
+    iconBox.textContent = desc.icon;
+    const main = document.createElement('div');
+    main.className = 'file-preview-main';
+    const title = document.createElement('div');
+    title.className = 'file-preview-title';
+    title.textContent = desc.leaf;
+    const sub = document.createElement('div');
+    sub.className = 'file-preview-sub';
+    sub.textContent = desc.label + ' · ' + desc.dir;
+    main.append(title, sub);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'file-copy-btn';
+    btn.dataset.action = 'copy-path';
+    btn.dataset.path = path;
+    btn.title = '复制完整路径：' + path;
+    btn.textContent = '复制路径';
+    row.append(iconBox, main, btn);
+    return row;
+  }
+
   /** 思考流式卡（M29 工单 06）：增量进 buffer，与正文同款打字机指针匀速流出——
    * 增量事件是 256 字符窗口聚合（成批到达），直追加即成批蹦；展开态纯文本
    * （增量半截 markdown 渲染会闪），收口 assistant/message 到达时移除换定稿
@@ -851,6 +938,10 @@ const render = (() => {
       if (ev.toolName === 'ask_user') { if (!replaying) return; questionCard(ev); }
       else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev);
       else if (ev.toolName === 'todo_write') todoCard(ev);
+      // present 成果卡（M29 工单 07）：数据源 = tool/call 参数 files（校验结果由
+      // tool/result 徽标回填）；deliverable/presented 事件保持静默忽略——防同动作
+      // 双卡（其消费方为检索索引与导出交付清单，不渲染），勿在此链为其加分发分支
+      else if (ev.toolName === 'present') deliverableCard(ev);
       else toolCall(ev);
     } else if (ev.type === 'tool/result') toolResult(ev);
     else if (ev.type === 'todo/write') todoPanel.update(ev.text);
@@ -1056,6 +1147,19 @@ const app = (() => {
         render.resolveCard(card, feedback ? '✗ 已打回，反馈：' + feedback : '✗ 已打回', false);
         // 打回走 answer 形态（按卡片 id 精确回填，C2 工单 07）
         await api.answer({ id: card.dataset.cardId, answers: [verdict] });
+      } else if (action === 'copy-path') {
+        // 成果卡路径行（M29 工单 07）：点击复制路径；剪贴板不可用（非安全上下文等）toast 兜底
+        const path = btn.dataset.path || '';
+        try {
+          await navigator.clipboard.writeText(path);
+          const original = btn.textContent;
+          btn.textContent = '✓ 已复制';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1200);
+        } catch (err) {
+          showToast('复制失败（已选中，可手动复制）：' + path, 'info');
+          window.getSelection().selectAllChildren(btn);
+        }
       } else if (action === 'open-subagent') {
         // 子任务回放入口（M15 工单 05）：完成态子任务卡 → 右侧抽屉只读回放
         await openSubagentReplay(btn.dataset.agentId || '', btn.dataset.task || '');
