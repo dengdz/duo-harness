@@ -303,7 +303,9 @@ const render = (() => {
       if (!t.typeLastParse || now - t.typeLastParse >= 60) {
         t.typeLastParse = now;
         t.streamingBubble.innerHTML = '';
-        t.streamingBubble.appendChild(renderMarkdown((t.chunkBuffer || '').slice(0, t.typeShown)));
+        // 流式期逐步上色（M29 工单 08 用户验收定稿）：指针前缀直接跑高亮——关键字
+        // 长出来即变色；中小代码块无感，数千行级长输出若卡顿可回退收口高亮
+        t.streamingBubble.appendChild(renderMarkdown((t.chunkBuffer || '').slice(0, t.typeShown), true));
         scroll();
       }
     }
@@ -314,8 +316,11 @@ const render = (() => {
    * Markdown 渲染体（模型回复专用）：marked 解析 → DOMPurify 消毒，顺序不可换——
    * 消毒必须作用于解析后的 HTML。系统/错误消息不走此路（保持 textContent）。
    * vendor 库缺失时降级纯文本：渲染增强不可用不阻断对话。
+   * highlightCode=true 时对代码块跑 highlight.js（M29 工单 08：定稿/思考卡传入，
+   * 打字机流式期不传——流式期代码块纯等宽、收口上色，ZCode 同款时序，防长代码块
+   * 每 60ms 重高亮卡顿）；hljs 缺失时跳过高亮，同样不阻断。
    */
-  function renderMarkdown(text) {
+  function renderMarkdown(text, highlightCode) {
     const body = document.createElement('div');
     body.className = 'md-body';
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
@@ -323,6 +328,11 @@ const render = (() => {
       return body;
     }
     body.innerHTML = DOMPurify.sanitize(marked.parse(text));
+    if (highlightCode && typeof hljs !== 'undefined') {
+      body.querySelectorAll('pre code').forEach(el => {
+        try { hljs.highlightElement(el); } catch (e) { /* 单块高亮失败不阻断渲染 */ }
+      });
+    }
     return body;
   }
 
@@ -351,7 +361,7 @@ const render = (() => {
     // 思考折叠卡在正文气泡之前（时序语义：先思考后回答）；非思考会话 reasoning
     // 缺席不建卡——非思考模型零变化
     if (reasoning) bubble.before(reasoningCard(reasoning));
-    bubble.appendChild(renderMarkdown(text));
+    bubble.appendChild(renderMarkdown(text, true));
     scroll();
   }
 
@@ -369,7 +379,7 @@ const render = (() => {
     summary.textContent = '💭 思考过程';
     const body = document.createElement('div');
     body.className = 'reasoning-body';
-    body.appendChild(renderMarkdown(reasoning));
+    body.appendChild(renderMarkdown(reasoning, true));
     details.append(summary, body);
     card.appendChild(details);
     return card;
@@ -704,7 +714,7 @@ const render = (() => {
     }
     if (t.streamingBubble && t.chunkBuffer) {
       t.streamingBubble.innerHTML = '';
-      t.streamingBubble.appendChild(renderMarkdown(t.chunkBuffer));
+      t.streamingBubble.appendChild(renderMarkdown(t.chunkBuffer, true));
     }
     t.chunkBuffer = '';
     t.reasoningBuffer = '';

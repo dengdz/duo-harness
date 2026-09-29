@@ -224,6 +224,15 @@ class WebFaceTest {
         HttpResponse<String> purify = fetch("/web/purify.min.js");
         assertEquals(200, purify.statusCode(), "purify.min.js 可达");
         assertTrue(purify.body().contains("DOMPurify"), "消毒库内容在场");
+
+        // 语法高亮依赖（M29 工单 08）：hljs 全量 vendor 与亮色主题同路入库
+        HttpResponse<String> hljs = fetch("/web/highlight.min.js");
+        assertEquals(200, hljs.statusCode(), "highlight.min.js 可达");
+        assertTrue(hljs.body().contains("Highlight.js v"), "高亮库内容在场");
+
+        HttpResponse<String> hljsTheme = fetch("/web/highlight-theme.min.css");
+        assertEquals(200, hljsTheme.statusCode(), "highlight-theme.min.css 可达");
+        assertTrue(hljsTheme.body().contains(".hljs"), "高亮主题内容在场");
     }
 
     @Test

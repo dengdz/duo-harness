@@ -139,6 +139,8 @@ class WebFaceAuthTest {
         assertEquals(200, response.statusCode());
         assertTrue(response.body().contains("/web/theme.css?token=" + TOKEN), "样式子资源已注入 token");
         assertTrue(response.body().contains("/web/app.js?token=" + TOKEN), "脚本子资源已注入 token");
+        assertTrue(response.body().contains("/web/highlight.min.js?token=" + TOKEN), "高亮脚本子资源已注入 token（M29 工单 08）");
+        assertTrue(response.body().contains("/web/highlight-theme.min.css?token=" + TOKEN), "高亮主题样式子资源已注入 token（M29 工单 08）");
         assertEquals(200, statusOf("/web/theme.css?token=" + TOKEN, null), "注入后的子资源请求放行");
     }
 
