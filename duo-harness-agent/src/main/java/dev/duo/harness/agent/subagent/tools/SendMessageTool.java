@@ -58,6 +58,4 @@ public final class SendMessageTool implements ToolDefinition {
         SubagentArgs.requireCurrentSession(NAME, manager, currentSession, agentId);
         return manager.sendMessage(agentId, message);
     }
-
-
 }

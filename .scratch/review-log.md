@@ -569,6 +569,12 @@
   5. **test-only 兼容面滞留 main 掩盖生产断线**——P1-3（beginTurn）为极端案例：测试直调让全绿掩盖主链路零调用。规则：**test-only 便捷面收进测试辅助类；"字段只写不读"是断线信号**。
 - **对后续的优化建议**：①P1×3 建议三张独立小工单立即修（各需补端到端用例，现有测试形态均抓不住）；②llm 双适配器抽共享骨架是全库收益最大一刀（约 150 行重复 + 锁死协议面同构）；③core 类型化异常（ScopeDestroyedException / FilesApiException.statusCode）小改大收益；④死代码清理批可一 diff 清完（Context.bail 全家、KEEP_RECENT_RATIO、test-only 构造族、FQCN 批）；⑤五层处置清单（立即修/高收益抽象/根因还账/死代码清理/记录不改）已按优先级写入审计报告，可直接拆 M29+ 工单。
 
+### 2026-09-29 · C2 全量四轴审查（0.24.0 分支，d5036f8...HEAD 25 提交 112 文件 +2777/−994）
+
+- **范围与轮次**：四轴并行子代理（Standards / Spec / 行级规则 ocr / Java 规范）→ 合并处置。报告落 `.scratch/c2-code-audit/reviews/2026-09-29-C2-全量四轴.md`。修复 8 项（文档缺账三处、L-06 堆栈两处、import 合行、双 javadoc 错挂、悬空 javadoc×2）+ 建议 3 组（ObjectMapper static 化、GATE_SETTLE_MS 常量化、机械空行）+ 追认 scope creep 3 项 + 记录不改 5 项（含理由）。修复后全仓 verify 绿。
+- **模式化问题**：①**三轴同抓是最好的去重信号**——import 合行与 javadoc 错挂被行级/Java/Standards 三轴独立命中，交叉验证了发现而非冗余；②**「工单自查说清了不等于文档对齐了」**——工单 18 自称清理"悬空 javadoc"却漏了两处类尾残留，CHANGELOG 称 bail"四处文档提及移除"却漏了活文档两处——收尾清单的 grep 范围必须含 docs/ 与测试目录（本轮 Standards 轴抓回）；③**验收驱动的新增行为（scope creep）在 Spec 轴必然现身**——处置形态用「追认 + 记账核对」而非辩解，M28 追认先例复用顺畅。
+- **对后续的优化建议**：①spec ID8"每工单 CHANGELOG 记账"措辞与红线 6"用户可见"口径冲突，下次 spec 修订对齐（内部收敛类工单免记账）；②pacedSettled 固定静置在 CI 观察 flaky，必要时给 AnswerGate 开观测 seam；③FQCN/魔法数字散点独立 lint 轮（工单 19 记档在案）。
+
 ### 2026-09-29 · C2 实现收尾（0.24.0 分支 19 票 + 验收回路两修）
 
 - **范围与计数**：19 票全部处置（工单 19 的 FQCN 项缓办记档——脚本批一次失败回滚，建议独立 lint 轮），20 个实现 commit，全仓 verify 绿。验收回路两修：会话切换占用拒绝不打堆栈（`0627cce`）；工单 07 提问/计划卡 id 改动回归回退（`f433225`，验收实测抓到）。

@@ -18,6 +18,9 @@ import java.util.function.Supplier;
  */
 public final class SpawnTool implements ToolDefinition {
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper PAYLOAD_JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** 工具名（模型侧调用名，DSH 同款词汇）。 */
     public static final String NAME = "spawn";
 
@@ -51,7 +54,7 @@ public final class SpawnTool implements ToolDefinition {
     @Override
     public JsonNode parameters() {
         try {
-            var schema = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+            var schema = PAYLOAD_JSON.createObjectNode()
                     .put("type", "object");
             var props = schema.putObject("properties");
             var template = props.putObject("template")
@@ -77,12 +80,11 @@ public final class SpawnTool implements ToolDefinition {
         }
         String agentId = manager.spawn(parent, template, task);
         // ObjectNode 正规序列化（C2 工单 18）：取代字符串拼接——与 SubagentManager.spawnPayload 同风格
-        return new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+        return PAYLOAD_JSON.createObjectNode()
                 .put("agentId", agentId)
                 .put("template", template)
                 .put("status", "started")
                 .toString();
     }
 
-    /** 必填文本参数严格读取：缺失或空白点名（模型可见错误后自行补参重调）。 */
 }

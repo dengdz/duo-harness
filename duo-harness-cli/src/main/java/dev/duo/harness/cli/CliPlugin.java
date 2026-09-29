@@ -1,7 +1,8 @@
 package dev.duo.harness.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.duo.harness.agent.AgentCapabilities;import dev.duo.harness.agent.AgentListener;
+import dev.duo.harness.agent.AgentCapabilities;
+import dev.duo.harness.agent.AgentListener;
 import dev.duo.harness.agent.AgentSpec;
 import dev.duo.harness.agent.AuditingAnswerer;
 import dev.duo.harness.agent.ChatAgent;
@@ -453,7 +454,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         try {
             return ctx.as(CliPermissionRulesView.class).permissionRules();
         } catch (Exception e) {
-            log.warn("permission-rules 服务解析失败（a/s 键与规则管理本会话不可用）: {}", e.toString());
+            log.warn("permission-rules 服务解析失败（a/s 键与规则管理本会话不可用）: {}", e.toString(), e);
             return null;
         }
     }

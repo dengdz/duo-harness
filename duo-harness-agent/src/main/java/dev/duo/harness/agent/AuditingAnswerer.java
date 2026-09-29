@@ -26,6 +26,9 @@ import java.util.function.Supplier;
  */
 public final class AuditingAnswerer implements Answerer {
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final Supplier<Session> session;
     private final Answerer delegate;
 
@@ -72,7 +75,7 @@ public final class AuditingAnswerer implements Answerer {
      * 问题文本取请求 subject，选项取请求 options（可空数组 = 自由输入）。
      */
     private static String questionPayload(InteractionRequest request) {
-        var node = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+        var node = JSON.createObjectNode();
         node.put("question", request.subject());
         var options = node.putArray("options");
         request.options().forEach(options::add);

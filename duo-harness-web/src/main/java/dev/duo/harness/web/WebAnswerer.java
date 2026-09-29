@@ -95,7 +95,7 @@ public final class WebAnswerer implements Answerer {
             abort(waiting);
             return InteractionAnswer.failClosed();
         } catch (java.util.concurrent.ExecutionException e) {
-            log.info("交互请求异常收回: id={} cause={}", request.id(), e.toString());
+            log.info("交互请求异常收回: id={}", request.id(), e);
             abort(waiting);
             return InteractionAnswer.failClosed();
         }

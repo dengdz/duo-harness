@@ -56,6 +56,4 @@ public final class InterruptAgentTool implements ToolDefinition {
         SubagentArgs.requireCurrentSession(NAME, manager, currentSession, agentId);
         return manager.interrupt(agentId);
     }
-
-
 }

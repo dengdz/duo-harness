@@ -42,6 +42,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class CliPluginTest {
 
+    /** 标记静置时长（毫秒）：压过「审批呈现打印 → 应答闸门 pending 置位」的毫秒级
+     * 微窗（AnswerGate 已知边界）。固定静置是 UT-01 Repeatable 的取舍——闸门状态
+     * 不可从测试观测，无法状态等待；负载下不足则该行误投插队（无害降级，用例会以
+     * 可见断言失败而非挂死）。CI 观察 flaky 再升级为闸门观测 seam。 */
+    private static final long GATE_SETTLE_MS = 150;
+
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：CliPluginTest —— CLI 呈现位插件：事件驱动 REPL（busy 插队/应答闸门/EOF 不腰斩）、"
@@ -81,7 +87,7 @@ class CliPluginTest {
          * 而非配对在飞的审批 ask（AnswerGate 已知边界，CliPlugin 注释记档）。
          */
         static InputLine pacedSettled(String text, String marker) {
-            return new InputLine(text, marker, 150);
+            return new InputLine(text, marker, GATE_SETTLE_MS);
         }
     }
 

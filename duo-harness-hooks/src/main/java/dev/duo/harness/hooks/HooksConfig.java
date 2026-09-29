@@ -74,7 +74,6 @@ public final class HooksConfig {
         return rules.getOrDefault(event, List.of());
     }
 
-
     /** 暂不支持而跳过的事件名（点名用）。 */
     List<String> skippedEvents() {
         return skippedEvents;
