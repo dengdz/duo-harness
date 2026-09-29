@@ -333,8 +333,13 @@ public final class FsBashTool implements ToolDefinition {
                 return;
             }
             java.nio.file.Files.createDirectories(spillPath.getParent());
-            spillWriter = java.nio.file.Files.newBufferedWriter(spillPath,
-                    StandardCharsets.UTF_8);
+            if (spillWriter == null) {
+                // 首块开写手后**复用**（BUG-20260929-02）：此前每块重开 newBufferedWriter
+                // （默认 TRUNCATE_EXISTING）——多读缓冲块的大输出每块清空重写，落盘文件只剩
+                // 最后一块，"read 回读全文"承诺对超 8KB 输出失效（M23 测试输出恰单块未察觉）
+                spillWriter = java.nio.file.Files.newBufferedWriter(spillPath,
+                        StandardCharsets.UTF_8);
+            }
             spillWriter.write(text);
             spilledChars += text.length();
             if (spilledChars >= spillMaxChars) {

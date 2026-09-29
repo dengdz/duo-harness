@@ -229,6 +229,38 @@ class FsBashToolTest {
     }
 
     @Test
+    void spillSurvivesMultipleReadBuffers() throws Exception {
+        // BUG-20260929-02 回归锁（输出跨多个 8KB 读缓冲）：此前 writeSpill 每溢出块
+        // 重开 newBufferedWriter（默认 TRUNCATE_EXISTING）——每块清空重写，落盘只剩最后
+        // 一块；M23 既有用例输出恰单块（~1.2KB < 8KB 缓冲）未察觉。本用例 30000 行
+        // （~180KB，22+ 块），断言头尾连续（1 起头、覆盖到尾窗边界、行数无断档）
+        outputConfig = new BashOutputConfig(500, 1_000_000, 32_000);
+        registry = new BackgroundTaskRegistry(outputConfig);
+        tool = new FsBashTool(new WorkspacePolicy(ws, WorkspacePolicy.Mode.WORKSPACE_WRITE),
+                registry, outputConfig);
+
+        String result = run("{\"command\":\"seq 1 30000\",\"timeoutMs\":30000}");
+        assertTrue(result.contains("[stdout spilled]"), "大输出触发 spill: " + result);
+        var matcher = java.util.regex.Pattern
+                .compile("read 此文件回读全文: (\\S+\\.txt)").matcher(result);
+        assertTrue(matcher.find(), "spillPath 回传");
+        String path = matcher.group(1);
+
+        String spilled = java.nio.file.Files.readString(java.nio.file.Path.of(path));
+        assertTrue(spilled.startsWith("1\n2\n3\n"), "spill 首块起头（1 起头）: "
+                + spilled.substring(0, Math.min(30, spilled.length())));
+        // 末行可能被 8KB 缓冲边界截断（残行）——剥掉残行后：末完整行号 >29000
+        // 且行数与末行号一致（1..N 无断档）
+        String fullEnded = spilled.endsWith("\n")
+                ? spilled : spilled.substring(0, spilled.lastIndexOf('\n') + 1);
+        String lastLine = fullEnded.stripTrailing().substring(
+                fullEnded.stripTrailing().lastIndexOf('\n') + 1);
+        long last = Long.parseLong(lastLine);
+        assertTrue(last > 29000, "spill 覆盖到接近尾窗边界（末完整行 " + last + " > 29000）");
+        assertEquals(fullEnded.stripTrailing().lines().count(), last, "行数与末行号一致（无断档）");
+    }
+
+    @Test
     void spillOverflowWarnsLoudly() throws Exception {
         // 超帽告警不静默（M23 工单 05）：spillMaxChars 小注入——超帽部分丢弃并显式告警
         outputConfig = new BashOutputConfig(100, 500, 32_000);

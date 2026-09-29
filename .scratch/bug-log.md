@@ -8,6 +8,15 @@
 
 ---
 
+## BUG-20260929-02 · bash spill 文件多读缓冲块互相清空——超 8KB 输出的"回读全文"承诺失效
+
+- **日期**：2026-09-29（C2 端到端回归测试 T8 发现；BUG-20260929-01 同轮）
+- **症状**：`seq 1 40000` 的 spill 文件只含行 33716..35000（最后一个 8KB 读缓冲块），前 19 万字符丢失；模型按提示 read 回读得到残缺数据。
+- **根因**：`StreamCapture.writeSpill` 每个溢出块重开 `Files.newBufferedWriter`（默认 TRUNCATE_EXISTING = 清空重写）——多块输出每块互相清空，落盘只剩最后一块。M23-05（c752f89）引入的存量 bug，**非 C2 回归**（C2 审计也未抓到）。
+- **为什么测试没抓到**：M23 既有用例 `oversizedOutputSpillsToDiskWithReadbackPath` 输出 ~1.2KB 恰好落在单个 8KB 读缓冲（单 accept 块），truncate 语义无从暴露——「测试用例形态同质化藏 bug」（duo-code-review 经验档 2026-09-22 条）的又一实例：本次 30000 行（~180KB，22+ 块）才触发。
+- **修复**：写手懒开一次后续复用（`spillWriter == null` 才创建，追加语义）；回归锁 `FsBashToolTest.spillSurvivesMultipleReadBuffers`（30000 行，断言首行 1 起头、行数=末行号无断档、覆盖到尾窗边界）。
+- **防复发**：分层缓冲类功能（尾窗+落盘+丢弃告警）的测试必须覆盖「输出跨多读缓冲块」形态——单块用例对 truncate/追加语义完全失明；端到端大输出实测（E2E T8）作为该功能的固定验收项。
+
 ## BUG-20260929-01 · Web 提问卡（ask_user）挂起期间永不渲染——tool/call 成对提交设计下问题卡必然"迟到"
 
 - **日期**：2026-09-29（C2 工单 07 验收回路发现；隔离实例 + 内置浏览器 + WebAnswerer 诊断日志实证）
