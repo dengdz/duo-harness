@@ -72,6 +72,37 @@ function showToast(text, kind) {
   setTimeout(() => box.remove(), 5000);
 }
 
+/** hero 问候与示例 chips（M29 W3/W4）：六档时段问候 + 固定三条示例（点击填输入框）。
+ * 顶层函数——render IIFE 内的 resetToHero 与启动段共同调用（M29 W3/W4 实测教训：
+ * 该函数不依赖 render 内部状态，放 IIFE 内则顶层调用够不着）。 */
+function fillHero() {
+  const titleEl = $('#heroTitle');
+  if (titleEl) {
+    const h = new Date().getHours();
+    const greeting = h >= 5 && h < 9 ? '早上好'
+      : h >= 9 && h < 12 ? '上午好'
+        : h >= 12 && h < 14 ? '中午好'
+          : h >= 14 && h < 18 ? '下午好'
+            : h >= 18 && h < 23 ? '晚上好' : '夜深了';
+    titleEl.textContent = greeting + '，有什么想让我帮忙的吗';
+  }
+  const chips = $('#heroChips');
+  if (chips && !chips.children.length) {
+    for (const text of ['看看这个仓库的结构', '修复一个 bug 并跑测试', '查一下最近的会话记录']) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'hero-chip';
+      b.textContent = text;
+      b.addEventListener('click', () => {
+        const input = $('#input');
+        input.value = text;
+        input.focus();
+      });
+      chips.appendChild(b);
+    }
+  }
+}
+
 // ----- §1 api：后端端点封装 -----
 const api = {
   async status() { return (await fetch('/api/status')).json(); },
@@ -518,13 +549,36 @@ const render = (() => {
   }
 
   /** 工具合一卡：badge-run 起步，tool/result 回填徽标与可折叠结果。 */
+  /** 参数摘要（M29 W5）：write/edit/read → 路径、bash → 命令文本；其余工具回退 null（展示原 JSON）。 */
+  function paramSummary(toolName, argsJson) {
+    try {
+      const a = JSON.parse(argsJson || '{}');
+      if ((toolName === 'write' || toolName === 'edit' || toolName === 'read') && a.path) return String(a.path);
+      if (toolName === 'bash' && a.command) return String(a.command);
+    } catch (e) { /* 回退原 JSON */ }
+    return null;
+  }
+
   function toolCall(event) {
     showMessages();
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = '<div class="tool">🔧 <b></b> <span class="badge badge-run">⟳ 运行中</span></div><pre></pre>';
     card.querySelector('b').textContent = event.toolName || '';
-    card.querySelector('pre').textContent = event.text || '';
+    const summary = paramSummary(event.toolName, event.text);
+    if (summary) {
+      // 摘要形态（M29 W5）：write/bash/read 展示关键参数，原 JSON 折叠可查
+      const pre = card.querySelector('pre');
+      pre.textContent = summary;
+      pre.classList.add('param-summary');
+      const params = document.createElement('details');
+      params.className = 'params';
+      params.innerHTML = '<summary>参数原文</summary><pre></pre>';
+      params.querySelector('pre').textContent = event.text || '';
+      card.appendChild(params);
+    } else {
+      card.querySelector('pre').textContent = event.text || '';
+    }
     if (event.toolCallId) {
       t.toolCards.set(event.toolCallId, card);
     }
@@ -897,6 +951,7 @@ const render = (() => {
     resetForReplay();
     t.container.style.display = 'none';
     hero.style.display = 'flex';
+    fillHero();
   }
 
   /** 重连复位：清空渲染区，等本轮全量回放重建（幂等——重连不该叠加重複历史）。 */
@@ -1563,13 +1618,32 @@ const app = (() => {
       const item = document.createElement('div');
       item.className = 'sidebar-item' + (s.current ? ' active' : '') + (s.occupied ? ' occupied' : '');
       if (s.current) currentSessionId = s.id;
+      // 状态点（M29 W2 修正）：仅当前会话运行中 → 转圈点；「使用中」不加点（meta 文字已表达，满屏灰点是噪音）
+      const running = s.current && (sendMode === 'thinking' || sendMode === 'stop');
+      if (running) {
+        const dot = document.createElement('span');
+        dot.className = 'session-dot';
+        item.appendChild(dot);
+      }
       const sid = document.createElement('div');
       sid.className = 'sid';
       sid.textContent = s.title || s.id; // 标题优先（工单 06），无标题回退 id
+      // 走马灯（M29 W1）：hover 延迟 1s 启动（CSS animation-delay），仅文本溢出时滚动，播完复位
+      sid.addEventListener('mouseenter', () => {
+        if (sid.classList.contains('marqueeing') || sid.scrollWidth <= sid.clientWidth + 2) return;
+        const overflow = sid.scrollWidth - sid.clientWidth;
+        const dist = overflow + 24; // 滚出 + 尾部间隙（附录 A2 gap）
+        sid.style.setProperty('--marquee-shift', -dist + 'px');
+        sid.style.setProperty('--marquee-dur', Math.round((dist + sid.clientWidth) / 40 * 1000) + 'ms'); // 40px/s
+        sid.classList.add('marqueeing');
+        const done = () => { sid.classList.remove('marqueeing'); sid.removeEventListener('animationend', done); };
+        sid.addEventListener('animationend', done);
+      });
       const meta = document.createElement('div');
       meta.className = 'meta';
-      // 占用标注（工单 05）：灰显 + "使用中"角标——只提供预期，点击仍可尝试（撞锁报错保留）
-      meta.textContent = (s.current ? '当前 · ' : '') + (s.occupied ? '使用中 · ' : '') + relativeTime(s.lastModifiedMs);
+      // meta 只留最新对话时间（M29 W2 用户裁定，参考 ZCode）：占用警示由灰显样式承担，
+      // 点击撞锁仍有报错兜底——不再叠「当前/使用中」文字前缀
+      meta.textContent = relativeTime(s.lastModifiedMs);
       item.append(sid, meta);
       item.addEventListener('click', async () => {
         if (s.current) return;
@@ -1790,6 +1864,10 @@ const app = (() => {
   initSessionSearch();
   initAtCompletion();
   setInterval(refreshStatus, 5000);
+
+  // 状态面分区折叠（M29 W6）：details 容器是 index.html 静态骨架（refreshStatus
+  // 只重渲 tbody），开合状态天然保持，无需额外持久化
+  fillHero(); // 首载 hero 问候与示例 chips（M29 W3/W4；顶层函数——render IIFE 内 resetToHero 亦调用）
 
   // 滚动到顶加载更早历史（工单 02）：loading 标志防重入，加载后由 finally 补发直至占位耗尽
   $('#messages').addEventListener('scroll', () => {

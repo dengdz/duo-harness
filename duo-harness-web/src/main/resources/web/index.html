@@ -29,8 +29,9 @@
     <div id="messages"></div>
     <div id="hero">
       <div class="mark">duo-harness</div>
-      <div class="title">新会话</div>
+      <div class="title" id="heroTitle">新会话</div>
       <div class="hint">描述你想要构建的内容，或 /技能名 直调技能</div>
+      <div id="heroChips" class="hero-chips"></div>
     </div>
     <div id="todoPanel" class="todo-panel" hidden></div>
     <div class="composer">
@@ -44,16 +45,26 @@
   <section id="status">
     <h2>状态 <span class="hint">实时刷新</span></h2>
     <div id="statusBody">
-      <div class="status-group">上下文</div>
-      <div id="contextLine" class="context-line">—</div>
-      <div class="status-group">后台任务</div>
-      <div id="bgTasks">—</div>
-      <div class="status-group">连接器（MCP 等）</div>
-      <div id="connectorStatus">—</div>
-      <div class="status-group">插件（六态）</div>
-      <table id="plugins"><thead><tr><th>插件</th><th>状态</th></tr></thead><tbody></tbody></table>
-      <div class="status-group">工具（本机 + MCP 远端）</div>
-      <table id="tools"><thead><tr><th>工具</th><th>说明</th></tr></thead><tbody></tbody></table>
+      <details class="status-fold" open>
+        <summary class="status-group">上下文</summary>
+        <div id="contextLine" class="context-line">—</div>
+      </details>
+      <details class="status-fold" open>
+        <summary class="status-group">后台任务</summary>
+        <div id="bgTasks">—</div>
+      </details>
+      <details class="status-fold" open>
+        <summary class="status-group">连接器（MCP 等）</summary>
+        <div id="connectorStatus">—</div>
+      </details>
+      <details class="status-fold" data-fold-key="plugins">
+        <summary class="status-group">插件（六态）</summary>
+        <table id="plugins"><thead><tr><th>插件</th><th>状态</th></tr></thead><tbody></tbody></table>
+      </details>
+      <details class="status-fold" data-fold-key="tools">
+        <summary class="status-group">工具（本机 + MCP 远端）</summary>
+        <table id="tools"><thead><tr><th>工具</th><th>说明</th></tr></thead><tbody></tbody></table>
+      </details>
     </div>
   </section>
 
