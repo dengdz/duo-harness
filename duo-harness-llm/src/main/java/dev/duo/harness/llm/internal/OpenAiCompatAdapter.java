@@ -173,7 +173,8 @@ public final class OpenAiCompatAdapter extends StreamingHttpAdapter {
 
     /** 聚合一轮流式响应：文本增量累积 + tool_calls 分片按 index 聚合 + 思考内容捕获 + 流末 usage 统计。 */
     @Override
-    protected LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink) throws IOException {
+    protected LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink,
+                                    Consumer<String> reasoningSink) throws IOException {
         StringBuilder text = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
         List<ToolCallRequest> toolCalls = new ArrayList<>();
@@ -198,6 +199,7 @@ public final class OpenAiCompatAdapter extends StreamingHttpAdapter {
             JsonNode reasoningDelta = delta.path("reasoning_content");
             if (!reasoningDelta.isMissingNode() && !reasoningDelta.isNull()) {
                 reasoning.append(reasoningDelta.asText());
+                reasoningSink.accept(reasoningDelta.asText());
             }
             JsonNode calls = delta.path("tool_calls");
             if (calls.isArray()) {

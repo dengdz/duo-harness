@@ -9,7 +9,9 @@ import java.util.Objects;
  * <p>M4 三种事件载荷同构（type + at + text）；M5 起工具事件额外携带
  * {@code toolCallId} / {@code toolName}（协议要求 tool 结果消息与模型发起的
  * tool_calls 按 id 关联）；M6 起工具调用事件额外携带 {@code reasoning}
- * （思考模式 provider 要求回传，随事件持久化——会话投影重建完整请求历史）。
+ * （思考模式 provider 要求回传，随事件持久化——会话投影重建完整请求历史）；
+ * M29 起助手完整消息同样携带 {@code reasoning}（思考模型完成态，Web 折叠卡
+ * 渲染用——投影重建不取该字段，不进请求历史，无回传语义）。
  * JSONL 按 {@code type} 字符串判别，可选字段缺省不破坏旧会话文件（追加写入
  * 向后兼容）。</p>
  *
@@ -20,7 +22,8 @@ import java.util.Objects;
  * @param toolCallId 协议关联 id（工具事件与子代理事件携带——后者为子 agent id，其余为 null）
  * @param toolName   工具名（工具事件与子代理 spawned 携带——后者为模板名；command 两事件
  *                   携带命令名；其余为 null）
- * @param reasoning  思考内容（仅 tool/call 携带，其余为 null）
+ * @param reasoning  思考内容（tool/call 与 assistant/message 携带——前者为投影回传
+ *                   用，后者为 Web 完成态折叠卡展示用；非思考模型为 null）
  * @param usage      真实 token 用量（仅 assistant/message 携带，provider 未报告为 null）
  * @param error      工具结果失败标志（仅 tool/result 携带，microcompact 豁免判定依据；
  *                   旧日志无此字段反序列化为 false——「非已知失败，可裁」）
@@ -36,6 +39,14 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
 
     /** 助手完整消息（全部 chunk 拼接后的最终文本）。 */
     public static final String ASSISTANT_MESSAGE = "assistant/message";
+
+    /**
+     * 思考流式增量（M29 工单 06：思考模型的思考过程实时通道；text = 增量片段）。
+     * 仅供 Web 实时折叠卡滚动渲染——投影不入消息列表、检索不索引、导出不收录
+     * （思考的权威形态是收口 assistant/message 携带的 reasoning 全文，回放以它
+     * 一次渲染折叠卡，本事件不参与回放渲染）。
+     */
+    public static final String ASSISTANT_REASONING = "assistant/reasoning";
 
     /**
      * 协作式中断标记（M23 工单 02，ADR-0025 决策一）：暂停时已流出的助手文本以本
@@ -243,12 +254,26 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
 
     /** 便捷工厂：当前时刻的助手完整消息（无用量——provider 未报告或非 agent 链路）。 */
     public static SessionEvent assistantMessage(String text) {
-        return assistantMessage(text, null);
+        return assistantMessage(text, null, null);
+    }    /** 便捷工厂：助手完整消息 + 真实 token 用量（provider 报告时随事件持久化，ADR-0009）。 */
+    public static SessionEvent assistantMessage(String text, TokenUsage usage) {
+        return assistantMessage(text, null, usage);
     }
 
-    /** 便捷工厂：助手完整消息 + 真实 token 用量（provider 报告时随事件持久化，ADR-0009）。 */
-    public static SessionEvent assistantMessage(String text, TokenUsage usage) {
-        return new SessionEvent(ASSISTANT_MESSAGE, System.currentTimeMillis(), text, null, null, null, usage);
+    /** 便捷工厂：思考流式增量（M29 工单 06；text = 本段增量，调用方按窗口聚合控制事件粒度）。 */
+    public static SessionEvent assistantReasoning(String delta) {
+        return new SessionEvent(ASSISTANT_REASONING, System.currentTimeMillis(), delta);
+    }
+
+    /**
+     * 便捷工厂：助手完整消息 + 思考内容（M29 工单 06：思考模型的思考过程随消息
+     * 一次性持久化，Web 折叠卡完成态渲染；非思考模型传 null——无思考不携带，
+     * 空串归一为 null 保持该不变量）。投影重建不取该字段（零回传语义）。
+     */
+    public static SessionEvent assistantMessage(String text, String reasoning, TokenUsage usage) {
+        String normalized = reasoning == null || reasoning.isBlank() ? null : reasoning;
+        return new SessionEvent(ASSISTANT_MESSAGE, System.currentTimeMillis(), text, null, null,
+                normalized, usage);
     }
 
     /** 便捷工厂：协作式中断标记（M23 工单 02，ADR-0025 决策一；text = 已流出的助手文本，无内容为空串）。 */

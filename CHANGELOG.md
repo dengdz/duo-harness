@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.25.0（未发布）
+
+### Added
+
+- **Web 思考过程折叠卡 + 流式实时呈现（M29 工单 06）**：思考模型（thinking mode）的思考过程完整上 Web——流式期「💭 思考中…」实时滚动卡（展开态、吸底跟随），回答收口后转为「💭 思考过程」折叠卡（默认收起、点开看格式化全文），正文气泡前呈现、刷新与回放同源。事件面两通道：`assistant/reasoning` 增量事件（256 字符窗口聚合，仅实时呈现——不入投影/检索/导出，回放不渲染）+ `assistant/message` 复用 `reasoning` 字段携带全文（权威形态）；LLM 适配器新增思考增量通道（OpenAI 兼容面 `reasoning_content`、Anthropic 面 `thinking_delta`，未升级适配器走缺省丢弃零影响）。非思考模型零变化。正文流式渲染同步升级：chunk 期由纯文本追加改为 300ms 节流 markdown 渲染（流式期标题/列表/代码块实时成形，收口整段定稿）。
+
 ## 0.24.0（2026-09-29）
 
 ### Changed（C2 工单 04/05——对 LLM 扩展与插件开发者可见）

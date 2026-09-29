@@ -274,7 +274,10 @@ const render = (() => {
     return div;
   }
 
-  /** 流式聚合：chunks 追加进同一个带光标的气泡；assistant/message 收口。 */
+  /** 流式聚合（打字机指针，M29 工单 06 验收裁定）：chunks 全速进 buffer，渲染端
+   * rAF 恒速推进已显示指针——积压越多推进越快（追平防堆积）、无积压则恒速约
+   * 60 字/秒，观感为逐字细流；markdown 对指针前缀节流渲染（≥60ms 一次），收口
+   * finishAssistant 整段定稿。数据源 SSE chunk 本身成批到达，指针把批次平滑成流。 */
   function chunk(text) {
     showMessages();
     if (!t.streamingBubble) {
@@ -282,8 +285,29 @@ const render = (() => {
       t.streamingBubble.className = 'msg assistant streaming';
       t.container.appendChild(t.streamingBubble);
     }
-    t.streamingBubble.textContent += text;
-    scroll();
+    t.chunkBuffer = (t.chunkBuffer || '') + text;
+    if (!t.typeRAF) {
+      t.typeShown = 0;
+      t.typeLastParse = 0;
+      t.typeRAF = requestAnimationFrame(typeTick);
+    }
+  }
+
+  /** 打字机帧推进：指针恒速/自适应前进，前缀节流渲染。 */
+  function typeTick(now) {
+    if (!t.streamingBubble) { t.typeRAF = null; return; }
+    const backlog = (t.chunkBuffer || '').length - t.typeShown;
+    if (backlog > 0) {
+      // 自适应步长：积压小则逐字细流，积压大则加速消化（≥1/12 积压量，收敛防延迟）
+      t.typeShown += Math.min(backlog, Math.max(1, Math.ceil(backlog / 12)));
+      if (!t.typeLastParse || now - t.typeLastParse >= 60) {
+        t.typeLastParse = now;
+        t.streamingBubble.innerHTML = '';
+        t.streamingBubble.appendChild(renderMarkdown((t.chunkBuffer || '').slice(0, t.typeShown)));
+        scroll();
+      }
+    }
+    t.typeRAF = requestAnimationFrame(typeTick);
   }
 
   /**
@@ -302,8 +326,15 @@ const render = (() => {
     return body;
   }
 
-  function finishAssistant(text) {
+  function finishAssistant(text, reasoning) {
     showMessages();
+    // 打字机循环清场（正文与思考两条指针）：收口整段渲染为定稿（指针态作废）
+    if (t.typeRAF) { cancelAnimationFrame(t.typeRAF); t.typeRAF = null; }
+    if (t.reasoningRAF) { cancelAnimationFrame(t.reasoningRAF); t.reasoningRAF = null; }
+    t.chunkBuffer = '';
+    t.reasoningBuffer = '';
+    // 流式期实时呈现的思考卡定稿：移除滚动卡，换收口折叠卡（默认收起，markdown 渲染）
+    if (t.reasoningStreamCard) { t.reasoningStreamCard.remove(); t.reasoningStreamCard = null; }
     // 流式期间保持纯文本追加（半截 markdown 渲染会闪烁），assistant/message 收口时整段渲染；
     // 历史回放无对应 chunk 流，同样走此分支
     let bubble;
@@ -317,8 +348,76 @@ const render = (() => {
       bubble.className = 'msg assistant';
       t.container.appendChild(bubble);
     }
+    // 思考折叠卡在正文气泡之前（时序语义：先思考后回答）；非思考会话 reasoning
+    // 缺席不建卡——非思考模型零变化
+    if (reasoning) bubble.before(reasoningCard(reasoning));
     bubble.appendChild(renderMarkdown(text));
     scroll();
+  }
+
+  /**
+   * 思考折叠卡（M29 工单 06）：原生 details 零依赖、默认收起；内容走与正文同
+   * 一 markdown 管线（完成态一次性渲染，无流式重解析成本——ZCode 纯文本是
+   * 流式性能决策，duo 完成态不必照搬，用户验收裁定格式化）。
+   */
+  function reasoningCard(reasoning) {
+    const card = document.createElement('div');
+    card.className = 'msg reasoning-card';
+    const details = document.createElement('details');
+    details.className = 'reasoning';
+    const summary = document.createElement('summary');
+    summary.textContent = '💭 思考过程';
+    const body = document.createElement('div');
+    body.className = 'reasoning-body';
+    body.appendChild(renderMarkdown(reasoning));
+    details.append(summary, body);
+    card.appendChild(details);
+    return card;
+  }
+
+  /** 思考流式卡（M29 工单 06）：增量进 buffer，与正文同款打字机指针匀速流出——
+   * 增量事件是 256 字符窗口聚合（成批到达），直追加即成批蹦；展开态纯文本
+   * （增量半截 markdown 渲染会闪），收口 assistant/message 到达时移除换定稿
+   * 折叠卡；回放不走此路（replaying 分支跳过，回放由 message.reasoning 一次渲染）。 */
+  function reasoningStream(delta) {
+    showMessages();
+    if (!t.reasoningStreamCard) {
+      const details = document.createElement('details');
+      details.className = 'reasoning';
+      details.open = true;
+      const summary = document.createElement('summary');
+      summary.textContent = '💭 思考中…';
+      const body = document.createElement('div');
+      body.className = 'reasoning-body';
+      details.append(summary, body);
+      const card = document.createElement('div');
+      card.className = 'msg reasoning-card';
+      card.appendChild(details);
+      t.reasoningStreamCard = card;
+      t.reasoningStreamBody = body;
+      t.reasoningBuffer = '';
+      // 流式思考卡在正文流式气泡之前（时序语义：先思考后回答）
+      if (t.streamingBubble) t.streamingBubble.before(card);
+      else t.container.appendChild(card);
+      if (!t.reasoningRAF) {
+        t.reasoningShown = 0;
+        t.reasoningRAF = requestAnimationFrame(reasoningTick);
+      }
+    }
+    t.reasoningBuffer += delta;
+  }
+
+  /** 思考打字机帧推进：指针匀速/自适应前进（与正文 typeTick 同参数语义），吸底跟随。 */
+  function reasoningTick() {
+    if (!t.reasoningStreamCard) { t.reasoningRAF = null; return; }
+    const backlog = (t.reasoningBuffer || '').length - t.reasoningShown;
+    if (backlog > 0) {
+      t.reasoningShown += Math.min(backlog, Math.max(1, Math.ceil(backlog / 12)));
+      t.reasoningStreamBody.textContent = (t.reasoningBuffer || '').slice(0, t.reasoningShown);
+      t.reasoningStreamBody.scrollTop = t.reasoningStreamBody.scrollHeight;
+      scroll();
+    }
+    t.reasoningRAF = requestAnimationFrame(reasoningTick);
   }
 
   /** 工具合一卡：badge-run 起步，tool/result 回填徽标与可折叠结果。 */
@@ -596,6 +695,21 @@ const render = (() => {
       t.streamingBubble.classList.remove('streaming');
       t.streamingBubble = null;
     }
+    // 中断：两条打字机循环停止；思考卡保留原样（已到内容可见）并补齐 buffer 尾巴，
+    // 正文按「已流出保留」语义整段定稿；引用全清——后续增量不再更新
+    if (t.typeRAF) { cancelAnimationFrame(t.typeRAF); t.typeRAF = null; }
+    if (t.reasoningRAF) { cancelAnimationFrame(t.reasoningRAF); t.reasoningRAF = null; }
+    if (t.reasoningStreamBody && t.reasoningBuffer) {
+      t.reasoningStreamBody.textContent = t.reasoningBuffer;
+    }
+    if (t.streamingBubble && t.chunkBuffer) {
+      t.streamingBubble.innerHTML = '';
+      t.streamingBubble.appendChild(renderMarkdown(t.chunkBuffer));
+    }
+    t.chunkBuffer = '';
+    t.reasoningBuffer = '';
+    t.reasoningStreamCard = null;
+    t.reasoningStreamBody = null;
     showMessages();
     const mark = document.createElement('div');
     mark.className = 'interrupted-mark';
@@ -718,7 +832,8 @@ const render = (() => {
       todoPanel.clear(); // 新轮开始：上一轮清单使命结束（与 todoProjection 清空语义一致）
     }
     else if (ev.type === 'assistant/chunk') chunk(ev.text);
-    else if (ev.type === 'assistant/message') finishAssistant(ev.text);
+    else if (ev.type === 'assistant/reasoning') { if (!replaying) reasoningStream(ev.text); }
+    else if (ev.type === 'assistant/message') finishAssistant(ev.text, ev.reasoning);
     else if (ev.type === 'tool/call') {
       // ask_user 的 tool/call 按成对提交设计在完成后才落盘：实时流里问题卡已由
       // question/requested 前置事件渲染（BUG-20260929-01），补渲染只会出重复卡；

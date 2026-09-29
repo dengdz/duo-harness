@@ -222,6 +222,11 @@ public final class ToolCallingAgent implements ChatAgent {
                 inLlmStream = true;
                 LlmTurn turn;
                 try {
+                    // 思考增量实时落盘（M29 工单 06 流式折叠卡）：256 字符窗口 flush 控制事件
+                    // 粒度（delta 每 token 一段，逐段落盘即事件爆炸）——增量事件仅供实时呈现，
+                    // 思考的权威形态是收口 assistant/message 携带的 reasoning 全文（回放以它
+                    // 渲染，增量不参与回放）；turn 收口的窗口残留不 flush，避免与全文双份
+                    StringBuilder reasoningWindow = new StringBuilder();
                     turn = llm.streamTurn(buildRequest(reminder), text -> {
                         // 流式段协作式中断的真正生效点（验收实测修正）：线程 interrupt 打不断
                         // 适配器阻塞在 socket 流上的 readLine，输出持续期间字节不断到达、
@@ -235,6 +240,15 @@ public final class ToolCallingAgent implements ChatAgent {
                         }
                         listener.onChunk(text);
                         finalReply.append(text);
+                    }, reasoning -> {
+                        if (interruptRequested) {
+                            return; // 思考期中断：停 flush 即停事件（正文通道的中断收口同源）
+                        }
+                        reasoningWindow.append(reasoning);
+                        if (reasoningWindow.length() >= 256) {
+                            session.append(SessionEvent.assistantReasoning(reasoningWindow.toString()));
+                            reasoningWindow.setLength(0);
+                        }
                     });
                 } catch (RuntimeException e) {
                     // 流式段被中断打断（阻塞 IO 抛出 / chunk 回调收敛）——标志位下收敛为中断收口
@@ -255,8 +269,11 @@ public final class ToolCallingAgent implements ChatAgent {
                         return interruptedReply(finalReply, invocations);
                     }
                     // provider 真实用量随 assistant/message 落日志（ADR-0009）：llm 域统计
-                    // 映射为会话事件词汇——治理与状态展示的取数源，provider 未报告为 null
+                    // 映射为会话事件词汇——治理与状态展示的取数源，provider 未报告为 null。
+                    // 思考完成态随消息一次性持久化（M29 工单 06）：非思考模型 reasoningContent
+                    // 为 null 不携带；投影重建不取该字段，零回传语义
                     session.append(SessionEvent.assistantMessage(turn.text(),
+                            turn.reasoningContent(),
                             turn.usage() == null ? null : new TokenUsage(
                                     turn.usage().promptTokens(),
                                     turn.usage().completionTokens(),

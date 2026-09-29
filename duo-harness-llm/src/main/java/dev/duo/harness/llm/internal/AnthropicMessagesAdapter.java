@@ -275,7 +275,8 @@ public final class AnthropicMessagesAdapter extends StreamingHttpAdapter {
 
     /** 聚合一轮：text_delta 累积 + tool_use 块聚合（start 携 id/name，input_json_delta 拼参数）+ thinking 块 + usage。 */
     @Override
-    protected LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink) throws IOException {
+    protected LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink,
+                                    Consumer<String> reasoningSink) throws IOException {
         StringBuilder text = new StringBuilder();
         List<ToolCallRequest> toolCalls = new ArrayList<>();
         // thinking 块聚合容器（M24 工单 10 审查修复）：扩展思考协议要求工具循环的下一轮
@@ -342,6 +343,8 @@ public final class AnthropicMessagesAdapter extends StreamingHttpAdapter {
                             k -> new StringBuilder()).append(delta.path("partial_json").asText());
                 } else if ("thinking_delta".equals(deltaType)) {
                     thinkingText.append(delta.path("thinking").asText());
+                    // 实时通道转发纯思考文本（不含 signature——signature 属回传聚合体，非展示语义）
+                    reasoningSink.accept(delta.path("thinking").asText());
                 } else if ("signature_delta".equals(deltaType)) {
                     thinkingSignature.append(delta.path("signature").asText());
                 }

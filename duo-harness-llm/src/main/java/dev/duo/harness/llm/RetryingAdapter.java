@@ -74,14 +74,26 @@ public final class RetryingAdapter implements LlmAdapter {
 
     @Override
     public LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink) {
+        return streamTurn(request, textSink, r -> { });
+    }
+
+    @Override
+    public LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink,
+                              Consumer<String> reasoningSink) {
+        // 重试安全计数含思考增量：思考流已交付时重试同样导致前端内容重复——任一
+        // 通道有交付即放弃重试（与正文同一「已流出保留」语义）
         int[] emitted = {0};
-        Consumer<String> counting = text -> {
+        Consumer<String> countingText = text -> {
             emitted[0]++;
             textSink.accept(text);
         };
+        Consumer<String> countingReasoning = reasoning -> {
+            emitted[0]++;
+            reasoningSink.accept(reasoning);
+        };
         for (int attempt = 1; ; attempt++) {
             try {
-                return delegate.streamTurn(request, counting);
+                return delegate.streamTurn(request, countingText, countingReasoning);
             } catch (RetryableLlmException e) {
                 if (emitted[0] > 0) {
                     throw e;

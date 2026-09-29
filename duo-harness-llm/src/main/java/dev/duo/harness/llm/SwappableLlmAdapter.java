@@ -34,4 +34,10 @@ public final class SwappableLlmAdapter implements LlmAdapter {
     public LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink) {
         return delegate.streamTurn(request, textSink);
     }
+
+    @Override
+    public LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink,
+                              Consumer<String> reasoningSink) {
+        return delegate.streamTurn(request, textSink, reasoningSink);
+    }
 }

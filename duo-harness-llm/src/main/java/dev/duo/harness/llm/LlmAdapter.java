@@ -36,4 +36,20 @@ public interface LlmAdapter {
      * @throws PluginException 调用失败（网络 / 协议 / 凭证），错误原样呈现不重试
      */
     LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink);
+
+    /**
+     * 流式执行一轮（带思考增量通道，M29 工单 06）：思考模型的思考增量经
+     * {@code reasoningSink} 逐段交付（实时折叠卡渲染用），聚合结果语义同
+     * {@link #streamTurn(ChatRequest, Consumer)}。未升级的适配器无需覆写——
+     * 缺省实现丢弃思考增量，聚合行为与两参形态完全一致。
+     *
+     * @param request       对话请求（含可选工具清单）
+     * @param textSink      正文文本增量消费
+     * @param reasoningSink 思考增量消费（纯文本；provider 无思考流则从不回调）
+     * @return 一轮聚合结果（完整文本 + 思考全文 + 工具调用请求列表）
+     */
+    default LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink,
+                               Consumer<String> reasoningSink) {
+        return streamTurn(request, textSink);
+    }
 }

@@ -78,6 +78,13 @@ abstract class StreamingHttpAdapter implements LlmAdapter {
 
     @Override
     public final LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink) {
+        // 缺省思考通道：无交付目标即丢弃增量，聚合行为与两参形态完全一致
+        return streamTurn(request, textSink, r -> { });
+    }
+
+    @Override
+    public final LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink,
+                                    Consumer<String> reasoningSink) {
         boolean[] delivered = {false};
         try {
             HttpResponse<InputStream> response = send(request);
@@ -88,7 +95,7 @@ abstract class StreamingHttpAdapter implements LlmAdapter {
                 return aggregateTurn(body, text -> {
                     delivered[0] = true;
                     textSink.accept(text);
-                });
+                }, reasoningSink);
             }
         } catch (StreamIdleTimeoutException e) {
             throw idleOutcome(e, delivered[0]);
@@ -103,8 +110,9 @@ abstract class StreamingHttpAdapter implements LlmAdapter {
     /** 直答流式读取（帧解释）：仅文本增量回调。 */
     protected abstract void streamFrames(InputStream body, Consumer<ChatChunk> onChunk) throws IOException;
 
-    /** 聚合一轮流式响应（帧解释）：文本增量 + 工具调用 + 思考内容 + usage 统计。 */
-    protected abstract LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink) throws IOException;
+    /** 聚合一轮流式响应（帧解释）：文本增量 + 思考增量（M29 工单 06 实时通道）+ 工具调用 + usage 统计。 */
+    protected abstract LlmTurn aggregateTurn(InputStream body, Consumer<String> textSink,
+                                             Consumer<String> reasoningSink) throws IOException;
 
     /** 构造协议请求（URI、鉴权头、请求体由子类决定）。 */
     protected abstract HttpRequest buildHttpRequest(ChatRequest request) throws IOException;

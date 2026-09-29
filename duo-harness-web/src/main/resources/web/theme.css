@@ -13,6 +13,7 @@
     --border: rgba(0, 0, 0, 0.1);
     --text: #1a1f27;
     --text-dim: #6b7280;
+    --text-faint: rgba(26, 31, 39, 0.4); /* M29 工单 06：极浅字色（思考折叠卡，对标 ZCode foreground-subtlest） */
     --danger: #dc2626;
     --danger-tint: #fef2f2;
     --ok: #16a34a;
@@ -71,6 +72,27 @@
     padding: 8px 14px; border-radius: var(--radius); text-align: left; max-width: 80%;
   }
   .msg.assistant { max-width: 92%; }
+  /* ===== §样式层 · 思考折叠卡（M29 工单 06：思考模型完成态；原生 details 零依赖，默认收起） ===== */
+  details.reasoning { font-size: 13px; }
+  details.reasoning summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--text-faint);
+  }
+  details.reasoning summary::-webkit-details-marker { display: none; }
+  details.reasoning summary::after {
+    content: '▸'; font-size: 10px;
+    transition: transform 0.2s ease;
+  }
+  details.reasoning[open] summary::after { transform: rotate(90deg); }
+  details.reasoning[open] summary, details.reasoning summary:hover { color: var(--text-dim); }
+  .reasoning-body {
+    margin: 6px 0 0 4px; padding-left: 12px;
+    border-left: 2px solid var(--border);
+    color: var(--text-faint);
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 240px; overflow-y: auto;
+  }
   /* ===== §样式层 · Markdown 渲染体（模型回复收口后整段渲染） ===== */
   .md-body { line-height: 1.65; }
   .md-body p { margin: 0 0 8px; }
