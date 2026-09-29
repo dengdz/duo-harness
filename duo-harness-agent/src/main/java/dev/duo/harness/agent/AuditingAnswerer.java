@@ -14,8 +14,9 @@ import java.util.function.Supplier;
  * 机制核不依赖会话；留痕是装配层可组合的关注点（不想要留痕就不包这层）。
  *
  * <p>会话经 {@link Supplier} 延迟解析——/new 换会话后留痕落当前会话（CLI 的
- * SessionHolder 与 Web 的 {@code WebFace::currentSession} 同一接法）。提问类
- * 请求直接透传（问与答已由 tool/call、tool/result 事件覆盖）。</p>
+ * SessionHolder 与 Web 的 {@code WebFace::currentSession} 同一接法）。提问类请求
+ * 追加 {@code question/requested} 前置留痕（BUG-20260929-01：问题卡挂起期渲染的
+ * 事件源，tool/call 成对提交要到完成后才落盘），随后透传。</p>
  *
  * <p>计划复核（KIND_PLAN）与审批同通道留痕（BUG-20260917-04）：双呈现位部署下
  * CLI 发起的计划请求若不留痕，作答呈现位（行序路由优先 Web）的会话里收不到任何
@@ -41,6 +42,14 @@ public final class AuditingAnswerer implements Answerer {
 
     @Override
     public InteractionAnswer answer(InteractionRequest request) {
+        if (InteractionRequest.KIND_QUESTION.equals(request.kind())) {
+            // 提问前置留痕（BUG-20260929-01）：镜像审批卡机制——ask 前落 question/requested
+            // 事件（携请求 id + 问题/选项 JSON），前端提问卡据此在挂起期间实时渲染并按 id
+            // 精确回填；否则 tool/call 事件要到工具完成后才落盘，问题卡永远迟到
+            session.get().append(SessionEvent.questionRequested(
+                    "ask_user", questionPayload(request), request.id()));
+            return delegate.answer(request);
+        }
         if (!InteractionRequest.KIND_APPROVAL.equals(request.kind())
                 && !InteractionRequest.KIND_PLAN.equals(request.kind())) {
             return delegate.answer(request);
@@ -56,5 +65,17 @@ public final class AuditingAnswerer implements Answerer {
             session.get().append(SessionEvent.approvalDecided(request.subject(), decision));
         }
         return answer;
+    }
+
+    /**
+     * 问题载荷 JSON（前端 questionCard 的解析形态）：{"question":…,"options":[…]}。
+     * 问题文本取请求 subject，选项取请求 options（可空数组 = 自由输入）。
+     */
+    private static String questionPayload(InteractionRequest request) {
+        var node = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+        node.put("question", request.subject());
+        var options = node.putArray("options");
+        request.options().forEach(options::add);
+        return node.toString();
     }
 }

@@ -246,8 +246,9 @@ final class WebSessionEndpoints {
             }
             WebHttp.respondJson(exchange, 200, "{\"switched\":true}");
         } catch (dev.duo.harness.session.SessionLockedException e) {
-            // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案
-            log.info("会话切换被拒（占用冲突）: {}", e.getMessage(), e);
+            // 会话被占（本进程另一入口或其他进程在用）：明确点名冲突，不混入通用失败文案。
+            // 业务拒绝只留消息不打堆栈（验收实测反馈：双开保护每次拒绝刷全栈，形似事故）
+            log.info("会话切换被拒（占用冲突）: {}", e.getMessage());
             WebHttp.respondText(exchange, 409, e.brief());
         } catch (Exception e) {
             // 异常细节（含文件系统路径）仅服务端日志留痕，不回显给响应体（M10-02 脱敏）

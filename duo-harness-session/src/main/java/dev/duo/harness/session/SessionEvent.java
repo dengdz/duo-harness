@@ -56,6 +56,15 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 审批决定（M6 交互事件；text = 决定与来源，toolName = 工具名。投影时跳过）。 */
     public static final String APPROVAL_DECIDED = "approval/decided";
 
+    /**
+     * 提问请求（BUG-20260929-01 修复；text = 问题与选项 JSON，toolName = 提问工具名
+     * （ask_user），toolCallId = 请求 id 借道到前端作卡片 id）。与 approval/requested
+     * 同机制：ask **前**落盘——前端提问卡据此在挂起期间实时渲染（tool/call 事件按
+     * 成对提交设计在工具完成后才落盘，问题卡若只依赖它则必然迟到）。
+     * 投影时跳过（审计事件不进对话消息）。
+     */
+    public static final String QUESTION_REQUESTED = "question/requested";
+
     /** 运行错误（M8；text = 错误消息。直推帧不落会话——projection 跳过；类型保留供 SSE 通道复用）。 */
     public static final String RUN_ERROR = "run/error";
 
@@ -295,6 +304,16 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
     /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"）。 */
     public static SessionEvent approvalDecided(String toolName, String decisionText) {
         return new SessionEvent(APPROVAL_DECIDED, System.currentTimeMillis(), decisionText, null, toolName, null);
+    }
+
+    /**
+     * 便捷工厂：提问请求（BUG-20260929-01，镜像 {@link #approvalRequested(String, String, String)}）：
+     * ask 前落盘，id 借 toolCallId 通道到前端作卡片 id——提问卡据此实时渲染并按 id
+     * 精确回填（POST /api/answer）。text = 问题与选项 JSON（{"question":…,"options":[…]}，
+     * 前端 questionCard 的解析形态）。
+     */
+    public static SessionEvent questionRequested(String toolName, String detail, String cardId) {
+        return new SessionEvent(QUESTION_REQUESTED, System.currentTimeMillis(), detail, cardId, toolName, null);
     }
 
     /**

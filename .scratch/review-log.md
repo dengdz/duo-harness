@@ -568,3 +568,10 @@
   4. **JVM 静态单例错配插件树生命周期**——ConnectorStatusBoard 静态板、CliPlugin static volatile 配置（含 apiKey）、SPILL_SEQ。规则：**跨树状态走服务注册或树根聚合，静态仅限纯常量**。
   5. **test-only 兼容面滞留 main 掩盖生产断线**——P1-3（beginTurn）为极端案例：测试直调让全绿掩盖主链路零调用。规则：**test-only 便捷面收进测试辅助类；"字段只写不读"是断线信号**。
 - **对后续的优化建议**：①P1×3 建议三张独立小工单立即修（各需补端到端用例，现有测试形态均抓不住）；②llm 双适配器抽共享骨架是全库收益最大一刀（约 150 行重复 + 锁死协议面同构）；③core 类型化异常（ScopeDestroyedException / FilesApiException.statusCode）小改大收益；④死代码清理批可一 diff 清完（Context.bail 全家、KEEP_RECENT_RATIO、test-only 构造族、FQCN 批）；⑤五层处置清单（立即修/高收益抽象/根因还账/死代码清理/记录不改）已按优先级写入审计报告，可直接拆 M29+ 工单。
+
+### 2026-09-29 · C2 实现收尾（0.24.0 分支 19 票 + 验收回路两修）
+
+- **范围与计数**：19 票全部处置（工单 19 的 FQCN 项缓办记档——脚本批一次失败回滚，建议独立 lint 轮），20 个实现 commit，全仓 verify 绿。验收回路两修：会话切换占用拒绝不打堆栈（`0627cce`）；工单 07 提问/计划卡 id 改动回归回退（`f433225`，验收实测抓到）。
+- **模式化问题（「测试形态与生产形态有缝」第三实例，前两例见 M28 条目）**：WebAnswererTest 直调 completeById 验证 id 回填——绕过了前端真实 payload 的生成链（cardId 来源、字段互斥协议），id 通道实际不存在而测试全绿。规则补充：**涉及前端交互协议的改动，回归锁必须是端点级（真实 payload 形态直达 HTTP 层）**——`answerEndpointNoIdAnswersFormCompletesOldestPending` 即补缝形态；改协议分支前先读全前置校验（互斥/白名单在请求处理链上游，单分支视图会漏）。
+- **验收面实证**：CLI 审批序号跨轮复位 ✓、会话锁双开保护 ✓ 均经用户实测确认；提问卡回归由用户实测抓出——用户实测优先于测试绿灯的又一例证。
+

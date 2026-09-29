@@ -193,6 +193,10 @@ final class WebEndpoints {
                 }
                 completed = face.webAnswerer.completeById(node.get("id").asText(), decision, values);
             } else if (node.hasNonNull("decision")) {
+                // 无 id 旧形态（缓存页兜底）：仅审批 approve/reject——提问/计划的
+                // answers 形态与 decision 互斥（M16 工单 07 协议），且其卡片无 id
+                // 通道（计划卡从 tool/call 渲染携工具 callId、提问卡无 cardId，
+                // 均非挂起请求的 id；完整通道建设挂账 backlog）
                 if (!"approve".equals(decision) && !"reject".equals(decision)) {
                     WebHttp.respondEmpty(exchange, 400);
                     return;

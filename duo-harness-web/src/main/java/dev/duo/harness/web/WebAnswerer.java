@@ -34,6 +34,9 @@ import java.util.concurrent.TimeoutException;
  */
 public final class WebAnswerer implements Answerer {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(WebAnswerer.class);
+
     /** 回答者来源标识（审计署名）。 */
     public static final String SOURCE = "web";
 
@@ -73,18 +76,26 @@ public final class WebAnswerer implements Answerer {
         Pending waiting = new Pending(request.id(), request, future,
                 tabId == null || tabId.isBlank() ? WebFace.DEFAULT_TAB_ID : tabId);
         queue.add(waiting);
+        log.info("交互请求挂起: id={} kind={} subject={} tab={} 队列={}",
+                request.id(), request.kind(), request.subject(), waiting.tabId(), queue.size());
         try {
-            return future.get(answerTimeoutMs, TimeUnit.MILLISECONDS);
+            InteractionAnswer answer = future.get(answerTimeoutMs, TimeUnit.MILLISECONDS);
+            log.info("交互请求完成: id={} approved={} source={}",
+                    request.id(), answer.approved(), answer.source());
+            return answer;
         } catch (InterruptedException e) {
             // 协作式中断传导（M23 工单 03）：余项合成 deny——fail-closed 返回并移除自身；
             // 不重设线程标志：中断语义由 interruptRequested 布尔承载，残留标志会炸
             // 审计桥随后的 decided 事件落盘（ClosedByInterruptException）
+            log.info("交互请求被中断收回（interrupt）: id={}", request.id());
             abort(waiting);
             return InteractionAnswer.failClosed();
         } catch (TimeoutException e) {
+            log.info("交互请求兜底超时收回（{}ms）: id={}", answerTimeoutMs, request.id());
             abort(waiting);
             return InteractionAnswer.failClosed();
         } catch (java.util.concurrent.ExecutionException e) {
+            log.info("交互请求异常收回: id={} cause={}", request.id(), e.toString());
             abort(waiting);
             return InteractionAnswer.failClosed();
         }

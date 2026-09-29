@@ -8,6 +8,14 @@
 
 ---
 
+## BUG-20260929-01 · Web 提问卡（ask_user）挂起期间永不渲染——tool/call 成对提交设计下问题卡必然"迟到"
+
+- **日期**：2026-09-29（C2 工单 07 验收回路发现；隔离实例 + 内置浏览器 + WebAnswerer 诊断日志实证）
+- **症状**：Web 面让模型用 ask_user 弹提问卡：①卡片不出现（挂起期间页面无任何渲染，`/api/answer` 无从发起）；②约 10 分钟后卡片带「提问无人应答（fail-closed）」失败文案一次性出现；③模型侧报「提问无人应答（fail-closed），用户当前不可达」。隔离实例 4 次调用 100% 复现；用户环境同症状。
+- **根因**：`ToolCallingAgent.commitToolCall` 按 ADR-0018「成对有序提交」设计——`tool/call` 与 `tool/result` 在工具**执行完成后**相邻落盘。ask_user 阻塞至应答/超时，其 tool/call 事件（前端 `questionCard` 的唯一渲染源）在挂起期间不存在 → SSE 无事件可推 → 卡片无法在等待期渲染。对照：审批/计划卡能实时渲染，靠的是 `AuditingAnswerer` 在 ask **前**追加 `approval/requested` 审计事件（M24-02 的 id 回填通道也建在其上）——问题类请求（KIND_QUESTION）被该审计器直通，无等价的前置事件。
+- **修复（同日落地，与 C2 工单 07 合并验收）**：镜像审批卡机制——`SessionEvent` 新增 `question/requested` 类型与工厂；`AuditingAnswerer` 对 KIND_QUESTION 在 ask 前落该事件（携请求 id + {"question","options"} JSON）；前端 `questionCard` 从该事件渲染并挂卡片 id，作答 `{id, answers}` 精确回填（id 分支 decision 缺省 answer，不触 M16 互斥协议）；实时流的完成时 tool/call 以 replaying 标志门卫跳过（消重复卡，回放保留出卡）。隔离实例端到端实测：弹卡 3 秒实时渲染 → 页面点击 → 模型即时回复，无重复卡。
+- **防复发**：交互类工具的「挂起期可见性」纳入验收清单——凡阻塞等人的工具（ask_user / exit_plan_mode / 审批），必须有 ask 前置事件驱动渲染，验收实测弹卡而非只看测试绿灯；本条由 C2 验收回路实证（测试直调 completeById 抓不到渲染缺失）。
+
 ## BUG-20260928-01 · 全仓 verify 首轮 SkillRegistryTest 偶发 1 error——watch 时序敏感（观察中）
 
 - **日期**：2026-09-28（M28 工单 01 基线采集发现）

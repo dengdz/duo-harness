@@ -478,6 +478,9 @@ const render = (() => {
 
   /** 提问卡（ask_user 经 tool/call 呈现：问题 + 选项 + 自由输入）。 */
   function questionCard(event) {
+    // 挂起期去重（镜像计划卡先例）：question/requested 已渲染在途卡时，完成时的
+    // tool/call 不再重复出卡（tool/result 随后冻结在途卡）
+    if (t.container.querySelector('.interactive[data-tool-name="ask_user"]')) return;
     showMessages();
     let question = event.text || '';
     let options = [];
@@ -489,6 +492,7 @@ const render = (() => {
     const card = document.createElement('div');
     card.className = 'card interactive';
     card.dataset.toolName = 'ask_user';
+    card.dataset.cardId = event.toolCallId || ''; // 卡片 id：question/requested 携请求 id → 作答按 id 精确回填
     const title = document.createElement('div');
     title.className = 'question';
     title.textContent = '[提问] ' + question;
@@ -716,12 +720,20 @@ const render = (() => {
     else if (ev.type === 'assistant/chunk') chunk(ev.text);
     else if (ev.type === 'assistant/message') finishAssistant(ev.text);
     else if (ev.type === 'tool/call') {
-      if (ev.toolName === 'ask_user') questionCard(ev);
+      // ask_user 的 tool/call 按成对提交设计在完成后才落盘：实时流里问题卡已由
+      // question/requested 前置事件渲染（BUG-20260929-01），补渲染只会出重复卡；
+      // 仅回放（旧会话无前置事件）时由 tool/call 出卡
+      if (ev.toolName === 'ask_user') { if (!replaying) return; questionCard(ev); }
       else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev);
       else if (ev.toolName === 'todo_write') todoCard(ev);
       else toolCall(ev);
     } else if (ev.type === 'tool/result') toolResult(ev);
     else if (ev.type === 'todo/write') todoPanel.update(ev.text);
+    else if (ev.type === 'question/requested') {
+      // 提问前置事件（BUG-20260929-01）：ask 前落盘携请求 id——提问卡据此在挂起期间
+      // 实时渲染；完成时的 tool/call 因同卡在途被 questionCard 内去重跳过
+      questionCard(ev);
+    }
     else if (ev.type === 'approval/requested') {
       // 计划复核双留痕去重（BUG-20260917-04 后续）：同会话内 tool/call 已渲染计划卡时，
       // 审计事件不再重复渲染；跨会话场景（CLI 发起、Web 作答）本会话无 tool/call，照常渲染
@@ -901,24 +913,24 @@ const app = (() => {
       } else if (action === 'answer-value') {
         const value = btn.dataset.value || '';
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: [value] });
+        await api.answer({ id: card.dataset.cardId, answers: [value] });
       } else if (action === 'answer-free') {
         const input = $('.free-input input', card);
         const value = input ? input.value.trim() : '';
         if (!value) return;
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: [value] });
+        await api.answer({ id: card.dataset.cardId, answers: [value] });
       } else if (action === 'plan-approve') {
         // values[0] = 批准选项（options[0] 位置约定，InteractionRequest.isApproved 单点判定）
         render.resolveCard(card, '✓ 已批准，开始执行', true);
-        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: ['批准，开始执行'] });
+        await api.answer({ id: card.dataset.cardId, answers: ['批准，开始执行'] });
       } else if (action === 'plan-reject') {
         const input = $('.free-input input', card);
         const feedback = input ? input.value.trim() : '';
         const verdict = feedback || '继续计划（可直接输入你的修改意见）';
         render.resolveCard(card, feedback ? '✗ 已打回，反馈：' + feedback : '✗ 已打回', false);
         // 打回走 answer 形态（按卡片 id 精确回填，C2 工单 07）
-        await api.answer({ id: card.dataset.cardId, decision: 'answer', answers: [verdict] });
+        await api.answer({ id: card.dataset.cardId, answers: [verdict] });
       } else if (action === 'open-subagent') {
         // 子任务回放入口（M15 工单 05）：完成态子任务卡 → 右侧抽屉只读回放
         await openSubagentReplay(btn.dataset.agentId || '', btn.dataset.task || '');

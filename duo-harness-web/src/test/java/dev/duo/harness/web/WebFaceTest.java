@@ -1595,4 +1595,74 @@ class WebFaceTest {
         assertFalse(new ObjectMapper().readTree(missing.body()).get("found").asBoolean(),
                 "found=false 由前端统一呈现");
     }
+
+    @Test
+    void answerEndpointNoIdAnswersFormCompletesOldestPending() throws Exception {
+        // C2 工单 07 验收回退的端点级回归锁（验收实测踩缝）：提问/计划卡无 id 通道
+        // （计划卡从 tool/call 渲染携工具 callId、提问卡无 cardId，均非挂起请求的
+        // request id），前端 payload 为纯 {answers} 形态（与 decision 互斥，M16 协议）
+        // ——工单 07 曾误改为 {id, decision:'answer', answers} 致互斥校验 400 丢弃，
+        // 卡片前端显示已答、后端挂起超时。锁前端真实形态的端到端通路
+        Path dir = tempDir.resolve("q-sessions");
+        Session session = Session.create(dir);
+        WebAnswerer answerer = new WebAnswerer(5_000);
+        start(session, scriptedAgent(session, "ok"), null, answerer);
+
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> got = new AtomicReference<>();
+        Thread asker = Thread.ofVirtual().start(() ->
+                got.set(faceCtx.as(AnswersView.class).answers().ask(
+                        dev.duo.harness.tools.InteractionRequest.question(
+                                "选哪个", List.of("A", "B"), false))));
+        while (answerer.pendingCount() < 1) {
+            Thread.sleep(20);
+        }
+
+        HttpResponse<String> response = post("/api/answer",
+                "{\"answers\":[\"B\"]}");
+
+        assertEquals(200, response.statusCode(), "纯 answers 形态（前端真实形态）200");
+        assertTrue(response.body().contains("\"completed\":true"), response.body());
+        asker.join(2_000);
+        assertEquals(List.of("B"), got.get().values(), "最旧挂起被完成（作答送达）");
+        session.close();
+    }
+
+    @Test
+    void answerEndpointIdFormCompletesExactPending() throws Exception {
+        // BUG-20260929-01 修复的端点级回归锁：提问卡经 question/requested 前置事件渲染后
+        // 携请求 id（前端真实 payload {id, decision:'answer', answers}）——按 id 精确回填，
+        // 多卡排队乱序作答不串卡
+        Path dir = tempDir.resolve("q-sessions-id");
+        Session session = Session.create(dir);
+        WebAnswerer answerer = new WebAnswerer(5_000);
+        start(session, scriptedAgent(session, "ok"), null, answerer);
+
+        dev.duo.harness.tools.InteractionRequest first = new dev.duo.harness.tools.InteractionRequest(
+                "q-card-1", dev.duo.harness.tools.InteractionRequest.KIND_QUESTION,
+                "第一问", "", List.of("A"), false, null, null);
+        dev.duo.harness.tools.InteractionRequest second = new dev.duo.harness.tools.InteractionRequest(
+                "q-card-2", dev.duo.harness.tools.InteractionRequest.KIND_QUESTION,
+                "第二问", "", List.of("B"), false, null, null);
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> firstGot = new AtomicReference<>();
+        AtomicReference<dev.duo.harness.tools.InteractionAnswer> secondGot = new AtomicReference<>();
+        Thread t1 = Thread.ofVirtual().start(() -> firstGot.set(faceCtx.as(AnswersView.class).answers().ask(first)));
+        Thread t2 = Thread.ofVirtual().start(() -> secondGot.set(faceCtx.as(AnswersView.class).answers().ask(second)));
+        while (answerer.pendingCount() < 2) {
+            Thread.sleep(20);
+        }
+
+        HttpResponse<String> response = post("/api/answer",
+                "{\"id\":\"q-card-2\",\"answers\":[\"B\"]}");
+
+        assertEquals(200, response.statusCode(), "id + answers 形态 200（id 分支 decision 缺省 answer）");
+        assertTrue(response.body().contains("\"completed\":true"), response.body());
+        HttpResponse<String> rest = post("/api/answer",
+                "{\"id\":\"q-card-1\",\"answers\":[\"A\"]}");
+        assertTrue(rest.body().contains("\"completed\":true"), rest.body());
+        t1.join(2_000);
+        t2.join(2_000);
+        assertEquals(List.of("A"), firstGot.get().values(), "第一卡拿到自己的答案");
+        assertEquals(List.of("B"), secondGot.get().values(), "第二卡按 id 命中（乱序不串）");
+        session.close();
+    }
 }

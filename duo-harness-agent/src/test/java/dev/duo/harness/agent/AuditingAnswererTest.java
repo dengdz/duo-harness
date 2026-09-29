@@ -15,18 +15,20 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 审计回答者（装饰桥）用例：审批交互前后写 approval/requested 与
- * approval/decided 事件（决定署名回答者来源）；提问类透传不加事件；
- * 委托放弃作答权（null）时原样透传。
+ * approval/decided 事件（决定署名回答者来源）；提问类写 question/requested
+ * 前置事件（BUG-20260929-01：问题卡挂起期渲染的事件源）；委托放弃作答权
+ * （null）时原样透传。
  */
 class AuditingAnswererTest {
 
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：AuditingAnswererTest —— 审计桥：审批请求/决定事件落会话、"
-                + "提问透传、null 透传、计划复核同通道留痕与打回语义（5 用例） ===");
+                + "提问 question/requested 前置事件、null 透传、计划复核同通道留痕与打回语义（5 用例） ===");
     }
 
     @TempDir
@@ -52,16 +54,29 @@ class AuditingAnswererTest {
     }
 
     @Test
-    void questionRequestsPassThroughWithoutAuditEvents() throws IOException {
+    void questionRequestsWritePreAskEventWithIdAndPayload() throws IOException {
+        // BUG-20260929-01 回归锁：提问 ask 前落 question/requested（携请求 id + 问题/选项
+        // JSON）——前端提问卡据此在挂起期间实时渲染；旧实现透传不加事件，tool/call 要到
+        // 完成后才落盘，问题卡永远迟到（页面弹不出卡 → 挂起 10 分钟超时失败）
         Session session = Session.create(tempDir.resolve("sessions"));
         AuditingAnswerer auditing = new AuditingAnswerer(() -> session,
                 request -> InteractionAnswer.answered(List.of("方案 A"), "console"));
 
-        InteractionAnswer answer = auditing.answer(
-                InteractionRequest.question("用哪个？", List.of("方案 A"), false));
+        InteractionRequest request = InteractionRequest.question(
+                "用哪个？", List.of("方案 A", "方案 B"), false);
+        InteractionAnswer answer = auditing.answer(request);
 
         assertEquals(List.of("方案 A"), answer.values(), "提问透传给委托者并原样返回");
-        assertEquals(0, session.events().size(), "提问由 tool 事件覆盖，审计桥不加事件");
+        assertEquals(1, session.events().size(), "仅 question/requested 前置事件（决定由 tool/result 覆盖）");
+        SessionEvent event = session.events().get(0);
+        assertEquals(SessionEvent.QUESTION_REQUESTED, event.type());
+        assertEquals("ask_user", event.toolName(), "身份键供前端渲染提问卡");
+        assertEquals(request.id(), event.toolCallId(), "请求 id 借 toolCallId 通道作卡片 id（按 id 精确回填）");
+        assertTrue(event.text().contains("\"question\":\"用哪个？\""), "问题文本在载荷: " + event.text());
+        assertTrue(event.text().contains("方案 A") && event.text().contains("方案 B"),
+                "选项在载荷: " + event.text());
+        // 审计事件不进对话投影
+        assertEquals(0, session.deriveMessages().size());
     }
 
     @Test
