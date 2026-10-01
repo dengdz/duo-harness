@@ -1,6 +1,6 @@
 # 产品文档口吻规范（product doc voice）
 
-站内公开文档（`docs/01-入门` 至 `docs/05-参考` 与 index）的统一写作标准。受众：写与审文档的 agent 与维护者。立项依据：[ADR-0033](../../docs/adr/0033-M31文档官方化立项决策.md)（M31 文档官方化）。与 [duo-prose-standard](../../../.agents/skills/duo-prose-standard/SKILL.md)（通用行文质量）、[duo-doc-standards](../../../.agents/skills/duo-doc-standards/SKILL.md)（位置与层次）配合使用：它们管行文与位置，本规范管「产品文档与开发笔记的分界」。
+站内公开文档（`docs/01-入门` 至 `docs/05-参考` 与 index）的统一写作标准。受众：写与审文档的 agent 与维护者。立项依据：[ADR-0033](../../docs/adr/0033-M31文档官方化立项决策.md)（M31 文档官方化）。与 [duo-prose-standard](../../.agents/skills/duo-prose-standard/SKILL.md)（通用行文质量）、[duo-doc-standards](../../.agents/skills/duo-doc-standards/SKILL.md)（位置与层次）配合使用：它们管行文与位置，本规范管「产品文档与开发笔记的分界」。
 
 ## 三主干
 

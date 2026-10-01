@@ -4,7 +4,7 @@ layout: home
 hero:
   name: duo-harness
   text: Java 插件化 AI agent harness
-  tagline: 内核为自研轻量插件容器,所有能力以插件组装——工具 / MCP / 技能 / 人机协同,终端与浏览器双呈现位 + headless 同源运行
+  tagline: 内核为自研轻量插件容器，所有能力以插件组装——工具 / MCP / 技能 / 人机协同，终端与浏览器双呈现位 + headless 同源运行
   actions:
     - theme: brand
       text: 快速开始 →
@@ -16,16 +16,16 @@ hero:
 features:
   - icon: 🔧
     title: 工具域
-    details: 本机 fs 与 web 工具族,三段执行管线挂审批 / guard / 输出契约——能动的东西都过闸门
+    details: 本机 fs 与 web 工具族，三段执行管线挂审批 / guard / 输出契约——能动的东西都过闸门
   - icon: 🔌
     title: MCP
-    details: 官方 Java SDK 接 stdio 服务器,断连重连、远端工具自动同步,本地远端同权
+    details: 官方 Java SDK 接 stdio 服务器，断连重连、远端工具自动同步，本地远端同权
   - icon: 🤖
     title: agent 循环
-    details: Function Calling 闭环 + 并发调度 + 子代理模板制派发,迭代上限防失控
+    details: Function Calling 闭环 + 并发调度 + 子代理模板制派发，迭代上限防失控
   - icon: 💬
     title: 人机协同
-    details: 审批 / 提问 / 计划确认卡片,谁发起谁作答;无人应答一律 fail-closed
+    details: 审批 / 提问 / 计划确认卡片，谁发起谁作答;无人应答一律 fail-closed
   - icon: 🧠
     title: 上下文治理
     details: 真实 usage 计量、microcompact 本地裁剪、自动压缩——长会话记得住
@@ -37,7 +37,7 @@ features:
     details: yml 一行挂载、四扩展点写插件、零内核改动——不想用的能力不装配
   - icon: 🖥️
     title: 双呈现位 + headless
-    details: 终端 REPL 与浏览器共享会话与审批路由;--json 事件流接 CI
+    details: 终端 REPL 与浏览器共享会话与审批路由；--json 事件流接 CI
 ---
 
 ## 按你想要做的事找
