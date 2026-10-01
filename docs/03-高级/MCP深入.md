@@ -268,7 +268,7 @@ Disposable ask = ctx.on(ToolsService.PRE_EXECUTE,
 
 ### mcpfs 治理范例：全程可复跑
 
-仓库自带的迷你 filesystem 服务器与两个治理插件构成一条完整可复跑的链路（真实 stdio 协议 + 真实文件，见[运行Demo](../01-入门/运行Demo.md) M2 段）：
+仓库自带的迷你 filesystem 服务器与两个治理插件构成一条完整可复跑的链路（真实 stdio 协议 + 真实文件，装配与步骤见[组装你的第一个 agent](../02-指南/组装你的第一个agent.md) 的 MCP 步骤）：
 
 ```bash
 mvn -pl duo-harness-example -am package exec:java

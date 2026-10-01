@@ -14,7 +14,7 @@ export default defineConfig({
   themeConfig: {
     siteTitle: 'duo-harness',
     nav: [
-      { text: '入门', link: '/01-入门/运行Demo' },
+      { text: '入门', link: '/01-入门/快速开始' },
       { text: '指南', link: '/02-指南/组装你的第一个agent' },
       { text: '高级', link: '/03-高级/技能编写指南' },
       { text: '架构', link: '/04-架构/设计主线' },
@@ -25,7 +25,7 @@ export default defineConfig({
     sidebar: [
       {
         text: '入门',
-        items: [{ text: '运行 Demo', link: '/01-入门/运行Demo' }]
+        items: [{ text: '快速开始', link: '/01-入门/快速开始' }]
       },
       {
         text: '指南',
