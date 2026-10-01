@@ -357,7 +357,9 @@ final class WebSessionEndpoints {
     }
 
     /** 侧栏 JSON：会话列表（修改时间倒序，current 标记请求标签的当前会话，occupied 占用探测、
-     * title 标题——工单 M13-05/06；current 按标签解析，M24 工单 07）。 */
+     * title 标题——工单 M13-05/06；current 按标签解析，M24 工单 07）。deferred 当前会话
+     * （M30 工单 05：首事件前无文件）**不进列表**（验收裁定：列表只含真实会话，ZCode draft
+     * 同语义）——当前会话身份经顶层 currentId/currentTitle 供前端标签态（标题页/文档标题）。 */
     private String sessionsJson(HttpExchange exchange) throws IOException {
         TabContext tab = face.tabs.resolveTab(exchange);
         if (tab == null) {
@@ -375,6 +377,9 @@ final class WebSessionEndpoints {
                     .put("title", Session.titleOf(jsonl));
             node.put("current", summary.id().equals(currentId));
         }
+        String currentTitle = tab.session.title();
+        root.put("currentId", currentId);
+        root.put("currentTitle", currentTitle != null ? currentTitle : "新会话");
         return root.toString();
     }
 }

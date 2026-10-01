@@ -169,12 +169,13 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ctx.hasService(dev.duo.harness.agent.prompt.AgentsMdChain.SERVICE_NAME)
                         ? ctx.as(WebAgentsMdView.class).agentsMd() : null;
 
-        // Web 面自建全新会话（BUG-20260923-01）：不再续接目录最新——web 行先于 cli 行
-        // 装配（回答者路由契约：审批/提问 Web 卡片优先），latest 会抢走 CLI 的续接目标，
-        // CLI 随后撞同进程持锁注册表被顶开新建，resume 续接语义（模型意图横幅）就此
-        // 永远失效。自建的空会话由 Session.latest 的空会话跳过规则隔离，不污染 CLI 的
-        // 下次续接；恢复上次 Web 对话走 /switch。
-        Session session = Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
+        // Web 面自建 deferred 会话（BUG-20260923-01 隔离 + M30 工单 05 空会话根治）：
+        // 不再续接目录最新——web 行先于 cli 行装配（回答者路由契约：审批/提问 Web 卡片
+        // 优先），latest 会抢走 CLI 的续接目标，CLI 随后撞同进程持锁注册表被顶开新建，
+        // resume 续接语义（模型意图横幅）就此永远失效。deferred 仅内存态：不落文件、
+        // 不进文件列表（侧栏当前项由 sessionsJson 合成条目呈现），恢复上次 Web 对话走
+        // /switch。
+        Session session = Session.createDeferred(DuoHome.resolve().resolveDir("agent-sessions"),
                 Cwd.path());
         dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
         // 上下文治理（M9）：初始与 /new、/switch 重建共用同一治理配置；governance 段
@@ -263,7 +264,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // /new：全新会话；/switch：换绑既有会话；新标签首请求：懒创建——三者换绑后都经
         // 会话变更回调重建 agent（ToolCallingAgent 持有 final 会话引用，不重建即分脑）。
         // 回调**返回**新 agent 归标签上下文（M24 工单 07）——不再有全局单槽 setAgent
-        face.onNewSession(() -> Session.create(DuoHome.resolve().resolveDir("agent-sessions"),
+        face.onNewSession(() -> Session.createDeferred(DuoHome.resolve().resolveDir("agent-sessions"),
                 Cwd.path()));
         // 会话变更回调是单回调槽（覆盖式 setter，非多播）——全部换绑动作必须合并在这一次
         // 注册里。教训（BUG-20260916-01）：第二处注册会覆盖"换绑重建 agent"，切回分脑

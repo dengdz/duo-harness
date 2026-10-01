@@ -159,15 +159,11 @@ class WebFaceTabTest {
         return response.body();
     }
 
-    /** 会话列表 JSON 里 current=true 的会话 id（各标签各看各的"当前"）。 */
+    /** 会话列表 JSON 的当前会话 id（各标签各看各的"当前"）：顶层 currentId（M30-05 验收
+     * 裁定——deferred 当前会话不进列表，列表条目 current 标注仅标真实会话）。 */
     private static String currentIdOf(String sessionsJson) throws Exception {
         JsonNode root = new ObjectMapper().readTree(sessionsJson);
-        for (JsonNode node : root.path("sessions")) {
-            if (node.path("current").asBoolean(false)) {
-                return node.path("id").asText();
-            }
-        }
-        return null;
+        return root.path("currentId").asText(null);
     }
 
     private SseCollector openSse(String tabId) throws Exception {
@@ -224,6 +220,7 @@ class WebFaceTabTest {
         // 新标签默认新建会话（互踩隔离优先）：首个携 tabId 的请求懒建标签上下文，
         // 初始会话只归匿名上下文（无 tabId 请求）——两条线互不可见对方的"当前"
         Session initial = Session.create(sessionsDir());
+        initial.append(SessionEvent.userMessage("初始会话首条")); // 头-only 文件被列表防御过滤（M30-05）
         start(initial, scriptedAgent(initial, "ok"), null);
 
         String tabAView = getSessions("tabA");
@@ -278,6 +275,7 @@ class WebFaceTabTest {
     void switchBindsOnlyInitiatingTab() throws Exception {
         // resume 走面板入口绑定发起标签：A 切换后 A 的"当前"变，B 与匿名上下文不动
         Session initial = Session.create(sessionsDir());
+        initial.append(SessionEvent.userMessage("初始会话首条")); // 头-only 文件被列表防御过滤（M30-05）
         Session other = Session.create(sessionsDir());
         other.append(SessionEvent.userMessage("历史会话"));
         other.close(); // 释放测试进程持有的独占锁（留文件供切换加载）

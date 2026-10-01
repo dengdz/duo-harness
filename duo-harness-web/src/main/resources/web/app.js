@@ -2119,10 +2119,13 @@ const app = (() => {
     }
     const list = $('#sessionList');
     list.innerHTML = '';
+    // 当前会话身份走响应顶层（M30-05 验收裁定：deferred 当前会话不进列表——列表只含真实会话，
+    // ZCode draft 同语义）；currentTitle 缺省「新会话」，标签页标题同源
+    if (data.currentId) currentSessionId = data.currentId;
+    document.title = data.currentTitle || currentSessionId;
     for (const s of data.sessions) {
       const item = document.createElement('div');
       item.className = 'sidebar-item' + (s.current ? ' active' : '') + (s.occupied ? ' occupied' : '');
-      if (s.current) currentSessionId = s.id;
       // 状态点（M29 W2 修正）：仅当前会话运行中 → 转圈点；「使用中」不加点（meta 文字已表达，满屏灰点是噪音）
       const running = s.current && (sendMode === 'thinking' || sendMode === 'stop');
       if (running) {
@@ -2155,7 +2158,6 @@ const app = (() => {
         await switchToSession(s.id);
       });
       list.appendChild(item);
-      if (s.current) document.title = s.title || s.id; // 标签页标题跟随当前会话（工单 06）
     }
     $('#chatHint').textContent = '会话 ' + currentSessionId + ' · /new 开新话题';
     // 切换/重放后把当前高亮项滚入视野（block:nearest——已可见时不动，验收反馈①）

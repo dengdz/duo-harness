@@ -257,6 +257,14 @@ public final class FtsSessionIndex implements SessionQueryService, AutoCloseable
                     continue;
                 }
                 try {
+                    if (!Session.hasAnyEventLine(path)) {
+                        // 零事件文件（0 字节 / 头-only，M30 工单 05）：不入索引；
+                        // 历史遗留若已被旧版索引则摘除（空标题会话不再可搜出）
+                        if (indexed.containsKey(id)) {
+                            removeSessionQuiet(id);
+                        }
+                        continue;
+                    }
                     long mtime = Files.getLastModifiedTime(path).toMillis();
                     long size = Files.size(path);
                     long[] stamp = indexed.get(id);

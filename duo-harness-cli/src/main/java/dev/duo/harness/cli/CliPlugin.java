@@ -216,18 +216,19 @@ public final class CliPlugin implements Plugin<JsonNode> {
                                 .resolve("cache/attachments/files-index.json"));
         Path sessionsDir = sessionsDir();
 
-        // 会话续接/新建（独占锁，M10-03）：被占则提示后改开新会话——绝不静默共享日志
+        // 会话续接/新建（独占锁，M10-03）：被占则提示后改开新会话——绝不静默共享日志。
+        // 新建走 deferred（M30 工单 05）：CLI 无输入即退出不留空文件
         Session session;
         try {
             session = Session.latest(sessionsDir);
             if (session == null) {
-                session = Session.create(sessionsDir, Cwd.path());
+                session = Session.createDeferred(sessionsDir, Cwd.path());
             }
             dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
         } catch (dev.duo.harness.session.SessionLockedException e) {
             out.println("[提示] " + e.getMessage());
             out.println("[提示] 改为新建会话继续；被占会话仍由占用方使用。");
-            session = Session.create(sessionsDir, Cwd.path());
+            session = Session.createDeferred(sessionsDir, Cwd.path());
             dev.duo.harness.agent.deliverable.ChangeSummary.markStart(session);
             // 继承被占会话的权限档（BUG-20260919-03 裁定，ADR-0020 决策 10 的双开延续）：
             // 占用改开不是用户开新话题，治理态不因呈现位轮转而丢——继承并落事件（重启链延续）
@@ -589,7 +590,7 @@ public final class CliPlugin implements Plugin<JsonNode> {
         commands.register(ctx, new CommandDefinition("new", "换绑新会话（旧会话锁释放，标题生成与子任务过程行重挂）",
                 CommandScope.CLI, false, context -> {
                 Session previous = state.holder().session;
-                state.holder().session = Session.create(state.sessionsDir(), Cwd.path());
+                state.holder().session = Session.createDeferred(state.sessionsDir(), Cwd.path());
                 dev.duo.harness.agent.deliverable.ChangeSummary.markStart(state.holder().session);
                 dev.duo.harness.tools.fs.ReadOnlyBashDetector replanGate = planBashDetector(state.workspacePolicy());
                 state.agentHolder().agent = buildAgent(chain, state.holder().session, replanGate);

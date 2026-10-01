@@ -46,10 +46,11 @@ import java.util.concurrent.ThreadLocalRandom;
  * 它通常在 HTTP / 调度线程上执行（换绑、停止服务），与 append 线程并发——原子标志保证
  * 幂等，append 在关闭后立即失败。</p>
  *
- * <p><b>独占语义</b>：打开会话即取得 JSONL 文件的进程级独占锁，持有至
+ * <p><b>独占语义</b>：持久化会话打开即取得 JSONL 文件的进程级独占锁，持有至
  * {@link #close()}——同一会话被第二个进程（或本进程第二实例）打开时抛
  * {@link SessionLockedException}，把"两个进程各写各的内存视图、日志交错追加"
- * 的静默分脑变为打开即失败。换绑到其他会话、进程退出前应 close 释放。</p>
+ * 的静默分脑变为打开即失败。换绑到其他会话、进程退出前应 close 释放。
+ * deferred 会话（{@link #createDeferred}）物化前无文件无锁，取锁推迟到首次 append。</p>
  */
 public final class Session {
 
@@ -68,31 +69,43 @@ public final class Session {
     private volatile List<SessionEvent> snapshot = List.of();
     /** 事件监听器（CoW：回调中注销不破坏遍历）。 */
     private final List<BiConsumer<Integer, SessionEvent>> listeners = new CopyOnWriteArrayList<>();
-    /** 独占锁的文件通道（持有至 {@link #close()}）。 */
-    private final FileChannel lockChannel;
-    /** 会话文件的独占锁（进程级单写者检测）。 */
-    private final FileLock fileLock;
+    /**
+     * 独占锁的文件通道（持有至 {@link #close()}）。deferred 实例物化前为 null——
+     * 物化（M30 工单 05）是唯一合法赋值点（persist 锁内），volatile 保 close 线程
+     * （HTTP/调度线程，与 append 并发）的可见性。
+     */
+    private volatile FileChannel lockChannel;
+    /** 会话文件的独占锁（进程级单写者检测）。deferred 物化前为 null，volatile 同上。 */
+    private volatile FileLock fileLock;
     /** 已关闭标志（close 幂等）。 */
     private final AtomicBoolean closed =
             new AtomicBoolean(false);
     /** 本实例的锁注册键（绝对规范化路径；close 时注销）。 */
     private final Path lockKey;
     /**
-     * 会话文件格式版本（M26 工单 01）：新会话 = {@link SessionFormat#CURRENT_VERSION}；
-     * 无头旧文件 = 0。volatile——HELD_LOCKS 在 lock() 内先于字段赋值发布实例（POSIX
+     * 会话文件格式版本（M26 工单 01）：新会话 = {@link SessionFormat#CURRENT_VERSION}（deferred
+     * 会话在物化写头成功后置为当前版本）；无头旧文件 = 0。volatile——HELD_LOCKS 在 lock() 内先于字段赋值发布实例（POSIX
      * 闸门次序不可倒），检索 live 通道跨线程经 heldSession 读取需可见性保证。
      */
     private volatile int formatVersion;
     /** 会话工作目录（版本头元信息，检索授权过滤依据 ADR-0028 决策三；未记录为 null）。volatile 同上。 */
     private volatile Path cwd;
+    /**
+     * 持久化状态标记（M30 工单 05，ZCode deferred/draft 对齐）：false = deferred
+     * （仅内存态，零文件系统触碰，lockChannel/fileLock 均为 null）；首次 {@link #append}
+     * 物化（创建文件 + 取锁 + 版本头与首事件同批落盘）后置 true。物化发生在 persist
+     * 的锁内（单写者约定），置位与首次写入原子。volatile 同 formatVersion。
+     */
+    private volatile boolean persisted;
 
     private Session(String id, Path jsonl, FileChannel lockChannel,
-                    FileLock fileLock, Path lockKey) {
+                    FileLock fileLock, Path lockKey, boolean persisted) {
         this.id = id;
         this.jsonl = jsonl;
         this.lockChannel = lockChannel;
         this.fileLock = fileLock;
         this.lockKey = lockKey;
+        this.persisted = persisted;
     }
 
     /**
@@ -134,6 +147,34 @@ public final class Session {
         session.formatVersion = SessionFormat.CURRENT_VERSION;
         session.cwd = cwd;
         return session;
+    }
+
+    /**
+     * 新建 deferred 会话（M30 工单 05，ZCode deferred/draft 对齐）：只生成 id 与
+     * 预计算文件路径的**纯内存对象**——不创建目录、不创建文件、不取锁。首条真实
+     * 事件 {@link #append} 时才物化（文件 + 独占锁 + 版本头与首事件**同批**落盘，
+     * 消除「创建即落盘」的空会话堆积与头-only 窗口）；close 前无事件 = 无文件 =
+     * 重启即消失。
+     *
+     * <p>deferred 期 {@link #events()} 为空、{@link #jsonl()} 返回预计算路径（文件
+     * 不存在，占用探测按未占用返回，语义自然）、SSE 订阅与输入接收一切如常。</p>
+     *
+     * @param sessionsDir 会话目录（物化时才创建）
+     * @param cwd         会话工作目录（随版本头落盘；null 时头行省略该字段）
+     */
+    public static Session createDeferred(Path sessionsDir, Path cwd) {
+        String id = newId();
+        Path file = sessionsDir.resolve(id + ".jsonl");
+        Path key = file.toAbsolutePath().normalize();
+        // deferred 不进 HELD_LOCKS：无文件无锁，双实例碰撞在物化取锁时由独占锁拒绝
+        Session session = new Session(id, file, null, null, key, false);
+        session.cwd = cwd; // deferred 期保留，随物化的版本头落盘
+        return session;
+    }
+
+    /** 同 {@link #createDeferred(Path, Path)}（不记录工作目录——无 cwd 场景）。 */
+    public static Session createDeferred(Path sessionsDir) {
+        return createDeferred(sessionsDir, null);
     }
 
     /**
@@ -241,7 +282,7 @@ public final class Session {
                     closeQuietly(channel); // 他进程持锁：关自己的探测 fd 无碍（锁在别人名下）
                     throw new SessionLockedException(id, jsonl);
                 }
-                Session session = new Session(id, jsonl, channel, fileLock, key);
+                Session session = new Session(id, jsonl, channel, fileLock, key, true);
                 HELD_LOCKS.put(key, session);
                 return session;
             } catch (OverlappingFileLockException e) {
@@ -321,11 +362,13 @@ public final class Session {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        HELD_LOCKS.remove(lockKey);
-        try {
-            fileLock.release();
-        } catch (IOException ignored) {
-            // 通道关闭会连带释放，忽略
+        HELD_LOCKS.remove(lockKey); // deferred 实例从未 put，remove 幂等无害
+        if (fileLock != null) {
+            try {
+                fileLock.release();
+            } catch (IOException ignored) {
+                // 通道关闭会连带释放，忽略
+            }
         }
         closeQuietly(lockChannel);
         listeners.clear();
@@ -354,11 +397,16 @@ public final class Session {
             try (var list = Files.list(sessionsDir)) {
                 for (Path path : list.filter(p -> p.getFileName().toString().endsWith(".jsonl")).toList()) {
                     try {
+                        if (!hasAnyEventLine(path)) {
+                            // 防御过滤（M30 工单 05）：0 字节与头-only 文件不是会话——
+                            // deferred 常态下不再产生，历史遗留在此兜底（侧栏/CLI 同源干净）
+                            continue;
+                        }
                         entries.add(new Entry(
                                 path.getFileName().toString().replace(".jsonl", ""),
                                 path, Files.getLastModifiedTime(path).toMillis()));
                     } catch (IOException ignored) {
-                        // 单个文件元数据读取失败跳过
+                        // 单个文件元数据/事件行判定读取失败跳过（hasAnyEventLine 同守卫）
                     }
                 }
             } catch (IOException e) {
@@ -369,6 +417,37 @@ public final class Session {
                 .sorted((a, b) -> Long.compare(b.ms(), a.ms()))
                 .map(e -> new SessionSummary(e.id(), e.jsonl(), e.ms()))
                 .toList();
+    }
+
+    /**
+     * 该会话文件是否含至少一条真实事件（M30 工单 05）：0 字节 false；首行是版本头
+     * 且无后续行（头-only，历史遗留的 79B 空会话）false；其余 true。list/latest 与
+     * 会话检索索引（FtsSessionIndex）共用的防御判定——小读两次 IO 内完成，坏行按
+     * 有内容处理（过滤是锦上添花，不因脏行把真实会话藏掉）。
+     *
+     * <p>本进程持锁的活跃会话**经注册表内存直取判定，绝不开 fd**——同文件任意 fd
+     * 的开关会释放本进程全部锁（POSIX 陷阱，titleOf C2-02 同款教训）：持锁实例按
+     * 内存事件判定（物化即写了头+首事件，create 形态的头-only 空会话按无事件过滤）。</p>
+     */
+    public static boolean hasAnyEventLine(Path jsonl) throws IOException {
+        Session held = heldSession(jsonl);
+        if (held != null) {
+            return !held.events().isEmpty(); // 内存直取：不碰属主锁
+        }
+        if (Files.size(jsonl) == 0) {
+            return false;
+        }
+        try (var reader = Files.newBufferedReader(jsonl, StandardCharsets.UTF_8)) {
+            String first = reader.readLine();
+            if (first == null) {
+                return false;
+            }
+            String second = reader.readLine();
+            if (SessionFormat.isHeaderLine(first)) {
+                return second != null; // 头 + 至少一行事件 = 真会话；头-only 过滤
+            }
+            return true; // 无头旧文件（v0 语义）首行即事件
+        }
     }
 
     /**
@@ -388,8 +467,8 @@ public final class Session {
             }
             for (Path path : files) {
                 try {
-                    if (Files.size(path) == 0) {
-                        continue; // 空会话（新建未对话）不是可续接的对话
+                    if (!hasAnyEventLine(path)) {
+                        continue; // 0 字节与头-only（新建未对话）不是可续接的对话（BUG-20260923-01 语义加强）
                     }
                     FileTime time = Files.getLastModifiedTime(path);
                     if (latest == null || time.compareTo(latestTime) > 0) {
@@ -397,7 +476,7 @@ public final class Session {
                         latestTime = time;
                     }
                 } catch (IOException e) {
-                    throw new PluginException("会话文件时间读取失败: " + path, e);
+                    throw new PluginException("会话文件过滤判定/时间读取失败: " + path, e);
                 }
             }
         }
@@ -484,22 +563,105 @@ public final class Session {
      * 落盘 + 内存追加：**经持锁通道写**——不另开 fd。POSIX 语义下进程关闭同一文件
      * 的任意 fd 会释放其全部锁，若每次 append 走自己的 BufferedWriter，第一条事件
      * 写完独占锁就被自己放掉（跨进程防护蒸发）。序号在同步块内与追加一起确定。
+     *
+     * <p>deferred 首次追加（M30 工单 05）在此物化：创建目录与文件、取独占锁，
+     * 版本头与首事件**拼接为同一字节序列一次写循环一次 force**——文件从不存在
+     * 直接到「头+首事件」完整形态，无头-only 中间态（与 create 的「先建文件后写头」
+     * 两段式相对——那是 0 字节与 79B 空会话堆积的根源）。</p>
      */
     private int persist(SessionEvent event) {
         synchronized (events) {
             try {
                 byte[] bytes = (toJsonLine(event) + "\n").getBytes(StandardCharsets.UTF_8);
+                if (!persisted) {
+                    ensureLocked();
+                    byte[] header = (SessionFormat.headerLine(SessionFormat.CURRENT_VERSION, cwd) + "\n")
+                            .getBytes(StandardCharsets.UTF_8);
+                    byte[] combined = new byte[header.length + bytes.length];
+                    System.arraycopy(header, 0, combined, 0, header.length);
+                    System.arraycopy(bytes, 0, combined, header.length, bytes.length);
+                    bytes = combined; // 版本头与首事件同批：一次写循环一次 force，无头-only 窗口
+                    // 重试场景（首次写失败字节残留）：物化重写前截断归零，防「残留+重复头」
+                    // 损坏文件（load 对中部版本头 fail-loud）
+                    if (lockChannel.size() > 0) {
+                        lockChannel.truncate(0);
+                    }
+                }
                 lockChannel.position(lockChannel.size()); // 单写者（锁）保证末尾即追加点
                 ByteBuffer buf = ByteBuffer.wrap(bytes);
                 while (buf.hasRemaining()) {
                     lockChannel.write(buf);
                 }
                 lockChannel.force(false); // 事件溯源的持久化承诺：落盘后才返回
+                if (!persisted) {
+                    // 物化完成标记在写成功后置位——写失败时实例保持 deferred 语义，
+                    // 重试 append 经 ensureLocked 幂等跳过取锁、重新同批写头+事件
+                    persisted = true;
+                    formatVersion = SessionFormat.CURRENT_VERSION;
+                }
                 events.add(event);
                 snapshot = List.copyOf(events); // CoW 重建在锁内：读侧只见完整旧/新快照，绝无半态
                 return events.size() - 1;
             } catch (IOException e) {
                 throw new PluginException("会话事件落盘失败: " + event.type(), e);
+            }
+        }
+    }
+
+    /**
+     * deferred 物化的取锁段（persist 锁内调用，单写者约定下与并发 append 串行）：
+     * 创建会话目录与文件（FileChannel CREATE 原子创建）、取得独占锁并进持锁注册表。
+     * 幂等——首次取锁成功但写失败的重试场景（persisted 仍 false）下 fileLock 已在，
+     * 直接跳过（同通道重锁会撞 OverlappingFileLockException 被误判为他人占用）。
+     *
+     * @throws SessionLockedException 同进程第二实例或他进程已持同 id 文件锁
+     *                                （id 含时间戳与随机后缀，碰撞概率极小；fail-loud）
+     */
+    private void ensureLocked() throws IOException {
+        if (fileLock != null) {
+            return; // 物化半途重试：锁已在本实例名下
+        }
+        Path file = jsonl.toAbsolutePath().normalize();
+        Files.createDirectories(jsonl.getParent());
+        synchronized (LOCK_GATE) {
+            // 注册表预检（与 lock() 同款不变量）：同进程碰撞在 open fd 之前拒绝——
+            // 先 open 再 tryLock 失败路径关闭探测 fd 会触发 POSIX 释放陷阱（M13-05）
+            if (HELD_LOCKS.containsKey(file)) {
+                throw new SessionLockedException(id, jsonl);
+            }
+            FileChannel channel = null;
+            try {
+                channel = FileChannel.open(jsonl,
+                        StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE);
+                FileLock fileLock = channel.tryLock();
+                if (fileLock == null) {
+                    closeQuietly(channel);
+                    throw new SessionLockedException(id, jsonl);
+                }
+                lockChannel = channel;
+                this.fileLock = fileLock;
+                HELD_LOCKS.put(file, this);
+                if (closed.get()) {
+                    // close 与首次物化竞态（close 在 append 的 closed 预检后、本段 put 前
+                    // 走完：其 remove 是 no-op、锁判 null 跳过）——立即回滚本次取锁，防
+                    // 已闭实例永久持锁泄漏（close 幂等不会二次执行来救）
+                    HELD_LOCKS.remove(file);
+                    try {
+                        fileLock.release();
+                    } catch (IOException ignored) {
+                        // channel.close 连带释放
+                    }
+                    closeQuietly(channel);
+                    lockChannel = null;
+                    this.fileLock = null;
+                    throw new IllegalStateException("会话已关闭，物化中止: " + id);
+                }
+            } catch (OverlappingFileLockException e) {
+                closeQuietly(channel);
+                throw new SessionLockedException(id, jsonl, e);
+            } catch (IOException e) {
+                closeQuietly(channel);
+                throw new PluginException("deferred 会话物化失败: " + jsonl, e);
             }
         }
     }

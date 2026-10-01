@@ -912,6 +912,7 @@ class WebFaceTest {
         Session first = Session.create(listed);
         first.append(SessionEvent.userMessage("历史"));
         Session current = Session.create(listed);
+        current.append(SessionEvent.userMessage("当前会话首条")); // 头-only 文件被列表防御过滤（M30-05）
         start(current, scriptedAgent(current, "ok"));
         face.onNewSession(() -> Session.create(listed));
 
@@ -938,6 +939,7 @@ class WebFaceTest {
         first.append(SessionEvent.title("历史会话标题"));
         first.close(); // 空闲态夹具：探测应报 occupied=false（工单 M13-05 两态断言）
         Session current = Session.create(listed);
+        current.append(SessionEvent.userMessage("当前会话首条")); // 头-only 文件被列表防御过滤（M30-05）
         start(current, scriptedAgent(current, "ok"));
 
         JsonNode json = new ObjectMapper().readTree(get("/api/sessions"));
