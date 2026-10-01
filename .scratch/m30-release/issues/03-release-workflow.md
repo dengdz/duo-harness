@@ -13,7 +13,7 @@
 02（有产物才可挂 Release）。
 
 ## Status
-in-progress（2026-10-01 实现 + 四轴审查 + 修复 + 本地干跑全过，用户走查确认随提交指令；CI 无法本地全验，checklist 第 7 项「真打 tag v0.26.0 端到端」按工单口径留收口期执行后收口）
+done（2026-10-01 用户走查确认随提交指令 + 收口期真打 tag `v0.26.0` 端到端通过——Release 页三件齐，release.yml 首秀完成；首轮 verify 失败为 CI flaky，诊断三连随行后第二轮 success）
 
 ## Checklist
 - [x] release.yml：on push tag `v[0-9]*` + 独立文件 + contents: write 仅此文件
@@ -22,7 +22,7 @@ in-progress（2026-10-01 实现 + 四轴审查 + 修复 + 本地干跑全过，�
 - [x] SHA256 生成与产物命名 `duo-harness-<version>.jar.sha256`（cd 进 target 纯文件名生成，下载方同目录可校验）
 - [x] Release 创建挂 jar + 校验和；notes 脚本摘 CHANGELOG 对应版本段（未发布段 exit 3 + 段缺失 -s 兜底双 fail-closed）
 - [x] 错位 tag 干跑校验步骤 fail-fast 证据（见 Comments 干跑记录）
-- [ ] （收口期）真打 tag `v0.26.0` 端到端：Release 页三件齐——jar / sha / notes 与 CHANGELOG 一致
+- [x] （收口期）真打 tag `v0.26.0` 端到端：Release 页三件齐——jar / sha / notes 与 CHANGELOG 一致（2026-10-01 实测：首轮 verify 失败为 CI flaky（同 commit ci 绿 + 本地绿），补失败诊断三连后第二轮 success；Release 页 jar 22.4MB + .sha256 + notes 逐字对账 True）
 
 ## Comments
 

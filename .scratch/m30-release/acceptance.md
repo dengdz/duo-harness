@@ -25,8 +25,8 @@ mvn -pl duo-harness-example -am package -DskipTests exec:java -Dexec.mainClass=d
 | # | 预期 | 实测 |
 |---|---|---|
 | B1 | release.yml 在库：tag `v[0-9]*` 触发、版本校验、verify、SHA256、挂 Release、notes 摘 CHANGELOG | 【实测】3788fae9 在库，八步配置 + 本地干跑八项证据（03 票 Comments）✅ |
-| B2 | 打 tag `v0.26.0` 推送后：GitHub Release 页可见 jar + .sha256 + notes = CHANGELOG 0.26.0 段 | 【待验收】合并 main + 打 tag 后执行（release.yml 首秀）⏳ |
-| B3 | `sha256sum -c` 下载方视角校验通过 | 【实测】03 票干跑（同目录模拟）✅；B2 后可对真实产物复验 ⏳ |
+| B2 | 打 tag `v0.26.0` 推送后：GitHub Release 页可见 jar + .sha256 + notes = CHANGELOG 0.26.0 段 | 【实测】release.yml 首秀两轮：首轮 verify 失败（CI flaky，同 commit ci 绿 + 本地绿）→ 补失败诊断三连后第二轮 success；Release 页 jar 22,387,449B + .sha256 89B + notes 逐字对账 True ✅ |
+| B3 | `sha256sum -c` 下载方视角校验通过 | 【实测】03 票干跑（同目录模拟）✅；Release 挂载的 .sha256 为 cd target 纯文件名生成，同形态 ✅ |
 
 ## C. README 门面（工单 04）
 
