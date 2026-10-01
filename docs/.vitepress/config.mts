@@ -36,7 +36,9 @@ export default defineConfig({
           { text: '斜杠命令', link: '/02-指南/斜杠命令' },
           { text: '模型与思考档位', link: '/02-指南/模型与思考档位' },
           { text: '导出与检索', link: '/02-指南/导出与检索' },
-          { text: '子代理', link: '/02-指南/子代理' }
+          { text: '子代理', link: '/02-指南/子代理' },
+          { text: 'hooks', link: '/02-指南/hooks' },
+          { text: 'MCP 接入', link: '/02-指南/MCP接入' }
         ]
       },
       {
