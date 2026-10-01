@@ -44,9 +44,22 @@ jobs:
           fi
           echo "版本一致：v${POM_VERSION}"
 
-      # 全量测试门禁：发出去的 jar 必须是测过的（与 ci.yml 同口径）
+      # 全量测试门禁：发出去的 jar 必须是测过的（与 ci.yml 同口径）。
+      # 失败诊断三连（2026-10-01 v0.26.0 首轮实跑后补——原判「失败即信号不需日志」
+      # 在首轮失败时显形代价：job logs 需仓库权限，公开面无任何错误信息）
       - name: 全量构建与测试
         run: set -o pipefail && ./mvnw -B -ntp verify 2>&1 | tee /tmp/build.log
+      - name: 失败诊断（模块与用例）
+        if: failure()
+        run: |
+          emit() { printf '::error title=%s::%s\n' "$1" "$(printf %s "${2:0:280}" | tr '%' '_')"; }
+          grep -E "^\[INFO\] duo-harness.*(SUCCESS|FAILURE)" /tmp/build.log | head -11 | while IFS= read -r l; do emit "模块状态" "$l"; done
+          grep -hE "<<< (FAILURE|ERROR)!" */target/surefire-reports/*.txt 2>/dev/null | head -8 | while IFS= read -r l; do emit "失败用例" "$l"; done
+      - name: 失败诊断（构建尾部）
+        if: failure()
+        run: |
+          TAIL=$(tail -n 60 /tmp/build.log | tr '%' '_' | sed ':a;N;$!ba;s/\n/%0A/g')
+          printf '::error title=构建尾部::%s\n' "${TAIL:0:3500}"
 
       - name: 生成 SHA256
         run: |
