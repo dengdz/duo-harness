@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 0.26.0（未发布）
+
+### Added
+
+- **Boot 资源装载通道（M30 工单 01）**：`Boot.fromResource("/path.yml")` 新增 classpath 资源形态装载入口——fat-jar（`java -jar`）内资源 URI 非文件形态，此为缺省装配（agent-demo.yml）装载正门，语义与 `Boot.from(Path)` 完全一致（解析/审计点名/失败回滚，错误消息以 `classpath:` 标签标识来源）；DuoMain 常驻与 headless（`--json`）缺省分支切换到资源流读取，缺省装配的文件化 Path 读取路径移除；headless 预过滤临时副本为既有机制、形态不变
+
 ## 0.25.0（2026-10-01）
 
 ### Added

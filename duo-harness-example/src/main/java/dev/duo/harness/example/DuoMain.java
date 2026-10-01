@@ -4,6 +4,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.Boot;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -33,10 +34,25 @@ public final class DuoMain {
      * web 必须在前，违例 boot 前即点名。纯单呈现位 / 无呈现位装配零感。仅识别标准行
      * 形态（strip 后全等）；行尾注释/引号变体不识别——漏检由 web 装配期 fail-fast 兜底。
      */
-    static void validatePresenterRowOrder(Path yml) throws Exception {
+    static void validatePresenterRowOrder(Path yml) throws IOException {
+        validatePresenterRowOrder(Files.readAllLines(yml));
+    }
+
+    /** 资源流形态（缺省装配分支）：classpath 单次读全量后行扫描，与文件形态同一扫描核；
+     * 资源缺失抛 IOException——由 run() 的预检 catch 网兜住，与文件分支同走「消息 + exit 2」。 */
+    static void validatePresenterRowOrder(String resourcePath) throws IOException {
+        try (var in = DuoMain.class.getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                throw new IOException("缺省装配资源缺失: " + resourcePath);
+            }
+            validatePresenterRowOrder(new String(in.readAllBytes(), StandardCharsets.UTF_8)
+                    .lines().toList());
+        }
+    }
+
+    private static void validatePresenterRowOrder(List<String> lines) {
         int cliIdx = -1;
         int webIdx = -1;
-        List<String> lines = Files.readAllLines(yml);
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i).strip();
             if ("- id: cli".equals(line) && cliIdx < 0 && !hasDisabledFlag(lines, i)) {
@@ -106,19 +122,31 @@ public final class DuoMain {
                 System.err.println("用法: DuoMain --json [--session-id <id>] [装配.yml] <任务文本...>");
                 System.exit(2);
             }
+            if (parsed.useDefaultYml()) {
+                System.exit(dev.duo.harness.example.headless.HeadlessBoot.runDefault(
+                        parsed.sessionId(), parsed.prompt()));
+            }
             System.exit(dev.duo.harness.example.headless.HeadlessBoot.run(
-                    parsed.effectiveYml(), parsed.sessionId(), parsed.prompt()));
+                    parsed.yml(), parsed.sessionId(), parsed.prompt()));
         }
-        Path yml = args.length > 0 ? Path.of(args[0])
-                : Path.of(DuoMain.class.getResource(
-                        dev.duo.harness.example.headless.HeadlessArgs.DEFAULT_YML_RESOURCE).toURI());
+        Path yml = args.length > 0 ? Path.of(args[0]) : null;
         try {
-            validatePresenterRowOrder(yml);
+            if (yml != null) {
+                validatePresenterRowOrder(yml);
+            } else {
+                // 缺省装配分支：预检与装载各自开流、各自单次读取（classpath 资源可重复
+                // 打开，无共享流半途断流问题）——顺序钉死为「预检先行、通过后装载」；
+                // jar 形态资源 URI 非文件形态，不走文件化 Path（M30 工单 01）
+                validatePresenterRowOrder(
+                        dev.duo.harness.example.headless.HeadlessArgs.DEFAULT_YML_RESOURCE);
+            }
         } catch (IllegalArgumentException | IOException e) {
             System.err.println(e.getMessage());
             System.exit(2);
         }
-        Context root = Boot.from(yml);
+        Context root = yml != null ? Boot.from(yml)
+                : Boot.fromResource(
+                        dev.duo.harness.example.headless.HeadlessArgs.DEFAULT_YML_RESOURCE);
         CountDownLatch stopped = new CountDownLatch(1);
         Thread hook = new Thread(() -> {
             try {

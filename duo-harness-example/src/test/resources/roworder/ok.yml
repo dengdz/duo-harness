@@ -1,0 +1,6 @@
+plugins:
+  - id: web
+    name: dev.duo.harness.web.WebPlugin
+
+  - id: cli
+    name: dev.duo.harness.cli.CliPlugin

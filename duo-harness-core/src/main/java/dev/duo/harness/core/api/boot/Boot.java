@@ -53,4 +53,27 @@ public final class Boot {
         Objects.requireNonNull(onRootCreated, "onRootCreated");
         return dev.duo.harness.core.internal.boot.BootLoader.from(configFile, onRootCreated);
     }
+
+    /**
+     * 从 classpath 资源引导插件树——缺省装配（jar 内资源）装载的正门：
+     * 资源 URI 在 fat-jar 中非文件形态，经 {@link #from(Path)} 的文件化读取必炸
+     * （M30 工单 01）。语义与 {@link #from(Path)} 完全一致（解析、审计点名、
+     * 失败整树回滚）；错误点名以 {@code classpath:<resourcePath>} 标签标识来源。
+     *
+     * @param resourcePath 类路径绝对形态（带 {@code /} 前缀），经实现类（BootLoader）的
+     *                     类加载器解析
+     * @return 已激活的根 Context（审计通过，树存活）
+     * @throws BootException 任何失败（阶段见 {@link BootException.Stage}）；
+     *         失败时整树已回滚
+     */
+    public static Context fromResource(String resourcePath) {
+        return fromResource(resourcePath, ctx -> {
+        });
+    }
+
+    /** 同 {@link #from(Path, Consumer)} 的资源形态（回调时点一致）。 */
+    public static Context fromResource(String resourcePath, Consumer<Context> onRootCreated) {
+        Objects.requireNonNull(resourcePath, "resourcePath");
+        return dev.duo.harness.core.internal.boot.BootLoader.fromResource(resourcePath, onRootCreated);
+    }
 }

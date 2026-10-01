@@ -14,6 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -53,12 +55,29 @@ public final class BootLoader {
     private BootLoader() {
     }
 
-    /** 引导入口（Boot 薄壳委托至此）。 */
+    /** 引导入口（Boot 薄壳委托至此）：文件路径形态。 */
     public static Context from(Path configFile, Consumer<Context> onRootCreated) {
         Objects.requireNonNull(onRootCreated, "onRootCreated");
         String yamlText = readConfig(configFile);
-        List<PluginRow> rows = parseRows(configFile, yamlText);
-        return activate(configFile, rows, onRootCreated);
+        return from(yamlText, configFile.toString(), onRootCreated);
+    }
+
+    /**
+     * classpath 资源形态入口（Boot.fromResource 委托至此）——fat-jar 内资源 URI
+     * 非文件形态，缺省装配装载的正门（M30 工单 01）。语义与文件形态完全一致：
+     * 同一解析、审计点名与失败回滚，仅错误消息以 {@code classpath:<resourcePath>}
+     * 标签标识来源。
+     */
+    public static Context fromResource(String resourcePath, Consumer<Context> onRootCreated) {
+        Objects.requireNonNull(onRootCreated, "onRootCreated");
+        return from(readResource(resourcePath), "classpath:" + resourcePath, onRootCreated);
+    }
+
+    /** 文本装载入口（文件/资源两形态共用同一装载器、语义对齐）：source 仅作错误点名标签。 */
+    private static Context from(String yamlText, String source, Consumer<Context> onRootCreated) {
+        Objects.requireNonNull(onRootCreated, "onRootCreated");
+        List<PluginRow> rows = parseRows(source, yamlText);
+        return activate(source, rows, onRootCreated);
     }
 
     private static String readConfig(Path configFile) {
@@ -70,7 +89,21 @@ public final class BootLoader {
         }
     }
 
-    private static List<PluginRow> parseRows(Path configFile, String yamlText) {
+    /** classpath 资源读文本：绝对路径（带 / 前缀）经本类类加载器解析，缺失/IO 同 READ_CONFIG 点名。 */
+    private static String readResource(String resourcePath) {
+        try (InputStream in = BootLoader.class.getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                throw new BootException(BootException.Stage.READ_CONFIG,
+                        "读取配置资源失败（类路径缺失）: classpath:" + resourcePath);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new BootException(BootException.Stage.READ_CONFIG,
+                    "读取配置资源失败: classpath:" + resourcePath, e);
+        }
+    }
+
+    private static List<PluginRow> parseRows(String source, String yamlText) {
         List<PluginRow> rows;
         try {
             PluginConfig parsed = MAPPER.readValue(yamlText, PluginConfig.class);
@@ -78,14 +111,14 @@ public final class BootLoader {
         } catch (IOException e) {
             throw new BootException(BootException.Stage.PARSE_CONFIG,
                     "解析配置文件失败（非法 YAML 或结构不符，应有 plugins: [行...]）: "
-                            + configFile, e);
+                            + source, e);
         }
         Set<String> seenIds = new HashSet<>(rows.size() * 2);
         for (PluginRow row : rows) {
             if (row == null) {
                 // YAML 列表的杂散 "-" 项会解析为 null：按结构错误报告而非 NPE
                 throw new BootException(BootException.Stage.PARSE_CONFIG,
-                        "配置列表含空行（杂散 \"-\" 项）: " + configFile);
+                        "配置列表含空行（杂散 \"-\" 项）: " + source);
             }
             if (row.id() == null || row.id().isBlank()) {
                 throw new BootException(BootException.Stage.PARSE_CONFIG,
@@ -104,7 +137,7 @@ public final class BootLoader {
         return rows;
     }
 
-    private static Context activate(Path configFile, List<PluginRow> rows,
+    private static Context activate(String source, List<PluginRow> rows,
                                     Consumer<Context> onRootCreated) {
         Context root = Context.root();
         onRootCreated.accept(root);
@@ -139,7 +172,7 @@ public final class BootLoader {
         if (!problems.isEmpty()) {
             rollbackQuietly(root);
             throw new BootException(BootException.Stage.ACTIVATE,
-                    "插件树启动失败（" + configFile + "），" + problems.size() + " 个问题：",
+                    "插件树启动失败（" + source + "），" + problems.size() + " 个问题：",
                     problems, causes);
         }
         return root;

@@ -17,6 +17,7 @@ import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolsService;
 import dev.duo.harness.agent.prompt.PromptRegistry;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -43,13 +44,25 @@ public final class HeadlessBoot {
     }
 
     /**
-     * 跑 headless 任务全流程。
+     * 跑 headless 任务全流程（显式装配路径）。
      *
      * @return 进程退出码：0 成功；1 任务失败/会话不可用；2 usage 错误（调用方处理）
      */
     public static int run(Path yml, String sessionId, String prompt) throws Exception {
         interceptSigterm();
-        Path filtered = filteredCopy(yml);
+        return runFiltered(filteredCopy(yml), sessionId, prompt);
+    }
+
+    /** 缺省装配分支（M30 工单 01）：classpath 文本读取（jar 正门）→ 同一预过滤机制。
+     *
+     * @return 进程退出码：0 成功；1 任务失败/会话不可用；2 usage 错误（调用方处理）
+     */
+    public static int runDefault(String sessionId, String prompt) throws Exception {
+        interceptSigterm();
+        return runFiltered(filteredCopy(HeadlessArgs.defaultYmlText()), sessionId, prompt);
+    }
+
+    private static int runFiltered(Path filtered, String sessionId, String prompt) throws Exception {
         Context root = Boot.from(filtered);
         Thread hook = new Thread(root::dispose, "duo-headless-shutdown");
         Runtime.getRuntime().addShutdownHook(hook);
@@ -99,10 +112,15 @@ public final class HeadlessBoot {
         return null; // 不可达：exit 在上
     }
 
-    /** 装配 yml 预过滤副本：呈现位行（cli/web）标 {@code disabled: true}，余行原样。 */
+    /** 装配 yml 预过滤副本（文件路径形态）：呈现位行（cli/web）标 {@code disabled: true}，余行原样。 */
     static Path filteredCopy(Path yml) throws Exception {
+        return filteredCopy(Files.readString(yml));
+    }
+
+    /** 文本形态（缺省资源分支）：预过滤副本机制与文件形态同一份。 */
+    static Path filteredCopy(String yamlText) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
-        ObjectNode tree = (ObjectNode) mapper.readTree(Files.readString(yml));
+        ObjectNode tree = (ObjectNode) mapper.readTree(yamlText);
         JsonNode plugins = tree.get("plugins");
         if (plugins instanceof ArrayNode rows) {
             for (JsonNode row : rows) {

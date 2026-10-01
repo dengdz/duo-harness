@@ -13,6 +13,7 @@
 - [ ] **共享 JsonMapper 收敛**：`new ObjectMapper()` 全仓主源码 23 处静态实例（23 文件每类一个）——「重量级对象每类自建」的模式噪音。收敛前须逐处核查配置差异（任一处 configure 过特性即不能共享，共享即行为变更）。来源：M28 模式对账册 P-03（2026-09-28，裁定不改挂账）。→ 1.0 后按需
 
 - [ ] **fileRefs 服务正门化（H-12 正解）**：服务化两难实测——①消费端 `ctx.as` 撞内核「未声明服务拒绝读取」（`injectedServices` 白名单，测试 root 上下文豁免故测试绿生产断链）；②提供方自产自声明撞 epoch 指纹循环（provide 新实例 → 指纹翻动 → recheck 无限重载）。正解 = 提供方归位 fs 插件（自建同根实例处 provide，提供方≠声明方无循环），web 插件 optionalInject 跨插件消费——涉及 fileRefs 所有权结构与两份自建实例归一，超出接口手术精度。来源：M28 工单 07 实测回退（2026-09-28）。→ 后续结构域立项
+- [ ] **演示入口缺省资源文件化读取残留（jar 形态必炸）**：AgentReplMain 对 /agent-demo.yml 经 `getResource().toURI()` 文件化读取（另有 DemoMain×2 / ContractGuardDemoMain / ApprovalDemoMain 同型，各用自有 demo yml）——发布入口（DuoMain 常驻 + headless）已切 `Boot.fromResource` 资源流（M30-01），演示入口非发布链路未动；若承诺 demo 入口 jar 形态可用需同切资源通道。来源：M30-01 透传排查实测（2026-10-01）。→ 视 README 对演示入口的承诺范围裁定
 
 - [ ] **user.dir 取值提取**：`Path.of(System.getProperty("user.dir"))` 全仓 19+ 处同形（M26-01 +11、M26-03 +1 装配、M26-04 +2 CLI/Web present 接线）——cwd 取值源一旦变化（如可配 cwd）需全量锁步改。来源：M26-01/02/03/04 四轮审查记档（M24-08「重复到阈值即提取」先例已过阈值）。→ M26-04 已到评估点：present 接线仍属装配侧取值、与落盘/检索同源，单独提取收益不足；顺延至 05（导出对账也要 cwd，第三消费方出现）或 07 收尾统一评估
 

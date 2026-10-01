@@ -21,7 +21,7 @@ class DuoMainRowOrderContractTest {
     @BeforeAll
     static void 套件叙述() {
         System.out.println("\n=== 套件：DuoMainRowOrderContractTest —— 行序契约预检：cli 后置 web "
-                + "在 boot 前点名（2 用例） ===");
+                + "在 boot 前点名，文件路径与资源流两通道同扫描核（4 用例） ===");
     }
 
     @Test
@@ -65,5 +65,20 @@ class DuoMainRowOrderContractTest {
                     name: dev.duo.harness.tools.ToolsPlugin
                 """);
         assertDoesNotThrow(() -> DuoMain.validatePresenterRowOrder(noPresenters));
+    }
+
+    @Test
+    void resourceVariantValidatesRowOrder() {
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> DuoMain.validatePresenterRowOrder("/roworder/swapped.yml"));
+        assertTrue(thrown.getMessage().contains("行序契约"), thrown.getMessage());
+        assertDoesNotThrow(() -> DuoMain.validatePresenterRowOrder("/roworder/ok.yml"));
+    }
+
+    @Test
+    void defaultAssemblyResourcePassesPrecheck() {
+        // 真实缺省装配（agent-demo.yml：web 先于 cli）经资源流预检通过——
+        // 缺省分支 fat-jar 形态的第一道闸（装载归 Boot.fromResource，01 工单）
+        assertDoesNotThrow(() -> DuoMain.validatePresenterRowOrder("/agent-demo.yml"));
     }
 }

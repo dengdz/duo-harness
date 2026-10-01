@@ -1,5 +1,6 @@
 package dev.duo.harness.example.headless;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,6 +19,27 @@ public record HeadlessArgs(boolean headless, Path yml, String sessionId, String 
 
     /** 缺省装配 yml（agent-demo.yml 资源路径，与 DuoMain 现状一致）。 */
     public static final String DEFAULT_YML_RESOURCE = "/agent-demo.yml";
+
+    /** 缺省装配判定：positional 未识别出 yml 文件路径即走缺省资源分支（M30 工单 01）。 */
+    public boolean useDefaultYml() {
+        return yml == null;
+    }
+
+    /** 缺省装配文本：classpath 流读取——jar 形态资源 URI 非文件形态，不再文件化 Path。 */
+    public static String defaultYmlText() {
+        return resourceYmlText(DEFAULT_YML_RESOURCE);
+    }
+
+    static String resourceYmlText(String resourcePath) {
+        try (var in = HeadlessArgs.class.getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                throw new IllegalStateException("缺省装配资源缺失: " + resourcePath);
+            }
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("缺省装配资源读取失败: " + resourcePath, e);
+        }
+    }
 
     public static HeadlessArgs parse(String[] args) {
         boolean headless = false;
@@ -65,18 +87,5 @@ public record HeadlessArgs(boolean headless, Path yml, String sessionId, String 
     private static boolean isYmlPath(String arg) {
         String lower = arg.toLowerCase();
         return (lower.endsWith(".yml") || lower.endsWith(".yaml")) && Files.isRegularFile(Path.of(arg));
-    }
-
-    /** 解析出 yml 路径（未指定时缺省资源），无任务文本等 usage 错误见 {@link #errors}。 */
-    public Path effectiveYml() {
-        return yml != null ? yml : resourceYml();
-    }
-
-    private static Path resourceYml() {
-        try {
-            return Path.of(HeadlessArgs.class.getResource(DEFAULT_YML_RESOURCE).toURI());
-        } catch (Exception e) {
-            throw new IllegalStateException("缺省装配资源缺失: " + DEFAULT_YML_RESOURCE, e);
-        }
     }
 }

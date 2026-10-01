@@ -1,0 +1,5 @@
+plugins:
+  - id: greeter
+    name: dev.duo.harness.core.api.boot.BootTest$GreeterPlugin
+  - id: consumer
+    name: dev.duo.harness.core.api.boot.BootTest$ConsumerPlugin
