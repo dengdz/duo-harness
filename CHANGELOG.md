@@ -6,6 +6,7 @@
 
 ### Added
 
+- **shade fat-jar 打包（M30 工单 02）**：`mvn package` 产出 `duo-harness-<version>.jar`（约 22MB，Main-Class = DuoMain），`java -jar duo-harness-0.26.0.jar` 一条命令即跑（前提 JDK 21 + `~/.duo/config.yml`）——常驻双呈现位（终端 REPL + 浏览器）与 headless（`--json`）同支持；签名文件排除、META-INF/services 合并、module-info 排除等 shade 标准处理内置。随 0.26.0 发版挂 GitHub Release（M30-03）
 - **Boot 资源装载通道（M30 工单 01）**：`Boot.fromResource("/path.yml")` 新增 classpath 资源形态装载入口——fat-jar（`java -jar`）内资源 URI 非文件形态，此为缺省装配（agent-demo.yml）装载正门，语义与 `Boot.from(Path)` 完全一致（解析/审计点名/失败回滚，错误消息以 `classpath:` 标签标识来源）；DuoMain 常驻与 headless（`--json`）缺省分支切换到资源流读取，缺省装配的文件化 Path 读取路径移除；headless 预过滤临时副本为既有机制、形态不变
 
 ## 0.25.0（2026-10-01）

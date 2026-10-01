@@ -91,4 +91,58 @@
     <!-- 本模块启用 exec:java（Demo 验收命令的载体）；演示入口经 -Dexec.mainClass 切换 -->
     <exec.skip>false</exec.skip>
   </properties>
+
+  <build>
+    <!-- 对外产物名去 example 后缀（M30 工单 02）：duo-harness-<version>.jar，
+         版本随 ${project.version} 走——发版收口期 pom 对齐 0.26.0 后产物名即同步 -->
+    <finalName>duo-harness-${project.version}</finalName>
+    <plugins>
+      <!-- shade fat-jar（ADR-0029 发布产物，M30 工单 02）：java -jar 即跑，
+           入口 DuoMain（缺省装配 agent-demo.yml 经 Boot.fromResource 从 jar 内装载）。
+           非发布链路的演示入口仍走 exec:java，不受产物名变化影响。
+           3.6.1 = 发版时点 shade 最新 stable（nexus 已核实），首个支持 Maven 4 的线。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <!-- 应用自用 fat-jar，非待发布构件：不生成 dependency-reduced-pom -->
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>dev.duo.harness.example.DuoMain</mainClass>
+                </transformer>
+                <!-- META-INF/services 合并：多 jar 同名 SPI 声明（jackson ObjectCodec/JsonFactory、
+                     imageio ImageReaderSpi、sqlite Driver、slf4j ServiceProvider 实测在册）
+                     合 jar 时只留一份即断链，transformer 逐组合并 -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <!-- 签名文件排除系 shade 惯例的预防性处理（ADR-0032 裁定兜底；当前依赖集
+                         实测零签名 jar，防的是未来传递依赖引入签名后类加载 SecurityException） -->
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/*.EC</exclude>
+                    <!-- module-info：多依赖重复冲突且类路径形态无模块化诉求 -->
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/versions/*/module-info.class</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
