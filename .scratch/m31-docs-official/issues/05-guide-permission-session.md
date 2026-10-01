@@ -10,12 +10,16 @@
 
 ## Status
 
-ready-for-agent
+done（2026-10-01 用户验收通过）
 
 ## Checklist
 
-- [ ] 权限篇成稿：项目/会话两级规则写法、审批交互、只读免审清单边界、计划模式
-- [ ] 会话篇成稿：生命周期操作全路径 + 空会话不落盘语义（M30 defer 化行为如实描述）
-- [ ] 命令与配置样例逐条实测或锚定既有参考（活体引用）
-- [ ] 内链自查 + vitepress build 通过
-- [ ] 用户验收通过；CHANGELOG 0.27.0 段同 diff 记账
+- [x] 权限篇成稿：三档预设表（/permission 切换）、审批发生机制与两条铁律（一次性/fail-closed）、审批卡四选择（批准/拒绝/总是允许-项目/仅本会话）、规则引擎（.duo/settings.json 样例 + 词边界前缀 + deny 恒优先 + /permission rules list/rm）、只读命令免审（38 命令 + git 四件套 + .git 信任分类防 -C 逃逸）、计划模式
+- [x] 会话篇成稿：deferred 落盘语义（首条消息才落盘）、日常操作表（/new /title /exit 侧栏切换）、重启恢复与尾部 50 条分页、多标签独占与占用语义、检索导出指路（前向链接工单 07 篇）
+- [x] 命令与配置样例逐条实测或锚定既有参考（活体引用）——审批卡按钮文案锚 app.js:1080-1081、规则格式锚 PermissionRules javadoc（tool/decision 必备 + prefix 词边界 + deny 手写恒优先）、/permission rules 语法锚 CliPlugin#685、38 只读命令锚插件配置参考
+- [x] 内链自查 + vitepress build 通过（2026-10-01，1.19s）；sidebar 指南分组两篇入册；口吻自查零命中
+- [x] 用户验收通过（2026-10-01）；CHANGELOG 0.27.0 段同 diff 记账
+
+## Comments
+
+- 2026-10-01 产出：`docs/02-指南/权限与审批.md`（约 105 行）、`docs/02-指南/会话管理与恢复.md`（约 55 行）。会话篇含 1 枚前向链接（导出与检索指南 → 工单 07），工单 12 收口核对。

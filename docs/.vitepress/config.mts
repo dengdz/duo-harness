@@ -29,7 +29,11 @@ export default defineConfig({
       },
       {
         text: '指南',
-        items: [{ text: '组装你的第一个 agent', link: '/02-指南/组装你的第一个agent' }]
+        items: [
+          { text: '组装你的第一个 agent', link: '/02-指南/组装你的第一个agent' },
+          { text: '权限与审批', link: '/02-指南/权限与审批' },
+          { text: '会话管理与恢复', link: '/02-指南/会话管理与恢复' }
+        ]
       },
       {
         text: '高级',
