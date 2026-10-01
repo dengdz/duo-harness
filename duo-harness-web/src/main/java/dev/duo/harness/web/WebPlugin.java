@@ -254,9 +254,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 ctx, tools, answers, PRESENTER_ID, face::currentSession, () -> { });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, face::currentSession);
-        // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
-        PresenterAssembly.registerPresentTool(ctx, tools, face::currentSession,
-                Cwd.path());
+        // present 退役（M29 工单 12 用户裁定）：成果申报工具不再注册——交付物呈现改由
+        // Web 前端 ZCode 式预览卡自动推导（回复文本提取产物路径）；PresentTool/
+        // ChangeSummary 类保留（历史 deliverable 事件导出汇总仍走 ChangeSummary）
         // subagent 宿主发布（M15，ADR-0015）：发布父侧执行链构件——SubagentPlugin
         // 在场且配置了模板时自行装配五件工具；未配置部署零感知（只发服务，零工具）
         PresenterAssembly.publishSubagentHost(ctx, adapter, governanceTuning, face::currentSession);

@@ -367,6 +367,27 @@ const render = (() => {
     return body;
   }
 
+  /** 流式正文气泡封段（M29 工单 12 执行序修复）：一轮文本结束（工具调用出现）时把
+   *  当前气泡就地定格为独立叙述段——下一轮 chunk 从当前位置新建气泡，工具卡不再被
+   *  顶部气泡压住。多轮任务的叙述-行动-叙述-行动-正文按真实执行序呈现。 */
+  function sealStreamingBubble() {
+    if (!t.streamingBubble) return;
+    if (t.typeRAF) { cancelAnimationFrame(t.typeRAF); t.typeRAF = null; }
+    const bubble = t.streamingBubble;
+    const text = t.chunkBuffer || '';
+    if (text.trim()) {
+      bubble.classList.remove('streaming');
+      bubble.innerHTML = '';
+      bubble.appendChild(renderMarkdown(text, true));
+    } else {
+      bubble.remove();
+    }
+    t.streamingBubble = null;
+    t.chunkBuffer = '';
+    t.typeShown = 0;
+    t.typeLastParse = 0;
+  }
+
   function finishAssistant(text, reasoning) {
     showMessages();
     // 打字机循环清场（正文与思考两条指针）：收口整段渲染为定稿（指针态作废）
@@ -393,7 +414,47 @@ const render = (() => {
     // 缺席不建卡——非思考模型零变化
     if (reasoning) bubble.before(reasoningCard(reasoning));
     bubble.appendChild(renderMarkdown(text, true));
+    // 产物预览卡（M29 工单 12 用户裁定，present 退役后的接棒形态；ZCode
+    // AssistantPreviewCards 同语义）：回复定稿时从文本自动提取产物型文件路径成卡
+    const previews = extractPreviewPaths(text);
+    if (previews.length) {
+      const group = document.createElement('div');
+      group.className = 'preview-cards';
+      for (const p of previews) group.appendChild(filePreviewRow(p));
+      bubble.after(group);
+    }
     scroll();
+  }
+
+  /** 产物路径提取（ZCode conversation-preview-artifacts 简化版）：回复文本中的
+   *  产物型扩展名路径（md/html/office/pdf/图片/音视频）→ 去重保序，上限 10 张
+   *  （ZCode 可见上限同值）；无 stat 校验——提取自刚定稿的回复，模型刚写过这些文件。 */
+  function extractPreviewPaths(text) {
+    const re = /(?:^|[\s`"'(\[（【,，、；;：:]|[^\w./-])(\/?(?:[\p{L}\p{N}@._\-]+\/)*[\p{L}\p{N}@._\-]+\.(?:md|markdown|html?|docx?|xlsx?|pptx?|pdf|png|jpe?g|gif|svg|webp|mp4|mov|webm|mp3|wav|csv|json))(?=$|[\s`"')\]）】,，。！？；:!?])/gimu;
+    const seen = new Set();
+    const out = [];
+    for (const m of (text || '').matchAll(re)) {
+      const p = m[1];
+      if (!p || seen.has(p) || p.length < 4) continue;
+      // 排除代码围栏语言标注（```java）与域名（example.com 无路径斜杠且不在产物扩展白名单内的情况已被正则挡）
+      seen.add(p);
+      out.push(p);
+      if (out.length >= 10) break;
+    }
+    return out;
+  }
+
+  /** 思考内容剥壳（M29 工单 12 自测修复）：anthropic 形态的 reasoning 是带 signature
+   *  的 JSON 信封（{"type":"thinking","thinking":"…"}，回传协议要求）——展示层剥出
+   *  纯思考文本；非 JSON（deepseek-reasoner 纯文本）原样返回，坏 JSON 兜底原文。 */
+  function reasoningDisplayText(reasoning) {
+    if (reasoning && reasoning.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(reasoning);
+        if (parsed && typeof parsed.thinking === 'string') return parsed.thinking;
+      } catch (e) { /* 坏 JSON 走原文 */ }
+    }
+    return reasoning;
   }
 
   /**
@@ -407,56 +468,13 @@ const render = (() => {
     const details = document.createElement('details');
     details.className = 'reasoning';
     const summary = document.createElement('summary');
-    summary.textContent = '💭 思考过程';
+    summary.textContent = '💭 思考';
     const body = document.createElement('div');
     body.className = 'reasoning-body';
-    body.appendChild(renderMarkdown(reasoning, true));
+    body.appendChild(renderMarkdown(reasoningDisplayText(reasoning), true));
     details.append(summary, body);
     card.appendChild(details);
     return card;
-  }
-
-  /**
-   * 成果卡片（M29 工单 07）：present 工具专属卡——组头（📦 成果申报 · N 件 + 徽标）
-   * + 每文件一张 ZCode 式预览卡（AssistantPreviewCards 形态，研究文档收录：44px
-   * 图标底座 + 文件名主标题/类型·父目录副标题 + 右侧动作按钮；duo 动作映射为
-   * 复制路径——浏览器打不开本地文件）。数据源 = tool/call 参数 JSON 的 files；
-   * 校验结果由 tool/result 徽标回填（✓/✗，卡随 toolCallId 挂 toolCards 走通用
-   * 回填）；参数解析失败回退通用工具卡。回放/实时同源；deliverable/presented
-   * 事件保持静默忽略（防双卡，消费方检索/导出已有着落——术语表「成果卡片」词条）。
-   */
-  function deliverableCard(event) {
-    let files = null;
-    try {
-      const parsed = JSON.parse(event.text || '{}');
-      if (Array.isArray(parsed.files) && parsed.files.length) {
-        files = parsed.files.map(String);
-      }
-    } catch (e) { /* 参数非法落通用卡 */ }
-    if (!files) {
-      toolCall(event);
-      return;
-    }
-    showMessages();
-    const card = document.createElement('div');
-    card.className = 'card deliverable';
-    const head = document.createElement('div');
-    head.className = 'tool';
-    head.innerHTML = '📦 <b></b> <span class="deliverable-count"></span> <span class="badge badge-run">⟳ 运行中</span>';
-    head.querySelector('b').textContent = '成果申报';
-    head.querySelector('.deliverable-count').textContent = files.length + ' 件';
-    card.appendChild(head);
-    const list = document.createElement('div');
-    list.className = 'deliverable-list';
-    for (const f of files) {
-      list.appendChild(filePreviewRow(f));
-    }
-    card.appendChild(list);
-    if (event.toolCallId) {
-      t.toolCards.set(event.toolCallId, card);
-    }
-    t.container.appendChild(card);
-    scroll();
   }
 
   /** 文件类型描述（成果卡副标题与图标用；扩展名 → 图标 + 中文名）。 */
@@ -507,6 +525,29 @@ const render = (() => {
    * 增量事件是 256 字符窗口聚合（成批到达），直追加即成批蹦；展开态纯文本
    * （增量半截 markdown 渲染会闪），收口 assistant/message 到达时移除换定稿
    * 折叠卡；回放不走此路（replaying 分支跳过，回放由 message.reasoning 一次渲染）。 */
+  /** 思考流式卡定稿（M29 工单 12 顺序修复）：一轮思考结束（工具调用出现/正文收口/中断）
+   *  时把展开滚动卡就地转为收起折叠卡留在原位——多轮工具循环中每轮思考卡跟该轮工具卡走，
+   *  不跨轮粘连（下一轮思考建新卡）。 */
+  function finalizeReasoningStream() {
+    if (!t.reasoningStreamCard) return;
+    if (t.reasoningRAF) { cancelAnimationFrame(t.reasoningRAF); t.reasoningRAF = null; }
+    // 打字机积压补齐：定格即全文（轮次封段时 buffer 可能还有未流出字符——回放同步
+    // 批量分发时增量全在 buffer，不补齐则卡内容全空，自测实证）
+    if (t.reasoningStreamBody && t.reasoningBuffer) {
+      t.reasoningStreamBody.textContent = t.reasoningBuffer;
+    }
+    const details = t.reasoningStreamCard.querySelector('details.reasoning');
+    if (details) {
+      details.open = false;
+      const summary = details.querySelector('summary');
+      if (summary) summary.textContent = '💭 思考';
+    }
+    t.reasoningStreamCard = null;
+    t.reasoningStreamBody = null;
+    t.reasoningBuffer = '';
+    t.reasoningShown = 0;
+  }
+
   function reasoningStream(delta) {
     showMessages();
     if (!t.reasoningStreamCard) {
@@ -548,45 +589,274 @@ const render = (() => {
     t.reasoningRAF = requestAnimationFrame(reasoningTick);
   }
 
-  /** 工具合一卡：badge-run 起步，tool/result 回填徽标与可折叠结果。 */
-  /** 参数摘要（M29 W5）：write/edit/read → 路径、bash → 命令文本；其余工具回退 null（展示原 JSON）。 */
+  /** 线性 SVG 图标（M29 工单 12 ZCode 同款：lucide path 与各渲染器真实分配对齐——
+   *  读/搜一族共用放大镜、未识别统一扳手，语义族共用是 ZCode 原生哲学；name → path，size 默认 16）。 */
+  const ICON_PATHS = {
+    terminal: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16v-4a4 4 0 0 1 4-4"/><path d="m9 13 2 2-2 2"/>', // execute: SquareTerminalIcon
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>', // read/search/explore 共用: SearchIcon
+    file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>', // write 文件卡: FileIcon
+    edit: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>', // edit: PencilIcon
+    list: '<rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>', // todo: ListTodoIcon
+    skill: '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/>', // skill: WandSparkles
+    lightbulb: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>', // ask-question: CircleHelpIcon
+    book: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/><path d="M12 7a4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6"/>', // read-session-context: BookOpenTextIcon
+    sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>', // 记忆写入：ZCode 无对应，保留（skill 让出后不撞车）
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>', // web_fetch：ZCode 网站卡 GlobeIcon 同款
+    'file-output': '<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M3 15h6"/><path d="M6 12v6"/>', // task-output: FileOutputIcon
+    'circle-stop': '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1"/>', // task-stop: CircleStopIcon
+    bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>', // fallback: WrenchIcon（未识别语义）
+    chevron: '<path d="m9 18 6-6-6-6"/>',
+    'circle-check': '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    circle: '<circle cx="12" cy="12" r="10"/>',
+  };
+  /** 工具图标分配（ZCode 渲染器对齐：读/搜一族共用放大镜；未识别走 wrench 兜底）。 */
+  const TOOL_ICONS = {
+    bash: 'terminal', read: 'search', write: 'file', edit: 'edit',
+    glob: 'search', grep: 'search', session_search: 'book',
+    memory_write: 'sparkles', tool_stats: 'wrench', skill: 'skill',
+    web_fetch: 'globe', todo_write: 'list', task_output: 'file-output',
+    task_stop: 'circle-stop', read_image: 'search',
+  };
+  function toolIcon(name) {
+    return TOOL_ICONS[name] || 'wrench';
+  }
+  /** 工具中文名映射（M29 工单 12 用户裁定：每类工具有对应中文名；未映射回退原名）。 */
+  const TOOL_LABELS = {
+    bash: '终端', read: '读取', write: '写入', edit: '编辑',
+    glob: '查找文件', grep: '搜索内容', session_search: '会话搜索',
+    memory_write: '记忆写入', tool_stats: '工具统计', skill: '加载技能',
+    web_fetch: '抓取网页', todo_write: '任务清单',
+    ask_user: '提问', task_output: '任务输出', task_stop: '停止任务',
+    read_image: '查看图片', exit_plan_mode: '计划呈交',
+  };
+  function toolLabel(name) {
+    return TOOL_LABELS[name] || name;
+  }
+
+  function icon(name, size) {
+    const s = size || 16;
+    return '<svg class="ticon" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none"'
+      + ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + (ICON_PATHS[name] || ICON_PATHS.wrench) + '</svg>';
+  }
+
+  /** 参数摘要（M29 W5 + 工单 12 段结构重设计）：常见工具的关键参数一行摘要；
+   *  其余回退 null（通用卡展示摘要行 + 参数原文折叠）。 */
   function paramSummary(toolName, argsJson) {
     try {
       const a = JSON.parse(argsJson || '{}');
       if ((toolName === 'write' || toolName === 'edit' || toolName === 'read') && a.path) return String(a.path);
       if (toolName === 'bash' && a.command) return String(a.command);
+      if (toolName === 'glob' && a.pattern) return String(a.pattern);
+      if (toolName === 'grep' && (a.query || a.pattern)) return String(a.query || a.pattern);
+      if (toolName === 'web_fetch' && a.url) return String(a.url);
+      if (toolName === 'memory_write' && a.content) return String(a.content);
+      if (toolName === 'session_search' && (a.query || a.keyword)) return String(a.query || a.keyword);
     } catch (e) { /* 回退原 JSON */ }
     return null;
   }
 
-  function toolCall(event) {
+  /** 分型卡公共骨架 v3（M29 工单 12 用户裁定：无卡片边框，融入对话流——ZCode
+   *  ToolLayout 原样：收起态就是一行摘要，无边框无背景；主体内容盒自绘边框）。
+   *  HITL 交互卡与成果预览大卡保持有框（ZCode 同款分工）。 */
+  function typedCardShell(opts) {
     showMessages();
     const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = '<div class="tool">🔧 <b></b> <span class="badge badge-run">⟳ 运行中</span></div><pre></pre>';
-    card.querySelector('b').textContent = event.toolName || '';
+    card.className = 'tcard';
+    const row = document.createElement('div');
+    row.className = 'tcard-row';
+    // ZCode ToolLayout 同款（ToolLayout.tsx:139-147 设计注释）：运行态不用 spinner 徽标——
+    // 类别词挂扫光；行尾常驻状态槽，成功留空（报忧不报喜），失败填点线「执行失败」
+    row.innerHTML = icon(opts.icon) + '<span class="tcard-label sweep"></span>'
+      + '<span class="tcard-primary"></span>'
+      + '<span class="tcard-status"></span>'
+      + '<span class="tcard-chevron">' + icon('chevron', 14) + '</span>';
+    row.querySelector('.tcard-label').textContent = opts.label;
+    row.querySelector('.tcard-primary').textContent = opts.primary || '';
+    if (opts.secondary) {
+      const sec = document.createElement('span');
+      sec.className = 'tcard-secondary';
+      sec.textContent = opts.secondary;
+      sec.title = opts.secondary;
+      row.insertBefore(sec, row.querySelector('.tcard-status'));
+    }
+    if (opts.badgeHolder) {
+      opts.badgeHolder.classList.add('tcard-data-badge');
+      row.insertBefore(opts.badgeHolder, row.querySelector('.tcard-status'));
+    }
+    const body = document.createElement('div');
+    body.className = 'tcard-body';
+    body.style.display = opts.open ? 'block' : 'none';
+    card.append(row, body);
+    row.addEventListener('click', (e) => {
+      if (card.classList.contains('error')) return; // 失败卡不展开（错误全文走悬停浮窗，用户裁定）
+      if (e.target.closest('.tcard-status, .badge, [data-action]')) return; // 状态词（失败浮窗锚点）与按钮不吃行开合
+      const open = body.style.display === 'block';
+      body.style.display = open ? 'none' : 'block';
+      card.classList.toggle('open', !open);
+    });
+    return { card, row, body };
+  }
+
+  function mountTypedCard(card, event) {
+    if (event.toolCallId) {
+      t.toolCards.set(event.toolCallId, card);
+    }
+    t.container.appendChild(card);
+    scroll();
+  }
+
+  /** 通用工具卡（未分型工具回退，M29 工单 12 段结构重设计）：🔧 工具名 + 参数摘要行
+   *  （paramSummary 命中即一行关键参数，pattern/query/url 等）+ 参数原文折叠 + 结果折叠。 */
+  function toolCall(event) {
+    // 行 = 图标 + 中文工具名 + 参数摘要（paramSummary 命中即 url/query/pattern 等上主信息）；
+    // 摘要未命中才在展开体放参数原文盒（复杂参数全量 JSON）；空参数（{}）不渲染
     const summary = paramSummary(event.toolName, event.text);
-    if (summary) {
-      // 摘要形态（M29 W5）：write/bash/read 展示关键参数，原 JSON 折叠可查
-      const pre = card.querySelector('pre');
-      pre.textContent = summary;
-      pre.classList.add('param-summary');
-      const params = document.createElement('details');
-      params.className = 'params';
-      params.innerHTML = '<summary>参数原文</summary><pre></pre>';
-      params.querySelector('pre').textContent = event.text || '';
-      card.appendChild(params);
-    } else {
-      card.querySelector('pre').textContent = event.text || '';
+    const { card, body } = typedCardShell({
+      icon: toolIcon(event.toolName), label: toolLabel(event.toolName),
+      primary: summary || '',
+    });
+    const rawText = (event.text || '').trim();
+    if (!summary && rawText && rawText !== '{}') {
+      const raw = document.createElement('div');
+      raw.className = 'param-raw';
+      raw.textContent = event.text || '';
+      body.appendChild(raw);
     }
     if (event.toolCallId) {
       t.toolCards.set(event.toolCallId, card);
     }
-    t.lastOpenToolCard = card;
-    t.lastOpenToolName = event.toolName || '';
     t.container.appendChild(card);
     scroll();
     return card;
+  }
+
+  /** bash 终端卡（M29 工单 12 终态）：行摘要即命令（不重复建命令盒），输出由 tool/result 填展开体。 */
+  function terminalCard(event) {
+    const { card } = typedCardShell({
+      icon: 'terminal', label: '终端',
+      primary: paramSummary('bash', event.text) || '',
+    });
+    mountTypedCard(card, event);
+  }
+
+  /** edit 行级 diff 卡（M29 工单 12 行式化）：编辑 · 仓库相对路径 + diff 徽标 +
+   *  行级 ± 着色展开体（朴素逐行对比，240px 内滚——ZCode max-h-60 对齐）。 */
+  function editCard(event) {
+    let path = '', oldS = '', newS = '';
+    try {
+      const a = JSON.parse(event.text || '{}');
+      path = String(a.path || '');
+      oldS = a.old_string == null ? '' : String(a.old_string);
+      newS = a.new_string == null ? '' : String(a.new_string);
+    } catch (e) { /* 回退通用卡 */ }
+    if (!path) {
+      toolCall(event);
+      return;
+    }
+    const desc = fileTypeDescriptor(path);
+    const oldLines = oldS ? oldS.split('\n') : [];
+    const newLines = newS ? newS.split('\n') : [];
+    const badgeHolder = document.createElement('span');
+    badgeHolder.className = 'diff-count';
+    badgeHolder.innerHTML = '<span class="add-count"></span> <span class="del-count"></span>';
+    badgeHolder.querySelector('.add-count').textContent = '+' + newLines.length;
+    badgeHolder.querySelector('.del-count').textContent = '-' + oldLines.length;
+    // 主摘要 = 仓库相对路径全名（用户裁定：直观可见是哪个文件），副信息 = 类型
+    const { card, body } = typedCardShell({
+      icon: 'edit', label: '编辑',
+      primary: path, secondary: desc.label, badgeHolder,
+    });
+    const diffBody = document.createElement('div');
+    diffBody.className = 'diff-body';
+    const addLine = (cls, text) => {
+      const line = document.createElement('div');
+      line.className = 'diff-line ' + cls;
+      line.dataset.sign = cls === 'del' ? '-' : '+';
+      line.textContent = text;
+      diffBody.appendChild(line);
+    };
+    for (const l of oldLines) addLine('del', l);
+    for (const l of newLines) addLine('add', l);
+    body.appendChild(diffBody);
+    mountTypedCard(card, event);
+  }
+
+  /** memory_write 记忆卡（M29 工单 12 用户裁定）：主行只工具名，写入的记忆内容进展开体。 */
+  function memoryCard(event) {
+    let content = '';
+    try {
+      content = String(JSON.parse(event.text || '{}').content || '');
+    } catch (e) { /* 回退通用卡 */ }
+    if (!content) {
+      toolCall(event);
+      return;
+    }
+    const { card, body } = typedCardShell({
+      icon: 'sparkles', label: '记忆写入',
+    });
+    const box = document.createElement('div');
+    box.className = 'result-inbody';
+    box.appendChild(renderMarkdown(content, true)); // 记忆内容按 markdown 渲染，与正文排版一致
+    body.appendChild(box);
+    mountTypedCard(card, event);
+  }
+
+  /** write/read 文件卡（M29 工单 12）：写入/读取 · 仓库相对路径 + 类型副信息。
+   *  write 展开体展示写入的内容（content 参数）；read 内容由 tool/result 填充。 */
+  function fileCard(event) {
+    let path = '', content = '';
+    try {
+      const a = JSON.parse(event.text || '{}');
+      path = String(a.path || '');
+      content = a.content == null ? '' : String(a.content);
+    } catch (e) { /* 回退通用卡 */ }
+    if (!path) {
+      toolCall(event);
+      return;
+    }
+    const isWrite = event.toolName === 'write';
+    const desc = fileTypeDescriptor(path);
+    const { card, body } = typedCardShell({
+      icon: isWrite ? 'file' : 'search', label: isWrite ? '写入' : '读取', // ZCode：read→SearchIcon
+      primary: path, secondary: desc.label,
+    });
+    if (isWrite && content) {
+      const preview = document.createElement('div');
+      preview.className = 'result-inbody'; // 文件内容同款干净代码块直出
+      const pre = document.createElement('pre');
+      pre.textContent = content;
+      preview.appendChild(pre);
+      body.appendChild(preview);
+    }
+    mountTypedCard(card, event);
+  }
+
+  /** skill 技能卡（M29 工单 12 行式化）：技能 · 名 · 参数 + 加载内容 100px 直出预览
+   *  （toolResult 对 skill 特判填充——ZCode max-h-25 形态）。 */
+  function skillCard(event) {
+    let name = '', args = '';
+    try {
+      const a = JSON.parse(event.text || '{}');
+      name = String(a.name || a.skill || '');
+      args = a.args == null ? (a.arg == null ? '' : String(a.args)) : String(a.args);
+    } catch (e) { /* 回退通用卡 */ }
+    if (!name) {
+      toolCall(event);
+      return;
+    }
+    const { card, body } = typedCardShell({
+      icon: 'skill', label: '加载技能',
+      primary: name, secondary: args ? '参数 ' + args : '',
+    });
+    const preview = document.createElement('div');
+    preview.className = 'skill-preview';
+    preview.textContent = '加载中…';
+    preview.hidden = true; // 结果到达后由 toolResult 特判填充并显示
+    body.appendChild(preview); // 内容进展开体（用户裁定：点「加载技能」行才展开 SKILL 内容）
+    mountTypedCard(card, event);
   }
 
   /** todo_write 工具行摘要卡（ADR-0018）：头行给 done/total 与活动任务，结果回填走通用路径。 */
@@ -600,19 +870,40 @@ const render = (() => {
       else if (parsed && Array.isArray(parsed.todos)) todos = parsed.todos;
     } catch (e) { /* 参数非法按空清单渲染，徽标由结果路径定夺 */ }
     const card = document.createElement('div');
-    card.className = 'card';
-    const head = document.createElement('div');
-    head.className = 'tool';
-    const name = document.createElement('b');
-    name.textContent = '任务清单';
-    const inline = document.createElement('span');
-    inline.className = 'todo-inline';
-    inline.textContent = todos.length ? todoPanel.summaryText(todos) : '';
-    const badge = document.createElement('span');
-    badge.className = 'badge badge-run';
-    badge.textContent = '⟳ 运行中';
-    head.append('🧹 ', name, ' ', inline, ' ', badge);
-    card.appendChild(head);
+    card.className = 'tcard'; // M29 工单 12 无框化：融入对话流（ZCode todo 行卡同款）
+    const row = document.createElement('div');
+    row.className = 'tcard-row'; // 点击行开合清单（M29 工单 12 用户裁定：对话中的清单可展开）
+    row.innerHTML = icon('list') + '<span class="tcard-label sweep">任务清单</span>'
+      + '<span class="todo-inline"></span>'
+      + '<span class="tcard-status"></span>'
+      + '<span class="tcard-chevron">' + icon('chevron', 14) + '</span>';
+    row.querySelector('.todo-inline').textContent = todos.length ? todoPanel.summaryText(todos) : '';
+    const list = document.createElement('ul');
+    list.className = 'todo-list';
+    card.append(row, list);
+    row.addEventListener('click', (e) => {
+      if (card.classList.contains('error')) return; // 失败卡不展开（同 typedCardShell 口径）
+      if (e.target.closest('.tcard-status')) return;
+      const open = list.style.display !== 'none';
+      list.style.display = open ? 'none' : 'block';
+      card.classList.toggle('open', !open);
+    });
+    if (todos.length) {
+      const todoList = document.createElement('div');
+      todoList.className = 'todo-list-body';
+      for (const td of todos) {
+        const li = document.createElement('div');
+        const st = td.status === 'completed' ? 'completed' : (td.status === 'in_progress' ? 'in_progress' : 'pending');
+        // ZCode todo.tsx:17-45 同款语义：完成绿勾图标+文字划线变浅、进行中静态右箭头
+        // （源注释：避免与加载动画语义混淆）、待办空心圈
+        li.className = 'todo-item ' + st;
+        li.innerHTML = icon(st === 'completed' ? 'circle-check' : (st === 'in_progress' ? 'arrow-right' : 'circle'), 14)
+          + '<span class="todo-item-text"></span>';
+        li.querySelector('.todo-item-text').textContent = td.title || td.content || '';
+        todoList.appendChild(li);
+      }
+      list.appendChild(todoList);
+    }
     if (event.toolCallId) {
       t.toolCards.set(event.toolCallId, card);
     }
@@ -626,7 +917,26 @@ const render = (() => {
   // ask_user 的结果即回答文本：冻结其提问卡，不再渲染普通工具卡
   function toolResult(event) {
     if (event.toolName === 'ask_user') {
-      resolveByToolName('ask_user', '✓ 已回答：' + (event.text || '').trim(), true);
+      resolveInteractionDock(); // dock 待答卡移入消息流（M29 工单 12 停靠模型）
+      // 回放场景（无 dock 卡可冻结）：补 ask_user 冻结摘要行——问题从最近的
+      // question/requested 事件取，回答从本 result 的 text 取（M29 工单 12 用户裁定）
+      // 回放场景：优先按 toolCallId 找回 call 阶段冻结的问题卡，就地补回答行（合一呈现）
+      const frozen = event.toolCallId && t.toolCards.get(event.toolCallId);
+      if (frozen) {
+        const a = document.createElement('div');
+        a.className = 'ask-frozen-a';
+        a.textContent = (event.text || '').trim();
+        frozen.querySelector('.tcard-body').appendChild(a);
+        t.toolCards.delete(event.toolCallId);
+        return;
+      }
+      if (!t.container.querySelector('.interactive[data-tool-name="ask_user"]')) {
+        const qEvent = [...t.events || []].reverse()
+          .find(e => e.type === 'user/message' || (e.text && e.text.includes('[提问]')));
+        askFrozenLine(qEvent ? (qEvent.text || '').slice(0, 80) : '（提问）', (event.text || '').trim());
+      } else {
+        resolveByToolName('ask_user', '✓ 已回答：' + (event.text || '').trim(), true);
+      }
       return;
     }
     // exit_plan_mode 的结果即复核结论：冻结其计划呈交卡
@@ -635,30 +945,77 @@ const render = (() => {
       resolveByToolName('exit_plan_mode', text, text.includes('已获批准'));
       return;
     }
+    // skill 结果 = 技能加载内容：填 .skill-preview 限高直出（M29 工单 12 对齐 ZCode 预览形态）
+    if (event.toolName === 'skill') {
+      const card = (event.toolCallId && t.toolCards.get(event.toolCallId)) || t.lastOpenToolCard;
+      if (!card) return;
+      const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
+      const label = card.querySelector('.tcard-label');
+      if (label) label.classList.remove('sweep');
+      const status = card.querySelector('.tcard-status');
+      if (status && failed) {
+        status.textContent = '执行失败';
+        status.className = 'tcard-status fail';
+        status.dataset.error = (event.text || '').trim(); // 悬停 CSS 浮窗数据源
+        card.classList.add('error');
+      }
+      const preview = card.querySelector('.skill-preview');
+      if (preview) {
+        preview.hidden = false;
+        preview.innerHTML = '';
+        preview.appendChild(renderMarkdown(reasoningDisplayText(event.text || '（无输出）'), true));
+      }
+      return;
+    }
     const card = (event.toolCallId && t.toolCards.get(event.toolCallId)) || t.lastOpenToolCard;
     if (!card) return;
     const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
-    const badge = card.querySelector('.badge');
-    if (badge) {
-      badge.className = 'badge ' + (failed ? 'badge-fail' : 'badge-ok');
-      badge.textContent = failed ? '✗ 失败' : '✓ 成功';
+    // 运行态收尾（对齐 ZCode ToolLayout）：类别词扫光停止；成功态状态槽留空（报忧不报喜），
+    // 失败态槽内点线「执行失败」+ 悬停 title 看错误全文（statusLabel+tooltip 语义）
+    const label = card.querySelector('.tcard-label');
+    if (label) label.classList.remove('sweep');
+    const status = card.querySelector('.tcard-status');
+    if (status && failed) {
+      status.textContent = '执行失败';
+      status.className = 'tcard-status fail';
+      status.dataset.error = (event.text || '').trim(); // 悬停 CSS 浮窗数据源
+      card.classList.add('error');
+      // 失败态不展开（M29 工单 12 用户裁定：错误全文只在悬停浮窗）——收起已开的展开体
+      const openBody = card.querySelector('.tcard-body');
+      if (openBody) { openBody.style.display = 'none'; card.classList.remove('open'); }
     }
-    if (failed) card.classList.add('error');
-    // 结果体可折叠；治理提醒（[提醒] 前缀）拆出为独立标注块
+    // 旧式实卡（成果申报等 .card 族）徽标收尾：成功移除 ⟳ 运行中（报忧不报喜，
+    // 与行卡口径一致）；失败换失败徽标。回放/完成后 ⟳ 永挂即此缺口。
+    const legacyBadge = card.querySelector('.tool > .badge');
+    if (legacyBadge) {
+      if (failed) {
+        legacyBadge.className = 'badge badge-fail';
+        legacyBadge.textContent = '✗ 失败';
+        legacyBadge.title = (event.text || '').trim();
+      } else {
+        legacyBadge.remove();
+      }
+    }
+    // 治理提醒（[提醒] 前缀）拆出为独立标注块
     const text = event.text || '';
     const remindIdx = text.indexOf('[提醒]');
     const resultPart = remindIdx >= 0 ? text.slice(0, remindIdx).trim() : text;
     const remindPart = remindIdx >= 0 ? text.slice(remindIdx).trim() : '';
-    if (resultPart) {
-      const details = document.createElement('details');
-      details.className = 'result';
-      const summary = document.createElement('summary');
-      summary.textContent = '▸ 结果（点击展开/收起）';
-      const body = document.createElement('div');
-      body.className = 'result-body';
-      body.textContent = resultPart;
-      details.append(summary, body);
-      card.appendChild(details);
+    // 结果统一填入行卡展开体（M29 工单 12「行 = 摘要，点行 = 展开结果」模型）：
+    // 结果盒 mono 直出在 body 内；失败卡不填（不展开，错误全文走悬停浮窗——用户裁定）。
+    if (['edit', 'write', 'todo_write', 'memory_write'].includes(event.toolName) && !failed) {
+      return; // 成功免结果段：diff/文件行/清单内联/记忆行卡已是结果语义
+    }
+    const body = card.querySelector('.tcard-body');
+    if (body && !failed && resultPart) {
+      const box = document.createElement('div');
+      box.className = 'result-inbody';
+      // 展开体 = 干净代码块直出（用户裁定：对齐模型引用块形态——mono 12 单块，
+      // 不走 markdown 解析：缩进行不会被误识别成代码块、退出码不会成孤段）
+      const pre = document.createElement('pre');
+      pre.textContent = resultPart || '（无输出）';
+      box.appendChild(pre);
+      body.appendChild(box);
     }
     if (remindPart) {
       const remind = document.createElement('div');
@@ -674,7 +1031,8 @@ const render = (() => {
   }
 
   /** HITL 交互卡（审批 / 计划呈交 / 提问共用骨架）：事件委托接管点击，无需逐卡挂监听。 */
-  function interactiveCard(event) {
+  function interactiveCard(event, dockPending) {
+    if (dockPending) { interactionDockCard(event); return; }
     showMessages();
     const isPlan = event.toolName === 'exit_plan_mode';
     const card = document.createElement('div');
@@ -721,16 +1079,73 @@ const render = (() => {
       free.innerHTML = '<input placeholder="打回时给模型的修改意见…"><button class="choice" data-action="plan-reject">打回</button>';
       card.appendChild(free);
     }
+    (dockPending ? document.querySelector('#interactionDock') || t.container : t.container).appendChild(card);
+    scroll();
+    return card;
+  }
+
+  /** ask_user 冻结摘要行（M29 工单 12 用户裁定：历史只留问题与回答，不渲染选择卡）——
+   *  ZCode ask-question 冻结行同款：问题（深色）+ 答案（浅色副行）。 */
+  function askFrozenLine(question, answer) {
+    showMessages();
+    // 行=「询问用户 + 问题摘要」，点行展开问题全文与用户选择的内容（统一行卡模型）
+    const { card, body } = typedCardShell({
+      icon: 'lightbulb', label: '询问用户',
+      primary: question || '（提问）',
+    });
+    card.querySelector('.tcard-primary').title = question || ''; // 行上截断，悬停看全文
+    const q = document.createElement('div');
+    q.className = 'ask-frozen-q';
+    q.textContent = question || '（提问）';
+    body.appendChild(q);
+    if (answer) {
+      const a = document.createElement('div');
+      a.className = 'ask-frozen-a';
+      a.textContent = answer;
+      body.appendChild(a);
+    }
     t.container.appendChild(card);
     scroll();
     return card;
   }
 
-  /** 提问卡（ask_user 经 tool/call 呈现：问题 + 选项 + 自由输入）。 */
-  function questionCard(event) {
+  /** 交互卡底部停靠（M29 工单 12 对齐 ZCode bottom dock）：待答卡脱离消息流渲染在
+   *  #interactionDock（composer 上方），并遮蔽 composer（isBlockedByInteraction 同款
+   *  ——回答/收口后由 resolveInteractionDock 恢复）。回放路径不走 dock（历史交互卡
+   *  在消息流内冻结呈现）。 */
+  function interactionDockCard(event) {
+    const dock = document.querySelector('#interactionDock');
+    if (!dock) return;
+    dock.innerHTML = '';
+    dock.hidden = false;
+    document.querySelector('.composer').style.display = 'none';
+    if (event.toolName === 'ask_user') questionCard(event, false, dock);
+    else interactiveCard(event, false, dock);
+    scroll();
+  }
+
+  /** dock 卡收口：待答卡移入消息流（保留作答态 DOM，历史完整）、恢复 composer。 */
+  function resolveInteractionDock() {
+    const dock = document.querySelector('#interactionDock');
+    const card = dock?.querySelector('.interactive');
+    if (card) {
+      t.container.appendChild(card);
+      showMessages();
+    }
+    if (dock) {
+      dock.innerHTML = '';
+      dock.hidden = true;
+    }
+    document.querySelector('.composer').style.display = '';
+    scroll();
+  }
+
+  /** 构建 ask_user 提问卡 DOM（dock/消息流两用，纯构建不挂载）。 */
+  function questionCard(event, dockPending, mountEl) {
     // 挂起期去重（镜像计划卡先例）：question/requested 已渲染在途卡时，完成时的
     // tool/call 不再重复出卡（tool/result 随后冻结在途卡）
     if (t.container.querySelector('.interactive[data-tool-name="ask_user"]')) return;
+    if (dockPending) { interactionDockCard(event); return; } // 走统一 dock（M29 工单 12 停靠模型）
     showMessages();
     let question = event.text || '';
     let options = [];
@@ -764,7 +1179,7 @@ const render = (() => {
     free.className = 'free-input';
     free.innerHTML = '<input placeholder="或直接输入你的回答…"><button class="choice" data-action="answer-free">回答</button>';
     card.appendChild(free);
-    t.container.appendChild(card);
+    (mountEl || t.container).appendChild(card);
     scroll();
     return card;
   }
@@ -787,6 +1202,7 @@ const render = (() => {
 
   /** approval/decided 回放/实时：按 toolName 找最后一张同工具交互卡冻结。 */
   function approvalDecided(event) {
+    resolveInteractionDock(); // dock 待答审批卡移入消息流（M29 工单 12 停靠模型）
     const denied = (event.text || '').startsWith('deny');
     const cards = $$('.interactive', t.container).filter(c => c.dataset.toolName === (event.toolName || ''));
     const card = cards[cards.length - 1];
@@ -893,15 +1309,25 @@ const render = (() => {
    * completed 按 id 回填终态——「已被中止」「未正常完成」分别呈中断/失败，
    * 正常完成呈完成态 + 结果概要折叠 + 子会话回放入口。
    */
+  /** 子代理名 hash 8 色（M29 工单 12；subagentColors 思路——同名同色、异名散开）。 */
+  function agentColorClass(name) {
+    let h = 0;
+    for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return 'agent-color-' + (h % 8);
+  }
+
   function subagentSpawned(event) {
     showMessages();
     let task = event.text || '';
     try { task = JSON.parse(event.text || '{}').task || task; } catch (e) { /* 纯文本载荷 */ }
     const card = document.createElement('div');
-    card.className = 'card subagent';
-    card.innerHTML = '<div class="tool">🤖 <b></b> <span class="badge badge-run">⟳ 运行中</span></div>'
+    card.className = 'tcard subagent'; // M29 工单 12 无框化
+    card.innerHTML = '<div class="tool">🤖 <b>子任务</b> · <span class="agent-name"></span> <span class="badge badge-run">⟳ 运行中</span></div>'
       + '<div class="subagent-task"></div>';
-    card.querySelector('b').textContent = '子任务 · 模板 ' + (event.toolName || '');
+    const nameSpan = card.querySelector('.agent-name');
+    nameSpan.className = 'agent-name ' + agentColorClass(event.toolName || '');
+    nameSpan.textContent = event.toolName || '';
+    nameSpan.title = event.toolName || ''; // 悬停全名（截断兜底，ZCode AgentNameText 同款）
     card.querySelector('.subagent-task').textContent = task;
     card.dataset.task = task; // 抽屉开场语境（打开入口据此携带任务描述）
     if (event.toolCallId) {
@@ -984,33 +1410,61 @@ const render = (() => {
       todoPanel.clear(); // 新轮开始：上一轮清单使命结束（与 todoProjection 清空语义一致）
     }
     else if (ev.type === 'assistant/chunk') chunk(ev.text);
-    else if (ev.type === 'assistant/reasoning') { if (!replaying) reasoningStream(ev.text); }
+    // 思考增量实时与回放同渲染（M29 工单 12 自测修复）：anthropic 形态的思考随工具轮
+    // 发生（message 收口无思考），回放若跳过增量则工具轮思考全丢——轮次封段由
+    // tool/call 的 finalizeReasoningStream 统一处理，实时/回放同构
+    else if (ev.type === 'assistant/reasoning') reasoningStream(ev.text);
     else if (ev.type === 'assistant/message') finishAssistant(ev.text, ev.reasoning);
     else if (ev.type === 'tool/call') {
+      // 工具调用出现 = 上一轮思考与叙述结束（M29 工单 12 执行序修复）：流式思考卡与
+      // 叙述气泡就地定段，工具卡与后续内容按真实执行序追加——实时与回放同构
+      finalizeReasoningStream();
+      sealStreamingBubble();
       // ask_user 的 tool/call 按成对提交设计在完成后才落盘：实时流里问题卡已由
       // question/requested 前置事件渲染（BUG-20260929-01），补渲染只会出重复卡；
       // 仅回放（旧会话无前置事件）时由 tool/call 出卡
-      if (ev.toolName === 'ask_user') { if (!replaying) return; questionCard(ev); }
-      else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev);
+      if (ev.toolName === 'ask_user') {
+        // 回放不渲染选择卡（M29 工单 12 用户裁定：历史只留问题与回答摘要，
+        // ZCode ask-question 冻结行同款）——实时待答走 dock，收口时在消息流
+        // 补冻结摘要行；旧会话（无 tool/result 收尾）回退只渲染问题行
+        if (replaying) {
+          const q = (() => { try { return JSON.parse(ev.text || '{}').question || ''; } catch (e) { return ''; } })();
+          // 登记冻结卡：tool/result 到达时按 toolCallId 找回这张卡补回答——
+          // 防同一次提问被 call/result 两条回放路径冻结两次（call 冻结问题 + result 再冻一对占位）
+          const card = render.askFrozenLine(q || ev.text, null);
+          if (ev.toolCallId) t.toolCards.set(ev.toolCallId, card);
+          return;
+        }
+        return; // 实时待答卡走 dock
+      }
+      else if (ev.toolName === 'exit_plan_mode') interactiveCard(ev); // 计划呈交卡恒在消息流（不走 dock）
       else if (ev.toolName === 'todo_write') todoCard(ev);
-      // present 成果卡（M29 工单 07）：数据源 = tool/call 参数 files（校验结果由
-      // tool/result 徽标回填）；deliverable/presented 事件保持静默忽略——防同动作
-      // 双卡（其消费方为检索索引与导出交付清单，不渲染），勿在此链为其加分发分支
-      else if (ev.toolName === 'present') deliverableCard(ev);
-      else toolCall(ev);
+      else {
+        // present 退役（M29 工单 12 用户裁定）：工具停注册；历史 tool/call 回放走通用卡
+        // 兜底（不炸）；deliverable/presented 事件保持静默（消费方为检索索引与导出）
+        // 工具卡分型（M29 工单 12）：每类工具专属形态，未分型回退通用卡
+        if (ev.toolName === 'bash') terminalCard(ev);
+        else if (ev.toolName === 'edit') editCard(ev);
+        else if (ev.toolName === 'write' || ev.toolName === 'read') fileCard(ev);
+        else if (ev.toolName === 'skill') skillCard(ev);
+        else if (ev.toolName === 'memory_write') memoryCard(ev);
+        else toolCall(ev);
+      }
     } else if (ev.type === 'tool/result') toolResult(ev);
     else if (ev.type === 'todo/write') todoPanel.update(ev.text);
     else if (ev.type === 'question/requested') {
       // 提问前置事件（BUG-20260929-01）：ask 前落盘携请求 id——提问卡据此在挂起期间
-      // 实时渲染；完成时的 tool/call 因同卡在途被 questionCard 内去重跳过
-      questionCard(ev);
+      // 实时渲染；完成时的 tool/call 因同卡在途被 questionCard 内去重跳过。
+      // 回放跳过（M29 工单 12 用户裁定）：历史由 ask_user 冻结摘要行呈现，不留选择卡
+      if (replaying) return;
+      questionCard(ev, true); // 实时待答卡走 dock
     }
     else if (ev.type === 'approval/requested') {
       // 计划复核双留痕去重（BUG-20260917-04 后续）：同会话内 tool/call 已渲染计划卡时，
       // 审计事件不再重复渲染；跨会话场景（CLI 发起、Web 作答）本会话无 tool/call，照常渲染
       if (ev.toolName === 'exit_plan_mode' &&
           t.container.querySelector('.interactive[data-tool-name="exit_plan_mode"]')) return;
-      interactiveCard(ev);
+      interactiveCard(ev, !replaying); // 实时待答卡走 dock（回放进消息流冻结）
     }
     else if (ev.type === 'approval/decided') approvalDecided(ev);
     else if (ev.type === 'subagent/spawned') subagentSpawned(ev);
@@ -1071,6 +1525,8 @@ const render = (() => {
   return {
     user, assistant, chunk, finishAssistant, toolCall, toolResult,
     interactiveCard, questionCard, approvalDecided, resolveCard,
+    resolveInteractionDock, // M29 工单 12 停靠模型：§4 委托层乐观收口调用（IIFE 边界暴露）
+    askFrozenLine, // M29 工单 12：§3 回放冻结摘要行调用（IIFE 边界暴露）
     resetToHero, resetForReplay, showMessages, dispatch, prependEvents, replayInto
   };
 })();
@@ -1167,7 +1623,9 @@ const app = (() => {
   let currentSessionId = '';
 
   // ---- 交互卡事件委托：#messages 上统一接管 data-action 点击 ----
-  $('#messages').addEventListener('click', async (e) => {
+  // 交互卡事件委托（M29 工单 12 停靠模型）：#messages 与 #interactionDock 两容器
+  // 共用同一处理器——dock 待答卡在独立容器里，点击也要进委托
+  const interactionDelegate = async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const card = btn.closest('.interactive');
@@ -1180,10 +1638,14 @@ const app = (() => {
         const always = decision.startsWith('always-');
         render.resolveCard(card, always ? '✓ 已作答（总是允许请求已提交）'
             : (decision === 'reject' ? '✗ 已拒绝' : '✓ 已批准'), decision !== 'reject');
+        // dock 待答卡乐观收口（M29 工单 12）：回答即恢复 composer——tool/result 的
+        // ask_user 收尾要等整轮 LLM 回复完才落盘，dock 不等它（消息流冻结已就位）
+        if (card.closest('#interactionDock')) render.resolveInteractionDock();
         await api.answer({ id: card.dataset.cardId, decision });
       } else if (action === 'answer-value') {
         const value = btn.dataset.value || '';
         render.resolveCard(card, '✓ 已回答：' + value, true);
+        if (card.closest('#interactionDock')) resolveInteractionDock();
         await api.answer({ id: card.dataset.cardId, answers: [value] });
       } else if (action === 'answer-free') {
         const input = $('.free-input input', card);
@@ -1222,6 +1684,24 @@ const app = (() => {
     } catch (err) {
       render.assistant('[未处理异常] ' + (err instanceof Error ? err.message : String(err)));
     }
+  };
+  $('#messages').addEventListener('click', interactionDelegate);
+  $('#interactionDock').addEventListener('click', interactionDelegate);
+
+  // ---- 失败浮窗定位（M29 工单 12）：词下方居中 + 钳制卡界内——纯 CSS 锚点要么越中栏
+  //      （锚词、词靠左时左穿）要么偏（锚卡右缘、词在左时距离远），故悬停时 JS 算一次
+  //      写 CSS 变量（--fly-left 相对词），伪元素照渲染；mouseover 委托、每次重算（廉价）。
+  $('#messages').addEventListener('mouseover', (e) => {
+    const word = e.target.closest('.tcard-status.fail');
+    if (!word) return;
+    const wr = word.getBoundingClientRect();
+    const card = word.closest('.tcard');
+    if (!card) return;
+    const cr = card.getBoundingClientRect();
+    const w = cr.width / 2 - 8; // 浮窗占中栏内容宽一半（与 CSS 50cqw-8px 同口径）
+    let left = wr.left + wr.width / 2 - w / 2; // 理想：词下方居中
+    left = Math.max(cr.left + 8, Math.min(left, cr.right - 8 - w)); // 钳到卡（中栏）界内
+    word.style.setProperty('--fly-left', Math.round(left - wr.left) + 'px');
   });
 
   // ---- 子任务抽屉（M15 工单 05）：完成态子任务卡的"查看子任务全程"——从右侧滑出，

@@ -14,6 +14,7 @@
     --text: #1a1f27;
     --text-dim: #6b7280;
     --text-faint: rgba(26, 31, 39, 0.4); /* M29 工单 06：极浅字色（思考折叠卡，对标 ZCode foreground-subtlest） */
+    --sweep-strong: var(--text-dim); --sweep-soft: var(--text-faint); /* M29 工单 12：运行态扫光两端/中点色（附录 A3 映射） */
     --danger: #dc2626;
     --danger-tint: #fef2f2;
     --ok: #16a34a;
@@ -21,7 +22,7 @@
     --shadow-lv2: 0 4px 12px rgba(0, 0, 0, 0.02), 0 2px 8px rgba(0, 0, 0, 0.04);
     --radius: 16px;
     --radius-sm: 12px;
-    --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace; /* CJK 补齐对齐 ZCode styles.css:138-141（Consolas 无中文字形会落宋体） */
   }
   * { box-sizing: border-box; margin: 0; }
   body {
@@ -49,10 +50,10 @@
     letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center;
   }
   h2 .hint { font-weight: 400; font-size: 11px; }
-  #messages { flex: 1; overflow-y: auto; padding: 16px; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; font-size: 14px; } /* 正文区基准 14px（两档制：文字 14/代码 12；气泡此前继承 body 16px 是漏网） */
 
   /* ===== §样式层 · 消息形态 ===== */
-  .msg { margin-bottom: 14px; line-height: 1.75; letter-spacing: 0.02em; } /* M29 W7：对齐 ZCode 阅读密度 */
+  .msg { margin-bottom: 16px; line-height: 1.75; letter-spacing: 0.02em; } /* M29 工单 12：元素间距统一 16px（ZCode gap-4）+ 阅读密度对齐 */
   .msg.user { text-align: right; }
   .msg.user .bubble.cmd {
     font-family: var(--mono);
@@ -62,7 +63,7 @@
   }
   .msg.cmdresult {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-dim);
     white-space: pre-wrap;
     margin: 2px 0 6px;
@@ -74,7 +75,7 @@
   }
   .msg.assistant { max-width: 92%; }
   /* ===== §样式层 · 思考折叠卡（M29 工单 06：思考模型完成态；原生 details 零依赖，默认收起） ===== */
-  details.reasoning { font-size: 13px; }
+  details.reasoning { font-size: 14px; } /* M29 工单 12 用户裁定：思考触发行与正文同字号（浅色降级见 summary/body） */
   details.reasoning summary {
     list-style: none; cursor: pointer; user-select: none;
     display: inline-flex; align-items: center; gap: 6px;
@@ -83,8 +84,10 @@
   details.reasoning summary::-webkit-details-marker { display: none; }
   details.reasoning summary::after {
     content: '▸'; font-size: 10px;
-    transition: transform 0.2s ease;
+    /* ZCode ToolSummaryRow chevron 同款：默认隐藏，悬停浮现，展开常显+旋转 90° */
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
   }
+  details.reasoning summary:hover::after, details.reasoning[open] summary::after { opacity: 1; }
   details.reasoning[open] summary::after { transform: rotate(90deg); }
   details.reasoning[open] summary, details.reasoning summary:hover { color: var(--text-dim); }
   .reasoning-body {
@@ -95,14 +98,16 @@
     max-height: 240px; overflow-y: auto;
   }
   /* ===== §样式层 · Markdown 渲染体（模型回复收口后整段渲染） ===== */
-  .md-body { line-height: 1.65; }
+  .md-body { line-height: 1.75; } /* M29 工单 12：与 .msg 行高统一 */
+  .reasoning-body .md-body { white-space: normal; } /* 定稿思考走 markdown：关掉父级 pre-wrap——
+      marked 输出的 </p>\n<p> 字面换行被 pre-wrap 显示成整行空隙（段间隙 24.5+8=32.5px）；
+      流式期纯文本直出无 .md-body 包裹，不受此规则影响 */
   .md-body p { margin: 0 0 8px; }
   .md-body p:last-child { margin-bottom: 0; }
   .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { margin: 12px 0 6px; line-height: 1.4; }
   .md-body h1 { font-size: 1.3em; }
   .md-body h2 { font-size: 1.2em; }
-  .md-body h3 { font-size: 1.1em; }
-  .md-body h4, .md-body h5, .md-body h6 { font-size: 1.05em; }
+  .md-body h3, .md-body h4, .md-body h5, .md-body h6 { font-size: 1em; } /* ZCode message.tsx:443-446：h3-h6 压平 base 14px，仅靠字重区分 */
   .md-body ul, .md-body ol { margin: 0 0 8px; padding-left: 22px; }
   .md-body li { margin: 2px 0; }
   .md-body code {
@@ -134,9 +139,9 @@
   .card {
     border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 10px 12px; margin-bottom: 12px; background: var(--surface-2);
-    box-shadow: var(--shadow-lv1); font-size: 13px;
+    box-shadow: var(--shadow-lv1); font-size: 14px;
   }
-  .card .tool { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .card .tool { font-family: var(--mono); font-size: 14px; color: var(--text-dim); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
   .card .tool b { color: var(--brand-strong); }
   .card pre {
     font-family: var(--mono); font-size: 12px; background: var(--surface);
@@ -144,18 +149,31 @@
     white-space: pre-wrap; word-break: break-all;
   }
   .badge {
-    font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px;
+    font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 99px; /* M29 工单 12：徽标对齐代码档 12px（用户裁定） */
     display: inline-flex; align-items: center; gap: 4px;
   }
   .badge-ok { background: #dcfce7; color: var(--ok); }
   .badge-fail { background: var(--danger-tint); color: var(--danger); }
   .badge-run { background: var(--brand-tint); color: var(--brand-strong); }
   details.result { margin-top: 8px; }
+  /* M29 工单 12 ZCode 式折叠指示：无文字标签（「结果/参数」字样退役）——chevron
+     常显旋转指示 + 可选行数缀；悬停加深提示可点 */
   details.result summary {
-    cursor: pointer; font-size: 12px; color: var(--text-dim); user-select: none;
+    list-style: none; cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--text-faint); padding: 2px 4px;
+    border-radius: 4px;
   }
+  details.result summary::-webkit-details-marker { display: none; }
+  details.result summary::before {
+    content: '▸'; font-size: 10px;
+    transition: transform 0.2s ease;
+  }
+  details.result[open] summary::before { transform: rotate(90deg); }
+  details.result summary:hover { color: var(--brand-strong); }
+  details.result summary.fail-hint { color: var(--danger); font-weight: 500; }
   details.result .result-body {
-    font-family: var(--mono); font-size: 12px; background: var(--surface);
+    font-family: var(--mono); font-size: 14px; background: var(--surface);
     border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px;
     white-space: pre-wrap; word-break: break-all;
   }
@@ -163,7 +181,7 @@
   .card.error .tool, .card.error .tool b { color: var(--danger); }
   .remind {
     border-left: 3px solid var(--brand); padding: 6px 10px;
-    color: var(--text-dim); font-size: 12px; margin-bottom: 12px; background: var(--brand-tint);
+    color: var(--text-dim); font-size: 14px; margin-bottom: 12px; background: var(--brand-tint);
     border-radius: 0 8px 8px 0;
   }
 
@@ -171,14 +189,14 @@
   .interactive { border-color: var(--brand); background: var(--surface); }
   .interactive .question { font-weight: 600; margin-bottom: 8px; }
   .interactive pre.plan {
-    font-family: var(--mono); font-size: 12px; background: var(--surface-2);
+    font-family: var(--mono); font-size: 14px; background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 8px 0;
     white-space: pre-wrap;
   }
   .choices { display: flex; flex-direction: column; gap: 6px; }
   .choice {
     text-align: left; padding: 8px 12px; border: 1px solid var(--border);
-    border-radius: 10px; background: var(--surface); cursor: pointer; font: inherit; font-size: 13px;
+    border-radius: 10px; background: var(--surface); cursor: pointer; font: inherit; font-size: 14px; /* ZCode PermissionDialog.tsx:815/819：审批选项行 text-ui-base */
   }
   .choice:hover { border-color: var(--brand); background: var(--brand-tint); }
   .choice.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
@@ -186,7 +204,7 @@
   .free-input { display: flex; gap: 6px; margin-top: 6px; }
   .free-input input {
     flex: 1; padding: 7px 10px; border: 1px solid var(--border);
-    border-radius: 8px; font: inherit; font-size: 13px; outline: none;
+    border-radius: 8px; font: inherit; font-size: 14px; outline: none;
   }
   .free-input input:focus { border-color: var(--brand); }
 
@@ -195,11 +213,18 @@
   .todo-fold {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-lv1);
-    padding: 8px 12px; font-size: 13px;
+    padding: 8px 12px; font-size: 14px; /* 14 基准对齐（旧 /todo 折叠路径仍存活） */
   }
   .todo-fold summary { cursor: pointer; color: var(--text-dim); user-select: none; }
   .todo-fold summary:hover { color: var(--text); }
   .todo-list { list-style: none; margin: 8px 0 2px; padding: 0; display: none; }
+  .todo-list .todo-list-body { /* M29 工单 12：todoCard 点行展开的清单体 */ }
+  .todo-item { display: flex; align-items: center; gap: 6px; padding: 1px 10px; font-size: 14px; }
+  .todo-item .ticon { flex-shrink: 0; }
+  .todo-item.completed { color: var(--text-faint); text-decoration: line-through; } /* ZCode todo.tsx:17 划线+最浅色 */
+  .todo-item.completed .ticon { color: var(--ok); }
+  .todo-item.in_progress .ticon { color: var(--text); } /* 静态右箭头（ZCode 注释：避免与加载动画语义混淆） */
+  .todo-item.pending .ticon { color: var(--text-faint); }
   .todo-fold[open] .todo-list { display: block; }
   .todo-list li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
   /* 圆圈三态（DSH 同款形态）：completed 实圆带勾 / in_progress 品牌色圆环呼吸 / pending 虚线圆 */
@@ -228,7 +253,7 @@
     color: var(--text-dim); text-decoration: line-through;
   }
   /* 工具行内联摘要（todo_write 调用卡头行） */
-  .todo-inline { color: var(--text-dim); font-size: 12px; }
+  .todo-inline { color: var(--text-dim); font-size: 14px; }
 
   /* ===== §样式层 · 输入区 ===== */
   .composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); position: relative; }
@@ -264,12 +289,16 @@
   #send.stop { background: var(--danger); }
   #send.stop:hover { background: var(--danger); filter: brightness(0.9); }
   /* 中断标记（用户主动停止的中性呈现——非执行异常，不弹错误卡） */
-  .interrupted-mark { margin: 6px 0 2px; font-size: 12px; color: var(--text-dim); }
+  .interrupted-mark { margin: 6px 0 2px; font-size: 14px; color: var(--text-dim); }
 
   /* ===== §样式层 · 成果卡片（M29 工单 07：present 专属卡，每文件一张 ZCode 式
      预览卡——AssistantPreviewCards 形态：图标底座 + 文件名/副标题 + 动作按钮） ===== */
-  .deliverable-count { color: var(--text-dim); font-size: 12px; }
+  .deliverable-count { color: var(--text-dim); font-size: 14px; }
   .deliverable-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 2px; }
+  .preview-cards { /* 产物预览卡组（present 退役接棒，ZCode AssistantPreviewCards 同语义）：
+      回复定稿时自动提取产物路径成卡，挂在助手气泡之后 */
+    display: flex; flex-direction: column; gap: 6px; margin: 16px 0 0; /* 与 .msg 统一 16px */
+  }
   .file-preview-card {
     display: flex; align-items: center; gap: 12px; width: 100%;
     border: 1px solid var(--border); border-radius: 12px;
@@ -285,11 +314,11 @@
     display: flex; flex-direction: column; gap: 2px;
   }
   .file-preview-title {
-    font-size: 13px; font-weight: 500;
+    font-size: 14px; font-weight: 500;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .file-preview-sub {
-    font-size: 12px; color: var(--text-faint);
+    font-size: 14px; color: var(--text-faint);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .file-copy-btn {
@@ -329,15 +358,164 @@
   /* ===== §样式层 · 工具卡参数摘要（M29 W5：摘要行 + 参数原文折叠） ===== */
   .md-body pre, pre.param-summary { margin: 0 0 6px; }
   pre.param-summary {
-    font-family: var(--mono); font-size: 12px;
+    font-family: var(--mono); font-size: 14px;
     white-space: pre-wrap; word-break: break-all;
   }
-  details.params > summary { cursor: pointer; user-select: none; font-size: 11px; color: var(--text-dim); }
-  details.params > pre {
-    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
-    white-space: pre-wrap; word-break: break-all;
-    background: var(--surface-2); border-radius: 6px; padding: 6px 8px; margin: 4px 0 0;
+
+  /* ===== §样式层 · ask_user 冻结摘要行（M29 工单 12：历史只留问题与回答，无选择卡） ===== */
+  .ask-frozen-q { font-size: 14px; color: var(--text); margin-bottom: 4px; }
+  .ask-frozen-a { font-size: 14px; color: var(--text-dim); }
+
+  /* ===== §样式层 · 工具卡分型（M29 工单 12 百分百对齐：ZCode ToolLayout 行式形态） ===== */
+  /* 行卡（M29 用户裁定：无卡片边框，融入对话流——收起态就是一行摘要，无边框无背景；
+     主体内容盒自绘边框；HITL 交互卡与成果预览大卡保持有框实卡——ZCode 同款分工） */
+  .tcard { margin-bottom: 16px; container-type: inline-size; position: relative; } /* 与 .msg 统一 16px；容器声明供浮窗 cqw 钳宽；relative 供失败浮窗锚卡右缘 */
+  .tcard-label.sweep { /* 运行态扫光（ZCode styles.css:823-842 移植，工单 05 附录 A1）：替代 spinner 徽标 */
+    background: linear-gradient(90deg, var(--sweep-strong) 0%, var(--sweep-strong) 34%,
+      var(--sweep-soft) 50%, var(--sweep-strong) 66%, var(--sweep-strong) 100%);
+    background-size: 300% 100%;
+    background-clip: text; -webkit-background-clip: text;
+    color: transparent; -webkit-text-fill-color: transparent;
+    animation: sweep-flow 4s linear infinite;
+    will-change: background-position; transform: translateZ(0); backface-visibility: hidden;
   }
+  @keyframes sweep-flow {
+    0% { background-position: 100% 0; }
+    50% { background-position: 0% 0; }
+    100% { background-position: 0% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tcard-label.sweep { animation: none; color: var(--sweep-strong); -webkit-text-fill-color: currentColor; }
+  }
+  /* 失败态行文字不染色（M29 工单 12 用户裁定：只有状态词「执行失败」浅红，其余保持原色） */
+  .tcard-row {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer; user-select: none;
+    font-size: 14px; color: var(--text-faint); /* M29 工单 12 用户裁定：整行浅灰统一（类别词与摘要同色） */
+  }
+  .tcard-row .ticon { flex-shrink: 0; }
+  .tcard-row .tcard-label { font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+  .tcard-row .tcard-primary {
+    font-size: 14px; /* ZCode execute.tsx:291-296：收起态摘要属正文用 sans，展开体内容才 mono */
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  .tcard-row .tcard-secondary {
+    font-size: 14px; color: var(--text-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  .tcard-row .tcard-status { flex-shrink: 0; }
+  .tcard-status.fail { /* 失败态：四字浅红 + 点线下划线；悬停浮窗见 ::after */
+    color: rgba(220, 38, 38, 0.75); font-size: 14px;
+    text-decoration: underline dotted; text-underline-offset: 2px;
+    position: relative;
+  }
+  .tcard-status.fail:hover::after { /* 浮窗主体：词正下方浮出；水平位置由 JS 悬停时钳制计算
+      （词下方居中 + 卡界内，写入 --fly-left 相对词）——纯 CSS 单锚点无法两全；
+      宽 ≤ min(480px, 100cqw-16px)（cqw=卡内容宽）保证界内；cqw 不识别降级 480px */
+    content: attr(data-error);
+    position: absolute; top: calc(100% + 8px);
+    left: var(--fly-left, 0px);
+    max-width: 50vw; /* 降级先声（不支持 cqw 的浏览器） */
+    max-width: calc(50cqw - 8px); /* 用户裁定：浮窗占中栏内容宽一半 */
+    max-height: 160px; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow-lv2);
+    padding: 8px 10px; font-size: 12px; line-height: 1.6;
+    white-space: pre-wrap; overflow-wrap: break-word;
+    color: var(--danger); text-decoration: none; z-index: 30; cursor: auto;
+  }
+  .tcard-row .diff-count { flex-shrink: 0; }
+  .tcard-chevron { margin-left: auto; flex-shrink: 0; color: var(--text-faint);
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+    display: inline-flex;
+  }
+  .tcard-row:hover .tcard-chevron, .tcard.open .tcard-chevron { opacity: 1; }
+  .tcard.open .tcard-chevron svg { transform: rotate(90deg); }
+  .tcard-chevron svg { transition: transform 0.2s ease; }
+  .tcard-body { padding-top: 6px; } /* 内容盒自绘边框（terminal-box/diff-body/skill-preview） */
+  .result-inbody { /* 行卡展开体（「行=摘要，点行=展开结果」）：机器产出直出干净代码块
+      （mono 12 代码档，对齐模型引用块形态）；文档类内容（记忆/技能）走各自 md 渲染路径 */
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; margin: 2px 0 0;
+    max-height: 240px; overflow-y: auto;
+  }
+  .result-inbody > pre {
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--text);
+    margin: 0; white-space: pre-wrap; overflow-wrap: break-word;
+  }
+  .result-inbody.failed { border-color: var(--danger); background: var(--danger-tint); }
+  .result-inbody.failed > pre { color: var(--danger); }
+  .result-inbody.failed { color: var(--danger); border-color: var(--danger); background: var(--danger-tint); }
+  @media (prefers-reduced-motion: reduce) {
+    .tcard-chevron { opacity: 1; transition: none; }
+    .tcard-chevron svg { transition: none; }
+  }
+  .terminal-box {
+    font-family: var(--mono); font-size: 14px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; margin: 0 0 6px;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 60px; overflow-y: auto; /* M29 工单 12 对齐：超长命令限高（ZCode max-h-15） */
+  }
+  .terminal-box::before { content: '$ '; color: var(--text-faint); }
+  .tool-output { /* bash 输出直出盒（M29 工单 12 段结构重设计：报忧不报喜——输出常显 5 行内滚，ZCode ExecuteOutput 形态） */
+    font-family: var(--mono); font-size: 14px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; margin: 0 0 4px;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 100px; overflow-y: auto;
+    color: var(--text-dim);
+  }
+  .tool-output.failed { color: var(--danger); }
+  .param-raw { /* 通用卡参数原文（无摘要命中时的全量 JSON）；代码档 12px 限高内滚
+      （ZCode fallback.tsx:64 raw JSON 盒形态：rounded bg-surface max-h-50 overflow-auto） */
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; margin: 2px 0 0;
+    white-space: pre-wrap; overflow-wrap: break-word;
+    max-height: 200px; overflow-y: auto;
+  }
+  .diff-count { font-family: var(--mono); font-size: 14px; }
+  .diff-count .add-count { color: var(--ok); }
+  .diff-count .del-count { color: var(--danger); }
+  .diff-body {
+    font-family: var(--mono); font-size: 14px; line-height: 1.5;
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; margin: 0 0 6px; overflow-x: auto;
+    max-height: 240px; overflow-y: auto; /* M29 工单 12 对齐：内滚替代折叠（ZCode max-h-60） */
+  }
+  .diff-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-all; }
+  .diff-line.del { background: rgba(220, 38, 38, 0.08); color: var(--danger); }
+  .diff-line.add { background: rgba(22, 163, 74, 0.08); color: var(--ok); }
+  .diff-line::before { content: attr(data-sign) ' '; font-weight: 600; }
+  .skill-preview { /* M29 工单 12 对齐：技能加载内容限高直出（ZCode max-h-25）；
+      SKILL.md 本就是文档，markdown 渲染（结构化排版，无 pre-wrap） */
+    font-size: 14px; line-height: 1.75; color: var(--text);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; margin: 6px 0 2px;
+    overflow-wrap: break-word;
+    max-height: 100px; overflow-y: auto;
+  }
+  /* 子代理名 8 色对齐 ZCode subagentColors.ts SUBAGENT_TEXT_COLOR_CLASS（亮色 text-*-700），
+     序列同 SUBAGENT_COLORS：amber/rose/orange/emerald/cyan/sky/violet/pink */
+  .agent-color-0 { color: #b45309; } .agent-color-1 { color: #be123c; }
+  .agent-color-2 { color: #c2410c; } .agent-color-3 { color: #047857; }
+  .agent-color-4 { color: #0e7490; } .agent-color-5 { color: #0369a1; }
+  .agent-color-6 { color: #7c3aed; } .agent-color-7 { color: #be185d; }
+  .agent-name { /* M29 工单 12 对齐：max-width 截断 + title 悬停全名（ZCode max-w-36） */
+    display: inline-block; max-width: 144px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    vertical-align: bottom; font-weight: 500;
+  }
+
+  /* ===== §样式层 · 交互卡底部停靠（M29 工单 12：待答卡脱离消息流，停靠 composer 上方，
+     出现时遮蔽 composer——ZCode bottom dock/isBlockedByInteraction 同款） ===== */
+  #interactionDock { display: flex; flex-direction: column; gap: 8px; }
+  #interactionDock[hidden] { display: none; }
+  #interactionDock .card.interactive {
+    border-color: var(--brand); box-shadow: var(--shadow-lv2); /* 待答强调：品牌色边框 + 阴影 */
+  }
+  .composer.hidden-by-interaction { display: none; }
 
   /* ===== §样式层 · 全局提示（toast：基础设施错误可见化，顶部居中） ===== */
   #toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 99; }
@@ -452,7 +630,6 @@
   .sidebar-item.occupied.active { opacity: 1; }
 
   /* ===== M15 子任务卡与子任务抽屉（工单 05） ===== */
-  .card.subagent { border-left: 3px solid var(--brand-strong); }
   .card.subagent .subagent-task {
     font-size: 13px; color: var(--text-dim);
     margin-top: 6px; white-space: pre-wrap; word-break: break-word;

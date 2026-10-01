@@ -274,9 +274,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
         });
         // todo 分解抓手（ADR-0018）：呈现状态工具随装配注册（与交互工具同供给模式）
         PresenterAssembly.registerTodoWriteTool(ctx, tools, holder::current);
-        // 交付声明（M26-04，ADR-0028）：成果上报工具随装配注册——cwd 与会话落盘同源
-        PresenterAssembly.registerPresentTool(ctx, tools, holder::current,
-                Cwd.path());
+        // present 退役（M29 工单 12 用户裁定）：成果申报工具不再注册——与 WebPlugin 同口径
+        // （工具表呈现位间共享，单边摘除不彻底）；交付物呈现改 Web 前端产物预览卡自动推导
         // @file 指南注入（M21 工单 07）：read 在册才注册，双呈现位同源去重——
         // CLI 无补全 UI（一期文本直打），指南照常注入
         PresenterAssembly.registerFileMentionGuide(ctx, tools, prompts);
