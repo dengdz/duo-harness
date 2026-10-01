@@ -25,8 +25,8 @@ duo-harness：Java 多模块（Maven）+ 内嵌 Web UI 的 agent harness，根�
 
 | 命令 | 何时用 |
 |---|---|
-| `/grill-me` | L1 需求动手前打磨方案 |
-| `/grill-with-docs` | 同上，且要沉淀 ADR / 术语表 |
+| `/grill-me` | L1 需求动手前打磨方案（开工先读 `.agents/skills/duo-workflow/references/experience.md`） |
+| `/grill-with-docs` | 同上，且要沉淀 ADR / 术语表（开工先读 `.agents/skills/duo-workflow/references/experience.md`） |
 | `/to-spec` | grill 结论成型后落 spec |
 | `/to-tickets` | spec 拆工单 |
 | `/implement` | 逐工单实现 |
