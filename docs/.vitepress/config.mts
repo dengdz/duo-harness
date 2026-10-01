@@ -16,6 +16,7 @@ export default defineConfig({
     nav: [
       { text: '入门', link: '/01-入门/运行Demo' },
       { text: '指南', link: '/02-指南/组装你的第一个agent' },
+      { text: '高级', link: '/03-高级/技能编写指南' },
       { text: '架构', link: '/04-架构/设计主线' },
       { text: '已知限制', link: '/limitations' },
       { text: 'ADR', link: '/adr/0001-自研插件容器内核' },
@@ -29,6 +30,14 @@ export default defineConfig({
       {
         text: '指南',
         items: [{ text: '组装你的第一个 agent', link: '/02-指南/组装你的第一个agent' }]
+      },
+      {
+        text: '高级',
+        items: [
+          { text: '技能编写指南', link: '/03-高级/技能编写指南' },
+          { text: 'MCP 深入', link: '/03-高级/MCP深入' },
+          { text: '多插件协同', link: '/03-高级/多插件协同' }
+        ]
       },
       {
         text: '架构',
