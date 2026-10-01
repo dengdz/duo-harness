@@ -2,11 +2,11 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
-## 0.26.0（未发布）
+## 0.26.0（2026-10-01）
 
 ### Changed
 
-- **会话持久化 defer 化（M30 工单 05）**：Web/CLI 新建会话只建内存态（ZCode deferred/draft 三层防线对齐）——打开页面、新开标签、服务重启不再产生空会话文件（此前实测 2 天堆积 370 个），首条真实消息到达才落盘（版本头与首事件同批写）；发首条消息前 close/崩溃 = 无文件 = 会话消失；侧栏当前会话在物化前照常显示与收发（合成条目），历史遗留的 0 字节与头-only 空会话由列表防御过滤兜底（侧栏/CLI/检索索引同源干净）；headless、子代理会话与演示入口维持立即落盘形态不变
+- **会话持久化 defer 化（M30 工单 05）**：Web/CLI 新建会话只建内存态（ZCode deferred/draft 三层防线对齐）——打开页面、新开标签、服务重启不再产生空会话文件（此前实测 2 天堆积 370 个），首条真实消息到达才落盘（版本头与首事件同批写）；发首条消息前 close/崩溃 = 无文件 = 会话消失；deferred 当前会话不进侧栏列表（身份经 /api/sessions 顶层 currentId/currentTitle 供前端，缺省「新会话」），发首条消息物化后自然入列；历史遗留的 0 字节与头-only 空会话由列表防御过滤兜底（侧栏/CLI/检索索引同源干净）；headless、子代理会话与演示入口维持立即落盘形态不变
 - **README 门面重写（M30 工单 04）**：五段新门面——一句话定位（0.1.0-0.15.0 演进史压缩为一句指向 CHANGELOG）→ 三行快速开始（JDK 21 + `~/.duo/config.yml` `llm` 段样例【provider/baseUrl/apiKey/model，key 占位符】+ `java -jar duo-harness-<version>.jar` 双面即起 + headless 一句）→ 能力概览八条（当前版本面）→ 模块表 13 行与根 pom 一一对账（补 attachment / session-query / stats 三行，llm 行四 provider，example 行 DuoMain 入口）→ 文档站入口（M1/M2 demo 叙事段删除，运行 Demo 降级文档站）
 
 ### Added
