@@ -4,6 +4,10 @@
 
 ## 0.26.0（未发布）
 
+### Changed
+
+- **README 门面重写（M30 工单 04）**：五段新门面——一句话定位（0.1.0-0.15.0 演进史压缩为一句指向 CHANGELOG）→ 三行快速开始（JDK 21 + `~/.duo/config.yml` `llm` 段样例【provider/baseUrl/apiKey/model，key 占位符】+ `java -jar duo-harness-<version>.jar` 双面即起 + headless 一句）→ 能力概览八条（当前版本面）→ 模块表 13 行与根 pom 一一对账（补 attachment / session-query / stats 三行，llm 行四 provider，example 行 DuoMain 入口）→ 文档站入口（M1/M2 demo 叙事段删除，运行 Demo 降级文档站）
+
 ### Added
 
 - **shade fat-jar 打包（M30 工单 02）**：`mvn package` 产出 `duo-harness-<version>.jar`（约 22MB，Main-Class = DuoMain），`java -jar duo-harness-0.26.0.jar` 一条命令即跑（前提 JDK 21 + `~/.duo/config.yml`）——常驻双呈现位（终端 REPL + 浏览器）与 headless（`--json`）同支持；签名文件排除、META-INF/services 合并、module-info 排除等 shade 标准处理内置。随 0.26.0 发版挂 GitHub Release（M30-03）
