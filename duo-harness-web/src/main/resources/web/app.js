@@ -434,8 +434,10 @@ const render = (() => {
     const seen = new Set();
     const out = [];
     for (const m of (text || '').matchAll(re)) {
-      const p = m[1];
-      if (!p || seen.has(p) || p.length < 4) continue;
+      let p = m[1];
+      // 剥 URL host（https://host/path/x.pdf 会连 host 提取——M29 审查）
+      if (/^[a-z]+:\/\//i.test(p)) p = p.replace(/^[a-z]+:\/\/[^/]+\//i, '/');
+      if (!p || seen.has(p) || p.length < 4 || p.length > 256) continue;
       // 排除代码围栏语言标注（```java）与域名（example.com 无路径斜杠且不在产物扩展白名单内的情况已被正则挡）
       seen.add(p);
       out.push(p);
@@ -880,6 +882,7 @@ const render = (() => {
     row.querySelector('.todo-inline').textContent = todos.length ? todoPanel.summaryText(todos) : '';
     const list = document.createElement('ul');
     list.className = 'todo-list';
+    list.style.display = 'none'; // 内联初始化（首击判定读内联——M29 审查首击无响应修复）
     card.append(row, list);
     row.addEventListener('click', (e) => {
       if (card.classList.contains('error')) return; // 失败卡不展开（同 typedCardShell 口径）
@@ -930,10 +933,9 @@ const render = (() => {
         t.toolCards.delete(event.toolCallId);
         return;
       }
-      if (!t.container.querySelector('.interactive[data-tool-name="ask_user"]')) {
-        const qEvent = [...t.events || []].reverse()
-          .find(e => e.type === 'user/message' || (e.text && e.text.includes('[提问]')));
-        askFrozenLine(qEvent ? (qEvent.text || '').slice(0, 80) : '（提问）', (event.text || '').trim());
+      if (!t.container.querySelector('.interactive[data-tool-name="ask_user"]')
+          && !t.container.querySelector('.ask-frozen')) {
+        askFrozenLine('（提问）', (event.text || '').trim()); // 无卡可冻结的兜底（正常路径 dock 卡已注册按 id 找回）
       } else {
         resolveByToolName('ask_user', '✓ 已回答：' + (event.text || '').trim(), true);
       }
@@ -947,7 +949,7 @@ const render = (() => {
     }
     // skill 结果 = 技能加载内容：填 .skill-preview 限高直出（M29 工单 12 对齐 ZCode 预览形态）
     if (event.toolName === 'skill') {
-      const card = (event.toolCallId && t.toolCards.get(event.toolCallId)) || t.lastOpenToolCard;
+      const card = (event.toolCallId && t.toolCards.get(event.toolCallId)); // 无兜底：缺 id 的结果忽略（M29 审查：旧兜底会误填 todo 卡）
       if (!card) return;
       const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
       const label = card.querySelector('.tcard-label');
@@ -967,7 +969,7 @@ const render = (() => {
       }
       return;
     }
-    const card = (event.toolCallId && t.toolCards.get(event.toolCallId)) || t.lastOpenToolCard;
+    const card = (event.toolCallId && t.toolCards.get(event.toolCallId)); // 无兜底：缺 id 的结果忽略（M29 审查：旧兜底会误填 todo 卡）
     if (!card) return;
     const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
     // 运行态收尾（对齐 ZCode ToolLayout）：类别词扫光停止；成功态状态槽留空（报忧不报喜），
@@ -1003,6 +1005,13 @@ const render = (() => {
     const remindPart = remindIdx >= 0 ? text.slice(remindIdx).trim() : '';
     // 结果统一填入行卡展开体（M29 工单 12「行 = 摘要，点行 = 展开结果」模型）：
     // 结果盒 mono 直出在 body 内；失败卡不填（不展开，错误全文走悬停浮窗——用户裁定）。
+    if (remindPart) {
+      // 治理提醒标注块先于免结果段 return 渲染（M29 审查：提前 return 会吞 [提醒] 段）
+      const remind = document.createElement('div');
+      remind.className = 'remind';
+      remind.textContent = remindPart;
+      t.container.insertBefore(remind, card.nextSibling);
+    }
     if (['edit', 'write', 'todo_write', 'memory_write'].includes(event.toolName) && !failed) {
       return; // 成功免结果段：diff/文件行/清单内联/记忆行卡已是结果语义
     }
@@ -1031,7 +1040,7 @@ const render = (() => {
   }
 
   /** HITL 交互卡（审批 / 计划呈交 / 提问共用骨架）：事件委托接管点击，无需逐卡挂监听。 */
-  function interactiveCard(event, dockPending) {
+  function interactiveCard(event, dockPending, mountEl) {
     if (dockPending) { interactionDockCard(event); return; }
     showMessages();
     const isPlan = event.toolName === 'exit_plan_mode';
@@ -1079,7 +1088,7 @@ const render = (() => {
       free.innerHTML = '<input placeholder="打回时给模型的修改意见…"><button class="choice" data-action="plan-reject">打回</button>';
       card.appendChild(free);
     }
-    (dockPending ? document.querySelector('#interactionDock') || t.container : t.container).appendChild(card);
+    (mountEl || t.container).appendChild(card); // mountEl=dock 时挂 dock（M29 审查：interactionDockCard 对非 ask_user 透传 dock——伪停靠修复）
     scroll();
     return card;
   }
@@ -1127,7 +1136,7 @@ const render = (() => {
   /** dock 卡收口：待答卡移入消息流（保留作答态 DOM，历史完整）、恢复 composer。 */
   function resolveInteractionDock() {
     const dock = document.querySelector('#interactionDock');
-    const card = dock?.querySelector('.interactive');
+    const card = dock?.firstElementChild; // dock 内唯一待答卡（resolveCard 已摘 .interactive 的作答态卡同样要搬运——按类查会 miss 致冻结卡丢失，M29 审查冒烟实锤）
     if (card) {
       t.container.appendChild(card);
       showMessages();
@@ -1180,6 +1189,9 @@ const render = (() => {
     free.innerHTML = '<input placeholder="或直接输入你的回答…"><button class="choice" data-action="answer-free">回答</button>';
     card.appendChild(free);
     (mountEl || t.container).appendChild(card);
+    if (event.toolCallId) {
+      t.toolCards.set(event.toolCallId, card); // dock 冻结回填按 id 找回（M29 审查：未注册致重复冻结行）
+    }
     scroll();
     return card;
   }
@@ -1258,21 +1270,21 @@ const render = (() => {
   /** 中断标记（M23 语义的前端中性呈现）：定格流式气泡 + 灰色标记行——中断是用户
    * 主动操作不是执行异常（回放投影为 [已中断] 前缀气泡，实时/回放语义一致）。 */
   function interruptedMark() {
-    if (t.streamingBubble) {
-      t.streamingBubble.classList.remove('streaming');
-      t.streamingBubble = null;
-    }
     // 中断：两条打字机循环停止；思考卡保留原样（已到内容可见）并补齐 buffer 尾巴，
-    // 正文按「已流出保留」语义整段定稿；引用全清——后续增量不再更新
+    // 正文按「已流出保留」语义整段定稿（引用用局部变量——先冲刷后清状态，M29 审查：
+    // 原实现先置空 streamingBubble 导致 1272 行冲刷恒不执行、未流出字符静默丢失）
+    const bubble = t.streamingBubble;
+    if (bubble) bubble.classList.remove('streaming');
     if (t.typeRAF) { cancelAnimationFrame(t.typeRAF); t.typeRAF = null; }
     if (t.reasoningRAF) { cancelAnimationFrame(t.reasoningRAF); t.reasoningRAF = null; }
     if (t.reasoningStreamBody && t.reasoningBuffer) {
       t.reasoningStreamBody.textContent = t.reasoningBuffer;
     }
-    if (t.streamingBubble && t.chunkBuffer) {
-      t.streamingBubble.innerHTML = '';
-      t.streamingBubble.appendChild(renderMarkdown(t.chunkBuffer, true));
+    if (bubble && t.chunkBuffer) {
+      bubble.innerHTML = '';
+      bubble.appendChild(renderMarkdown(t.chunkBuffer, true));
     }
+    t.streamingBubble = null;
     t.chunkBuffer = '';
     t.reasoningBuffer = '';
     t.reasoningStreamCard = null;
@@ -1382,11 +1394,22 @@ const render = (() => {
 
   /** 重连复位：清空渲染区，等本轮全量回放重建（幂等——重连不该叠加重複历史）。 */
   function resetForReplay() {
+    // 两条打字机 rAF 先取消（对已分离节点空转）；流式状态七字段全清——
+    // tail-snapshot 重连发生在思考/正文流中时，残留引用会把回放增量写进
+    // 幽灵卡（M29 审查 major：思考内容整轮不可见 + 脏 chunkBuffer 拼前缀）
+    if (t.typeRAF) { cancelAnimationFrame(t.typeRAF); t.typeRAF = null; }
+    if (t.reasoningRAF) { cancelAnimationFrame(t.reasoningRAF); t.reasoningRAF = null; }
     t.container.innerHTML = '';
     t.toolCards.clear();
     t.subagentCards.clear();
     t.lastOpenToolCard = null;
     t.streamingBubble = null;
+    t.chunkBuffer = '';
+    t.typeShown = 0;
+    t.reasoningStreamCard = null;
+    t.reasoningStreamBody = null;
+    t.reasoningBuffer = '';
+    t.reasoningShown = 0;
     // todo 面板属于渲染区：整窗替换的基线必须清（/new 与切换会话不经增量回放，
     // 上一会话的清单不得残留——清空后由回放流里的 todo/write 重建终态）
     todoPanel.clear();
@@ -1645,7 +1668,7 @@ const app = (() => {
       } else if (action === 'answer-value') {
         const value = btn.dataset.value || '';
         render.resolveCard(card, '✓ 已回答：' + value, true);
-        if (card.closest('#interactionDock')) resolveInteractionDock();
+        if (card.closest('#interactionDock')) render.resolveInteractionDock();
         await api.answer({ id: card.dataset.cardId, answers: [value] });
       } else if (action === 'answer-free') {
         const input = $('.free-input input', card);
@@ -1669,7 +1692,9 @@ const app = (() => {
         const path = btn.dataset.path || '';
         try {
           await navigator.clipboard.writeText(path);
-          const original = btn.textContent;
+          if (btn.dataset.busy) return; // 双击竞态守卫（M29 审查：二连点永停「✓ 已复制」）
+        btn.dataset.busy = '1';
+        const original = btn.textContent;
           btn.textContent = '✓ 已复制';
           btn.classList.add('copied');
           setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1200);

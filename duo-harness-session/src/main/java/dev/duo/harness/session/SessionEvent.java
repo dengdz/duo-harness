@@ -42,9 +42,10 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
 
     /**
      * 思考流式增量（M29 工单 06：思考模型的思考过程实时通道；text = 增量片段）。
-     * 仅供 Web 实时折叠卡滚动渲染——投影不入消息列表、检索不索引、导出不收录
-     * （思考的权威形态是收口 assistant/message 携带的 reasoning 全文，回放以它
-     * 一次渲染折叠卡，本事件不参与回放渲染）。
+     * 投影不入消息列表、检索不索引、导出不收录（思考的权威形态是收口
+     * assistant/message 携带的 reasoning 全文）。回放端同渲染本事件增量化
+     * （M29 工单 12 勘误：anthropic 形态思考随工具轮发生、message 无 reasoning
+     * 字段，回放跳过会致思考卡整轮丢失——实时/回放同构渲染）。
      */
     public static final String ASSISTANT_REASONING = "assistant/reasoning";
 

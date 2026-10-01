@@ -79,13 +79,18 @@ abstract class StreamingHttpAdapter implements LlmAdapter {
     @Override
     public final LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink) {
         // 缺省思考通道：无交付目标即丢弃增量，聚合行为与两参形态完全一致
-        return streamTurn(request, textSink, r -> { });
+        // （具名单例——三参路径的「已交付」置位以非丢弃形态为准，身份判别用 ==）
+        return streamTurn(request, textSink, DISCARD_REASONING);
     }
+
+    /** 两参形态的缺省思考通道（丢弃 sink 单例）：丢弃形态的思考增量不构成「已流出」。 */
+    private static final Consumer<String> DISCARD_REASONING = r -> { };
 
     @Override
     public final LlmTurn streamTurn(ChatRequest request, Consumer<String> textSink,
                                     Consumer<String> reasoningSink) {
         boolean[] delivered = {false};
+        boolean reasoningLive = reasoningSink != DISCARD_REASONING; // 真实消费方才计「已流出」
         try {
             HttpResponse<InputStream> response = send(request);
             try (InputStream body = idleGuarded(response.body())) {
@@ -95,7 +100,12 @@ abstract class StreamingHttpAdapter implements LlmAdapter {
                 return aggregateTurn(body, text -> {
                     delivered[0] = true;
                     textSink.accept(text);
-                }, reasoningSink);
+                }, reasoning -> {
+                    // 思考增量已交付（真实消费方）同样进入「已流出保留」语义——
+                    // 思考期超时不可重试，否则重试会重复投递思考增量（M29 审查发现）
+                    if (reasoningLive) delivered[0] = true;
+                    reasoningSink.accept(reasoning);
+                });
             }
         } catch (StreamIdleTimeoutException e) {
             throw idleOutcome(e, delivered[0]);

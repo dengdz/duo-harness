@@ -70,6 +70,10 @@ public final class ToolCallingAgent implements ChatAgent {
     private static final String ITERATION_REMINDER =
             "<system-reminder>迭代预算提示：剩余 2 轮（含本轮），请收敛并交付结论（避免被迭代上限截断）。</system-reminder>";
 
+    /** 思考增量 flush 窗口（字符）：聚合到该长度才发 assistant/reasoning 增量事件——
+     *  窗口粒度与前端事件量直接相关（M29 审查：内联魔法值提常量便于追溯与调整）。 */
+    private static final int REASONING_FLUSH_WINDOW_CHARS = 256;
+
     /** 单轮并行池缺省同时在飞上限（ADR-0018；DSH 同款缺省，配置为 1 即完全串行）。 */
     public static final int DEFAULT_MAX_PARALLEL_TOOL_CALLS = 10;
 
@@ -245,7 +249,7 @@ public final class ToolCallingAgent implements ChatAgent {
                             return; // 思考期中断：停 flush 即停事件（正文通道的中断收口同源）
                         }
                         reasoningWindow.append(reasoning);
-                        if (reasoningWindow.length() >= 256) {
+                        if (reasoningWindow.length() >= REASONING_FLUSH_WINDOW_CHARS) {
                             session.append(SessionEvent.assistantReasoning(reasoningWindow.toString()));
                             reasoningWindow.setLength(0);
                         }

@@ -238,3 +238,19 @@ CSS 两条 max-width 与 JS 钳制 Math.min 同步 480→640。实测窄视口�
 **后端**：mvn 全模块 test —— 1080 用例 0 失败 0 错误 BUILD SUCCESS（MCP session terminated 为测试 teardown 预期日志）。
 **浏览器 DOM 回归 22/22**（48a5 演练会话）：图标分配 9 项（2 项初判 ✗ 为断言截断 24 字符假阴性，全 path 复验 ✓）、整行浅灰、正文 14/代码 12、失败浅红四字+不展开+浮窗数据、思考更名+段间隙 8px（复验选多段卡）、询问用户冻结合一、预览卡 4 张、param-raw 唯一残留=present 历史卡无摘要兜底（设计内）。
 **实时冒烟**：第一轮裸调 /api/session/new 未切页面绑定（冒烟方法缺陷非产品缺陷），任务进 48a5——**意外抓出真缺口：present 仍可被调用**（CLI 呈现位 CliPlugin:278 同样注册，工具表呈现位间共享，单边摘除不彻底；模型调用拿到 CLI 旧会话「会话已关闭」错误）。修：CliPlugin 同口径摘注册。第二轮走 UI（＋新话题→发送→轮询）全链路通过：新会话绑定、写入卡实时渲染、回复提及路径、**气泡后预览卡实时成卡（regression2.md）**；状态面验证 present 已退册。
+
+## 工单 11 收口·代码审查修复批（2026-10-01，duo-release-workflow 第四步）
+
+**审查方式**：OCR（merge-base main...0.25.0）Java 侧成功 2 条；前端 3 文件两次系统性超时 → 改派只读代理人工审查（XSS/监听/状态/边界/一致性五维）。**范围口径说明**：本轮覆盖代码轴（工单 11 定义的四轴之一）；测试轴由全量回归（1080 用例）覆盖；spec/文档轴待发版范围裁定后补跑（三章去留改变对照基线）。
+
+**发现与处置（全部修复并验证）**：
+- [critical] dock ask 选项点击 `resolveInteractionDock()` 裸调用 ReferenceError → 后端收不到答案 → render. 前缀修复
+- [major] 非 ask_user 审批卡伪停靠（interactiveCard 无 mountEl，卡进消息流、dock 空挂、composer 被藏）→ interactiveCard 加 mountEl 透传；实时 rm 探针实测 dock 卡正确入坞
+- [major] interruptedMark 先置空后冲刷（死代码）→ 中断时未流出字符静默丢失 → 局部引用先冲刷后清
+- [major] resetForReplay 漏清流式七字段 → 重连后思考增量写进幽灵卡整轮不可见 + 脏 chunkBuffer → 双 rAF 取消 + 七字段重置
+- [major] 实时 ask_user 重复冻结行 + t.events 死引用 → dock 建卡注册 toolCards 按 id 找回补回答
+- [minor] todo 首击无响应（内联 display 初始化）/ remind 段被提前 return 吞 / lastOpenToolCard 兜底误填 / preview 正则剥 URL host+256 上限 / subagent CSS 选择器断链（.card→.tcard）
+- [style] 复制按钮双击竞态守卫；死 CSS 清理（terminal-box/tool-output/param-summary/result-inbody.failed 重复声明/composer.hidden-by-interaction）；SessionEvent javadoc 回放语义勘误
+- **冒烟追加发现**：dock 收口按 .interactive 查卡——resolveCard 先摘类致 miss、冻结卡被 dock innerHTML 吞 → resolveInteractionDock 改 firstElementChild 搬运；rm 探针两轮实测：dock 卡入坞→点拒绝→dock 收口+composer 恢复+**冻结审批卡保留消息流**（修复前被吞）
+
+**回归**：JS ✓、llm+agent 259 用例绿、全模块 1080 用例绿、浏览器 DOM 断言（ask 冻结合一/浅灰/14px/预览卡 4 张回归不破 + dock 三态实测）。
