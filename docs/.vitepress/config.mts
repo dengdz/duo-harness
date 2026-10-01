@@ -32,7 +32,9 @@ export default defineConfig({
         items: [
           { text: '组装你的第一个 agent', link: '/02-指南/组装你的第一个agent' },
           { text: '权限与审批', link: '/02-指南/权限与审批' },
-          { text: '会话管理与恢复', link: '/02-指南/会话管理与恢复' }
+          { text: '会话管理与恢复', link: '/02-指南/会话管理与恢复' },
+          { text: '斜杠命令', link: '/02-指南/斜杠命令' },
+          { text: '模型与思考档位', link: '/02-指南/模型与思考档位' }
         ]
       },
       {
