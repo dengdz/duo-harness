@@ -2,6 +2,8 @@ package dev.duo.harness.example;
 
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.Boot;
+import dev.duo.harness.example.headless.HeadlessArgs;
+import dev.duo.harness.example.headless.HeadlessBoot;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -98,7 +100,7 @@ public final class DuoMain {
      *
      * <p>headless 模式（M23 工单 07）：{@code --json} 在场时按一次性任务驱动——
      * positional 任务文本 + 可选 {@code --session-id}，stdout 输出 NDJSON 事件流，
-     * 进程退出码即成败契约（解析 {@link dev.duo.harness.example.headless.HeadlessArgs}）。
+     * 进程退出码即成败契约（解析 {@link HeadlessArgs}）。
      * 无任务文本等 usage 错误以退出码 2 明确失败（stderr 说明）。</p>
      *
      * <p>失败模式：{@code onRootCreated} 抛出时整树兜底 dispose 后异常上抛
@@ -112,7 +114,7 @@ public final class DuoMain {
      * @throws Exception     Boot 装载失败或挂载回调失败（原样上抛）
      */
     public static void run(String[] args, ContextConsumer onRootCreated) throws Exception {
-        var parsed = dev.duo.harness.example.headless.HeadlessArgs.parse(args);
+        var parsed = HeadlessArgs.parse(args);
         if (parsed.headless()) {
             if (onRootCreated != null) {
                 System.err.println("[headless] --json 模式不支持编程挂载回调，onRootCreated 已忽略");
@@ -123,11 +125,9 @@ public final class DuoMain {
                 System.exit(2);
             }
             if (parsed.useDefaultYml()) {
-                System.exit(dev.duo.harness.example.headless.HeadlessBoot.runDefault(
-                        parsed.sessionId(), parsed.prompt()));
+                System.exit(HeadlessBoot.runDefault(parsed.sessionId(), parsed.prompt()));
             }
-            System.exit(dev.duo.harness.example.headless.HeadlessBoot.run(
-                    parsed.yml(), parsed.sessionId(), parsed.prompt()));
+            System.exit(HeadlessBoot.run(parsed.yml(), parsed.sessionId(), parsed.prompt()));
         }
         Path yml = args.length > 0 ? Path.of(args[0]) : null;
         try {
@@ -137,16 +137,14 @@ public final class DuoMain {
                 // 缺省装配分支：预检与装载各自开流、各自单次读取（classpath 资源可重复
                 // 打开，无共享流半途断流问题）——顺序钉死为「预检先行、通过后装载」；
                 // jar 形态资源 URI 非文件形态，不走文件化 Path（M30 工单 01）
-                validatePresenterRowOrder(
-                        dev.duo.harness.example.headless.HeadlessArgs.DEFAULT_YML_RESOURCE);
+                validatePresenterRowOrder(HeadlessArgs.DEFAULT_YML_RESOURCE);
             }
         } catch (IllegalArgumentException | IOException e) {
             System.err.println(e.getMessage());
             System.exit(2);
         }
         Context root = yml != null ? Boot.from(yml)
-                : Boot.fromResource(
-                        dev.duo.harness.example.headless.HeadlessArgs.DEFAULT_YML_RESOURCE);
+                : Boot.fromResource(HeadlessArgs.DEFAULT_YML_RESOURCE);
         CountDownLatch stopped = new CountDownLatch(1);
         Thread hook = new Thread(() -> {
             try {

@@ -16,6 +16,7 @@
 - [ ] **演示入口缺省资源文件化读取残留（jar 形态必炸）**：AgentReplMain 对 /agent-demo.yml 经 `getResource().toURI()` 文件化读取（另有 DemoMain×2 / ContractGuardDemoMain / ApprovalDemoMain 同型，各用自有 demo yml）——发布入口（DuoMain 常驻 + headless）已切 `Boot.fromResource` 资源流（M30-01），演示入口非发布链路未动；若承诺 demo 入口 jar 形态可用需同切资源通道。来源：M30-01 透传排查实测（2026-10-01）。→ 视 README 对演示入口的承诺范围裁定
 
 - [ ] **user.dir 取值提取**：`Path.of(System.getProperty("user.dir"))` 全仓 19+ 处同形（M26-01 +11、M26-03 +1 装配、M26-04 +2 CLI/Web present 接线）——cwd 取值源一旦变化（如可配 cwd）需全量锁步改。来源：M26-01/02/03/04 四轮审查记档（M24-08「重复到阈值即提取」先例已过阈值）。→ M26-04 已到评估点：present 接线仍属装配侧取值、与落盘/检索同源，单独提取收益不足；顺延至 05（导出对账也要 cwd，第三消费方出现）或 07 收尾统一评估
+- [ ] **Session 大类拆分评估**：duo-harness-session Session.java 1213 行 / 17 public static，三职责同居——实例生命周期与锁（createDeferred/persist/HELD_LOCKS）、静态扫描查询面（list/latest/isOccupied/titleOf/permissionModeOf/hasAnyEventLine/readImageRefOf）、消息投影修复（sealDanglingToolCalls/repairToolMessageAdjacency/messageWindow）；M26 版本头、C2 titleOf、M30 defer 化逐票叠加而成。来源：M30 分支级收口 Standards 轴（2026-10-01）。→ 结构域立项时与 user.dir 提取同批评估
 
 ## 上下文与记忆（M25 衍生，2026-09-26 收尾登记）
 
