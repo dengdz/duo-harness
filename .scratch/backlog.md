@@ -103,4 +103,4 @@
 
 ## 会话生命周期（2026-10-01，M29 工单 12 验收期发现）
 
-- [ ] **会话持久化 defer 化**：页面加载/服务端重启即懒创建会话文件，2 天产生 370 个空会话全进侧栏（用户实测）。ZCode 对照：deferred/draft 三层防线——创建仅内存、首条真实事件才落盘、列表过滤，空会话既不堆积也不可见（研究锚点：docs/research/ZCode/Agent循环与会话/会话事件模型与持久化.md 增量段）。工单：.scratch/m30-session-lifecycle/issues/01-deferred-session.md（ready-for-agent，未排期）。
+- [ ] **会话持久化 defer 化**：页面加载/服务端重启即懒创建会话文件，2 天产生 370 个空会话全进侧栏（用户实测）。ZCode 对照：deferred/draft 三层防线——创建仅内存、首条真实事件才落盘、列表过滤，空会话既不堆积也不可见（研究锚点：docs/research/ZCode/Agent循环与会话/会话事件模型与持久化.md 增量段）。工单：.scratch/m30-session-lifecycle/issues/01-deferred-session.md（ready-for-agent；2026-10-01 用户裁定归属 M30/0.26.0 发布产物期）。
