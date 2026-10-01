@@ -1,0 +1,95 @@
+# 发版流水线（M30 工单 03，ADR-0032 裁定）：push tag v* 即发布——
+# tag 与 pom 版本一致性校验（fail-closed）→ 全量 verify（测试不过不发版）→
+# SHA256 → 创建 GitHub Release 挂 fat-jar + 校验和，Release notes 从
+# CHANGELOG.md 对应版本段摘录（CHANGELOG 是版本唯一锚点，不用 GitHub 自动生成）。
+# 权限 contents: write 仅本文件持有；ci.yml 维持 contents: read 门禁不变。
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # tag 名（v0.26.0）剥前缀后必须等于 pom 版本（0.26.0），错位即 fail-fast——
+      # 防手滑打错版本号时 workflow 照发、产物名与 tag 静默错位
+      - name: tag 与 pom 版本一致性校验
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          POM_VERSION=$(./mvnw -q -B -ntp help:evaluate -Dexpression=project.version -DforceStdout 2>/dev/null)
+          if [ -z "$POM_VERSION" ]; then
+            echo "::error title=pom 版本取值失败::help:evaluate 无输出（构建环境异常），拒绝继续"
+            exit 1
+          fi
+          if [ "$TAG_VERSION" != "$POM_VERSION" ]; then
+            echo "::error title=版本错位::tag ${GITHUB_REF_NAME} 剥前缀 = ${TAG_VERSION} ≠ pom.version = ${POM_VERSION}（先对齐 14 处 pom 再打 tag，见 ADR-0032 发版时序）"
+            exit 1
+          fi
+          echo "版本一致：v${POM_VERSION}"
+
+      # 全量测试门禁：发出去的 jar 必须是测过的（与 ci.yml 同口径）
+      - name: 全量构建与测试
+        run: set -o pipefail && ./mvnw -B -ntp verify 2>&1 | tee /tmp/build.log
+
+      - name: 生成 SHA256
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          JAR="duo-harness-example/target/duo-harness-${VERSION}.jar"
+          # 显式版本名而非通配：本地 target 的历史产物（duo-harness-example-*.jar 等）
+          # 会被 duo-harness-*.jar 中段通配误捕获，runner 虽全新构建也不给通配留口子
+          [ -f "$JAR" ] || { echo "::error title=产物缺失::未找到 ${JAR}——检查 finalName 与 pom 版本"; exit 1; }
+          # cd 后以纯文件名生成：.sha256 内嵌构建相对路径会让下载方同目录 sha256sum -c 失败
+          # （spec User Story 2「jar + 校验和可下载可验证」）
+          cd duo-harness-example/target
+          sha256sum "duo-harness-${VERSION}.jar" > "duo-harness-${VERSION}.jar.sha256"
+          sha256sum -c "duo-harness-${VERSION}.jar.sha256"
+
+      - name: Release notes 摘自 CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # 摘录 CHANGELOG.md 中 "## <version>（...）" 段到下一个 "## " 之前（唯一锚点，红线 6）；
+          # 双 fail-closed：awk 对 "（未发布）" 段置 bad（exit 3），摘录后 -s 校验兜住「段缺失」
+          # （awk 对缺失不置位会产出空文件——空 notes 发版与未发布 notes 同罪）
+          awk -v ver="$VERSION" '
+            $0 ~ "^## " ver "（未发布）" { bad=1; exit }
+            $0 ~ "^## " ver "（"         { flag=1; next }
+            /^## / && flag               { exit }
+            flag                         { print }
+            END                          { exit (bad ? 3 : 0) }
+          ' CHANGELOG.md > /tmp/release-notes.md || {
+            echo "::error title=notes 段不可用::CHANGELOG.md 的 \"## ${VERSION}（...）\" 段仍标「未发布」——先落段落日期再打 tag（红线 6）"
+            exit 1
+          }
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "::error title=notes 缺段::CHANGELOG.md 无 \"## ${VERSION}（...）\" 版本段——先落段落日期再打 tag（红线 6）"
+            exit 1
+          fi
+          cat /tmp/release-notes.md
+
+      - name: 创建 GitHub Release 并挂产物
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file /tmp/release-notes.md \
+            "duo-harness-example/target/duo-harness-${VERSION}.jar" \
+            "duo-harness-example/target/duo-harness-${VERSION}.jar.sha256"
+        env:
+          GH_TOKEN: ${{ github.token }}
