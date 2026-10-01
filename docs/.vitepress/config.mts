@@ -95,8 +95,11 @@ export default defineConfig({
       {
         text: '参考',
         items: [
+          { text: 'config 全量字段参考', link: '/05-参考/config全量字段参考' },
           { text: '插件配置参考', link: '/05-参考/插件配置参考' },
           { text: '插件扩展点清单', link: '/05-参考/插件扩展点清单' },
+          { text: 'CLI 参考', link: '/05-参考/CLI参考' },
+          { text: 'Web 界面使用说明', link: '/05-参考/Web界面使用说明' },
           { text: '工具目录', link: '/05-参考/工具目录' },
           { text: '术语表', link: '/05-参考/术语表' },
           { text: '技能写作规范', link: '/05-参考/技能写作规范' },

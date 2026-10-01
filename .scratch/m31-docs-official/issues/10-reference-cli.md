@@ -10,12 +10,12 @@
 
 ## Status
 
-ready-for-agent
+done（2026-10-01 用户验收通过）
 
 ## Checklist
 
-- [ ] 启动参数全表（锚定入口类参数解析代码，逐个可复跑）
-- [ ] REPL 快捷键表与交互行为对账（实测每个键位）
-- [ ] 斜杠命令清单一张表（与工单 06 指南篇互链不重复）
-- [ ] 内链自查 + vitepress build 通过
-- [ ] 用户验收通过；CHANGELOG 0.27.0 段同 diff 记账
+- [x] 启动参数全表（锚 HeadlessArgs#53-90：positional yml 三态/--json/--session-id/任务文本必需/usage 退出码 2）+ 常驻行序契约两道防线
+- [x] REPL 键位表（Ctrl+C 三态/Ctrl+D//stop 兜底——锚 CliPlugin#1107-1145；无方向键历史如实说明）+ 运行中输入分流表（插队/合并/应答闸门）
+- [x] headless 事件流速查表（五帧形态/退出码契约/stderr 诊断分离/禁交互/截断）
+- [x] 斜杠命令一句话指向工单 06 指南篇（不重复）；内链自查 + vitepress build 通过；口吻自查零命中
+- [x] 用户验收通过（2026-10-01）；CHANGELOG 0.27.0 段同 diff 记账
