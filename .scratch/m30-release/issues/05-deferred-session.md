@@ -23,7 +23,7 @@ M29 工单 12 验收期实测：页面加载与服务端重启即懒创建会话
 - 测试：空会话零文件断言（新标签打开 → 无新文件；首条消息 → 文件出现且头+事件同批）、SSE 收流、crash 语义
 
 ## Status
-ready-for-agent（2026-10-01 用户裁定：归属 **M30（0.26.0）发布产物**期，M30 启动 grill 时正式纳入范围）
+ready-for-agent（2026-10-01 用户裁定：归属 **M30（0.26.0）发布产物**期；同日 M30 启动 grill 纳入范围并迁入本统一目录——原路径 `.scratch/m30-session-lifecycle/issues/01-deferred-session.md`，编号改 05，见 ADR-0032 工单组织节）
 
 ## Checklist
 - [ ] 排查 0 字节文件产生点（createFile 与写头分离路径）
