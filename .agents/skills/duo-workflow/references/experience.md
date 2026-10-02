@@ -228,6 +228,8 @@ grill 收口前的范围确认题固定加一步排他对账：把本期范围�
 **影响范围**：
 所有新增服务消费方（含工具域/呈现位/治理面的可选服务）。
 
+**第三次重现（2026-10-02，M34 工单 01，BUG-20261002-01）+ 两个新变体**：connectorStatus 服务（MCP 行发布）被 statusJson 用 `hasService` 守卫 + `as()` 读板——守卫只答存在性、闸门照样拒读，WebPlugin.optionalInject 缺声明 → PluginException 上抛。变体一：**消费点在共享代码深处时异常不落地**——statusJson catch 后 throw IllegalStateException，而 route() 的 createContext lambda 无 try/catch，异常沿 JDK HttpServer 逃逸成「连接裸关」（空响应 + 零日志），比「视为缺席」更隐蔽；修复除补声明外必须给路由层加兜底（500 + 日志）。变体二：**测试三重盲**——单测走 Context.root()（闸门不生效）+ 装配无 MCP 行（hasService 假）+ CI 无浏览器面（空响应不可见），三盲叠加致 CI 全绿生产全盲。机械核对升级：新增服务消费方的提交，optionalInject 声明核对与「消费点异常是否会被中间层吞掉」两问并查；回归锁必须走插件上下文装配（WebPluginAssemblyTest.statusServesConnectorSnapshotThroughPluginDeclarationGate 形态）。
+
 ## [2026-09-25] 提示词契约要写成指令形态而非信息形态（M25-02 验收，BUG-20260925-02）
 
 **问题描述**：

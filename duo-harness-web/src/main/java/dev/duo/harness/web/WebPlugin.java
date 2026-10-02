@@ -61,6 +61,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     private WebFace face;
 
+    /** 测试缝（包私有）：装配测试取实际绑定端口与 token——port 0 随机端口不可预知。 */
+    WebFace face() {
+        return face;
+    }
+
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
@@ -82,7 +87,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME,
                 dev.duo.harness.tools.fs.PermissionRules.SERVICE_NAME,
                 dev.duo.harness.agent.memory.MemoryBook.SERVICE_NAME,
-                dev.duo.harness.agent.prompt.AgentsMdChain.SERVICE_NAME);
+                dev.duo.harness.agent.prompt.AgentsMdChain.SERVICE_NAME,
+                // 连接器状态板（BUG-20261002-01）：MCP 行在场时状态面连接器块经插件
+                // Context 读板——未声明则 hasService 真 ≠ 可读（内核错误前移拒读），
+                // statusJson 抛异常且 route 无兜底 → 连接裸关（状态面全盲实测形态）
+                dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME);
     }
 
     @Override

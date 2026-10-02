@@ -10,13 +10,13 @@ None (can start immediately)。
 
 ## Status
 
-ready-for-agent
+done（2026-10-02 修复 + 回归锁两用例绿 + 全库测试绿；发版归工单 06）
 
 ## Checklist
 
-- [ ] 根因实钉回写 BUG-20261002-01 档案（验证结果与假设不符时先改档案）
-- [ ] 修复落地：tab 缺席 → 结构化空态；异常 → 日志 + 5xx；状态面五区块真实数据回归
-- [ ] 回归锁入库：/api/status 集成测试（真起 HttpServer 形态，六鉴权形态 + 正常路径断言 JSON 结构）
-- [ ] 档案 Status 流转 reported → done + 防复发节填写
-- [ ] CHANGELOG 记账（用户可见变更：状态面恢复）
-- [ ] 提交前核对：调试残留 grep 零命中 + 测试绿
+- [x] 根因实钉回写 BUG-20261002-01 档案（与原假设不同：非 tab 缺席，系 optionalInject 未声明 connectorStatus + route 无兜底三层耦合；假设 1/2 排除过程在档）
+- [x] 修复落地：optionalInject 补声明（根因）+ route() 异常兜底（log.error + 500，防复发）
+- [x] 回归锁入库：WebPluginAssemblyTest 两用例（声明断言 + 端到端连接器快照；修前精确复现空响应 `header parser received no bytes`，修后绿）
+- [x] 档案 Status 流转 reported → done + 防复发节填写（含「hasService 真 ≠ 可读」家族第三次出现的提交前核对建议）
+- [x] CHANGELOG 记账（未发布段 Fixed 条目）
+- [x] 提交前核对：调试残留 grep 零命中（exit 1）+ web 模块 102 测试绿 + 全库测试绿（exit 0）

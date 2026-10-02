@@ -1,6 +1,7 @@
 package dev.duo.harness.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.tools.ToolDefinition;
@@ -14,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,6 +73,66 @@ class WebPluginAssemblyTest {
         // 读取（恢复被跳过、浏览器切档不可用）
         assertTrue(new WebPlugin().optionalInject().contains(WorkspacePolicy.SERVICE_NAME),
                 "WebPlugin 须声明 workspace 可选依赖");
+    }
+
+    @Test
+    void connectorStatusDeclaredAsOptionalDependency() {
+        // BUG-20261002-01 回归锁：MCP 行在场时（connectorStatus 服务已发布），状态面
+        // 连接器块经 Web 插件 Context 读板——未声明 optionalInject 则内核「错误前移」
+        // 拒读（hasService 真 ≠ 可读，2026-09-22 记档同族），statusJson 抛异常且 route
+        // 无兜底 → 连接裸关（实测空响应形态）
+        assertTrue(new WebPlugin().optionalInject().contains(dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME),
+                "WebPlugin 须声明 connectorStatus 可选依赖（MCP 行在场时状态面连接器块可读）");
+    }
+
+    @Test
+    void statusServesConnectorSnapshotThroughPluginDeclarationGate(@TempDir Path tempDir) throws Exception {
+        // BUG-20261002-01 端到端回归锁：MCP 首行发布形态（provideBoardService 同款，
+        // 板发布在注册表）+ 全插件树启动 → GET /api/status 必须 200 且含连接器快照。
+        // 修复前：WebPlugin 未声明 connectorStatus → 插件 Context 内 as() 被声明闸门拒
+        // → statusJson 抛 IllegalStateException → route 无兜底 → 连接裸关（HTTP 无响应）
+        Path home = tempDir.resolve("duo-home");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("config.yml"), """
+                llm:
+                  baseUrl: https://placeholder.local
+                  apiKey: test-key
+                  model: test-model
+                """);
+        System.setProperty(DuoHome.PROP_OVERRIDE, home.toString());
+        try {
+            Context root = Context.root();
+            JsonNode emptyCfg = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            root.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+            root.plugin(new dev.duo.harness.agent.prompt.PromptPlugin(), emptyCfg).awaitStartup();
+            root.plugin(new dev.duo.harness.tools.InteractionPlugin(), null).awaitStartup();
+            root.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(), emptyCfg).awaitStartup();
+            // MCP 首行发布形态（McpClientSupport.provideBoardService 同款）：板为共享单例
+            dev.duo.harness.tools.ConnectorStatusBoard board =
+                    dev.duo.harness.tools.ConnectorStatusBoard.shared();
+            board.update("echo", "CONNECTED", "已连接");
+            root.provide(dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME, board);
+            WebPlugin web = new WebPlugin();
+            JsonNode webCfg = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                    .objectNode().put("port", 0);
+            root.plugin(web, webCfg).awaitStartup();
+            int port = web.face().port();
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create("http://127.0.0.1:" + port + "/api/status"))
+                    .header("X-Duo-Token", web.face().authToken())
+                    .GET().build();
+            java.net.http.HttpResponse<String> res =
+                    client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, res.statusCode(), "状态端点 200（修复前：声明闸门拒读 → 连接裸关）");
+            JsonNode json = new ObjectMapper().readTree(res.body());
+            assertTrue(json.path("connector").isArray() && json.path("connector").size() > 0,
+                    "连接器快照在列: " + res.body());
+            assertEquals("echo", json.path("connector").get(0).path("server").asText(), "server 名在");
+            assertEquals("CONNECTED", json.path("connector").get(0).path("state").asText(), "状态在");
+        } finally {
+            System.clearProperty(DuoHome.PROP_OVERRIDE);
+        }
     }
 
     @Test

@@ -67,8 +67,16 @@ final class WebEndpoints {
     /** 挂载单个端点：统一前置入口栅栏（Host/Origin 校验），通过才交端点处理器。 */
     private void route(HttpServer server, String path, Endpoint endpoint) {
         server.createContext(path, exchange -> {
-            if (face.gate.admits(exchange)) {
-                endpoint.handle(exchange);
+            try {
+                if (face.gate.admits(exchange)) {
+                    endpoint.handle(exchange);
+                }
+            } catch (Exception e) {
+                // 端点兜底（BUG-20261002-01）：异常一律 500 + 日志，绝不留「连接裸关」
+                // 的空响应——此前 statusJson 抛 IllegalStateException 经此逃逸，客户端只
+                // 见连接被关、服务端零日志（状态面全盲实测形态）
+                WebFace.log.error("端点处理失败 path={}", path, e);
+                WebHttp.respondText(exchange, 500, "服务端处理失败（详情见服务端日志）");
             }
         });
     }
