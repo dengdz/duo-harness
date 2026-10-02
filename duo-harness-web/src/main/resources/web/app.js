@@ -929,7 +929,21 @@ const render = (() => {
         const a = document.createElement('div');
         a.className = 'ask-frozen-a';
         a.textContent = (event.text || '').trim();
-        frozen.querySelector('.tcard-body').appendChild(a);
+        const body = frozen.querySelector('.tcard-body');
+        if (body) {
+          body.appendChild(a);
+          // 行面可见化（BUG-20261002-04）：答案摘要进行卡 primary——此前答案只进
+          // 折叠卡体（display:none），行面仅见问题＝作答状态回放丢失（实测形态）
+          const primary = frozen.querySelector('.tcard-primary');
+          if (primary) {
+            primary.textContent = (primary.textContent || '').trim()
+                + ' ｜ 答：' + (event.text || '').trim();
+          }
+        } else {
+          // 冻结问题行（无 tcard-body 形态）：答案行内补「✓ 已回答：」
+          a.textContent = '✓ 已回答：' + (event.text || '').trim();
+          frozen.appendChild(a);
+        }
         t.toolCards.delete(event.toolCallId);
         return;
       }
@@ -1392,14 +1406,27 @@ const render = (() => {
     fillHero();
   }
 
-  /** 重连复位：清空渲染区，等本轮全量回放重建（幂等——重连不该叠加重複历史）。 */
-  function resetForReplay() {
+  /** 重连复位：清空渲染区，等本轮全量回放重建（幂等——重连不该叠加重複历史）。
+   *  keepPrepended（BUG-20261002-02）：同会话重连的尾窗重放保留分页已加载的更早
+   *  历史（#prependedSentinel 哨兵之上）——整窗替换只清尾窗基线，翻页进度不再被
+   *  清零（此前批 1 实测：滚顶加载 35 条后一次重连全数丢失）。/new 与换绑走全清。 */
+  function resetForReplay(opts) {
     // 两条打字机 rAF 先取消（对已分离节点空转）；流式状态七字段全清——
     // tail-snapshot 重连发生在思考/正文流中时，残留引用会把回放增量写进
     // 幽灵卡（M29 审查 major：思考内容整轮不可见 + 脏 chunkBuffer 拼前缀）
     if (t.typeRAF) { cancelAnimationFrame(t.typeRAF); t.typeRAF = null; }
     if (t.reasoningRAF) { cancelAnimationFrame(t.reasoningRAF); t.reasoningRAF = null; }
-    t.container.innerHTML = '';
+    if (opts && opts.keepPrepended) {
+      const sent = t.container.querySelector('#prependedSentinel');
+      if (sent) {
+        let n = sent.nextSibling;
+        while (n) { const next = n.nextSibling; n.remove(); n = next; }
+      } else {
+        t.container.innerHTML = '';
+      }
+    } else {
+      t.container.innerHTML = '';
+    }
     t.toolCards.clear();
     t.subagentCards.clear();
     t.lastOpenToolCard = null;
@@ -1478,7 +1505,8 @@ const render = (() => {
     else if (ev.type === 'question/requested') {
       // 提问前置事件（BUG-20260929-01）：ask 前落盘携请求 id——提问卡据此在挂起期间
       // 实时渲染；完成时的 tool/call 因同卡在途被 questionCard 内去重跳过。
-      // 回放跳过（M29 工单 12 用户裁定）：历史由 ask_user 冻结摘要行呈现，不留选择卡
+      // 回放跳过（M29 工单 12 用户裁定）：问题由随后 tool/call 的冻结行呈现
+      //（askFrozenLine 问+答一行卡，BUG-20261002-04 修复后答案行面可见），不留选择卡
       if (replaying) return;
       questionCard(ev, true); // 实时待答卡走 dock
     }
@@ -1509,6 +1537,12 @@ const render = (() => {
     const rest = document.createDocumentFragment();
     while (t.container.firstChild) rest.appendChild(t.container.firstChild);
     for (const ev of events) dispatch(ev, true); // 翻页渲染的是历史——不触发实时副作用
+    // 哨兵（BUG-20261002-02）：哨兵之上 = 翻页已加载的更早历史（同会话尾窗重放
+    // 时保留），之下 = 尾窗基线（可整窗替换）；每次翻页重插一枚（旧哨兵随搬移入 rest）
+    const sent = document.createElement('div');
+    sent.id = 'prependedSentinel';
+    sent.style.display = 'none';
+    t.container.appendChild(sent);
     t.container.appendChild(rest);
     t.container.scrollTop = t.container.scrollHeight - prevHeight + prevTop;
   }
@@ -1568,7 +1602,10 @@ const sse = (() => {
       // 增量（断线补齐）→ 保留页面已有内容（ADR-0010）
       if (event.sessionId) frameSession = event.sessionId; // 换绑重连：学习新会话（M26-06）
       if (event.mode === 'tail-snapshot') {
-        render.resetForReplay();
+        // 同会话重连（BUG-20261002-02）：保留翻页已加载的更早历史，只整窗替换
+        // 尾窗基线；换绑/首连（不同会话或首帧）全清——哨兵随全清一并移除
+        const sameSession = event.sessionId && frameSession === event.sessionId;
+        render.resetForReplay({ keepPrepended: sameSession });
         oldestLoaded = null;
         app.setTailWindow({ hasMore: !!event.hasMore, earlierCount: event.earlierCount || 0 });
       }
