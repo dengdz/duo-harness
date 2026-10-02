@@ -2,7 +2,9 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
-## 未发布
+## 1.0.1（2026-10-02）
+
+> **1.0 首个修订号**（M34 修复批）：M33 百例浏览器实测（100/100，报告见 `.scratch/m33-browser-audit/report.md`）坐实的 7 档 P2 缺陷全部处置——5 档修复（各带回归锁）、2 档复现尝试不可复现关闭（偶发先例，再现重开）。安全栅栏六形态复验 fail-closed 全过，无 P0/P1。
 
 ### Fixed
 

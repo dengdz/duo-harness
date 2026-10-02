@@ -19,12 +19,12 @@ llm:
 **2. 启动**（从 [GitHub Releases](https://github.com/dengdz/duo-harness/releases) 下载 fat-jar，或 `mvn -pl duo-harness-example -am package` 自建）：
 
 ```bash
-java -jar duo-harness-1.0.0.jar
+java -jar duo-harness-1.0.1.jar
 ```
 
 **3. 双面即起**：终端进入 REPL（`/help` 看命令）；浏览器打开启动日志打印的带令牌地址（形如 `http://127.0.0.1:18080/?token=...`，缺省随机令牌鉴权）——两面共享同一会话与审批路由。
 
-无人值守形态：`java -jar duo-harness-1.0.0.jar --json "任务文本"` 按一次性任务驱动，stdout 输出 NDJSON 事件流，进程退出码即成败契约。
+无人值守形态：`java -jar duo-harness-1.0.1.jar --json "任务文本"` 按一次性任务驱动，stdout 输出 NDJSON 事件流，进程退出码即成败契约。
 
 ## 能力概览
 
