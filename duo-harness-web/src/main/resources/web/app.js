@@ -1896,6 +1896,7 @@ const app = (() => {
     try {
       const res = await api.sendMessage(text, attachments);
       if (res.status === 202) {
+        attChips.innerHTML = ''; // 受理即清 chip（O15）：附件已随消息提交，残留 chip 会误导再发
         // 202 空体 = 正常受理（异步执行）——同钮转【停止】；带体 = 结构化受理（M19）：
         // injected = 运行中注入（agent 仍在跑，保持【停止】）；command = 斜杠命令（命中执行
         // 的结果走事件流渲染，拒绝类无事件、text 随体 toast——未知命令/适用面/busy）
