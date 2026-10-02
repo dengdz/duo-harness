@@ -68,6 +68,7 @@ export default defineConfig({
           { text: '术语表', link: '/05-参考/术语表' },
           { text: '技能写作规范', link: '/05-参考/技能写作规范' },
           { text: '会话事件类型表', link: '/05-参考/会话事件类型表' },
+          { text: '版本与发布', link: '/05-参考/版本与发布' },
           { text: '已知限制', link: '/limitations' }
         ]
       }

@@ -4,6 +4,10 @@
 
 ## 1.0.0（未发布）
 
+### Added
+
+- **1.x 版本策略声明（M32 工单 03）**：README 新增「版本与发布」小节 + 文档站参考层新增《版本与发布》——语义化版本承诺（1.x 内向后兼容：新功能进次版本、修缺陷进修订号、破坏性变更才到 2.0；0.x 不在承诺内）、按需发版、CHANGELOG 唯一版本锚点、tag 即 Release（fat-jar）；附对照系惯例说明（ZCode：conventional commits + release-it 把语义化版本做进发版机械，当前 3.x；DSH：developer preview 0.x alpha/rc 预发布流并明示破坏性变更——对照调研锚点 ZCode 29628c9 / DSH ddefc45f）；sidebar 参考分组同步入册（「已知限制」前）
+
 ## 0.27.0（2026-10-02）
 
 ### Added

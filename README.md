@@ -37,6 +37,10 @@ java -jar duo-harness-0.27.0.jar
 - **人机协同**：审批 / 提问 / 计划确认卡片，谁发起谁作答的路由；Web 面工具卡分型、思考折叠卡、产物预览卡、代码高亮
 - **hooks**：复用 Claude Code/Codex 配置格式的外部命令钩子（PreToolUse/PostToolUse）
 
+## 版本与发布
+
+自 1.0 起遵循语义化版本，**1.x 内向后兼容**：新功能进次版本、缺陷修复进修订号，破坏性变更才会到 2.0——1.x 内升级无需改配置或插件代码（0.x 不在此承诺内）。发版不排期、按需发布；[CHANGELOG](CHANGELOG.md) 是唯一版本锚点（用户可见变更逐条记账），版本分支打 tag 即经 CI 挂 [GitHub Release](https://github.com/dengdz/duo-harness/releases)。完整口径见文档站[《版本与发布》](docs/05-参考/版本与发布.md)。
+
 ## 模块
 
 | 模块 | 职责 |
