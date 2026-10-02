@@ -139,3 +139,17 @@ M28 验收单写「read-only 档写操作转 [待审批]」，用户实测 write
 
 **解决方案**：
 里程碑级验收单生成前，先机械核对用户环境的覆盖性配置（`<项目>/.duo/settings.json`、`~/.duo/config.yml` 的非缺省段、yml 副本与官方的差异），凡环境配置会改变预期行为的验收点，预期按「设计语义 + 环境覆盖」的合成结果书写，并注记成因。影响范围：验收件预期对照表的生成流程。
+
+## [2026-10-02] 浏览器判可见性用 computed style，offsetParent 对 fixed 定位元素恒为 null
+
+**问题描述**：
+M33 浏览器实测批 3 验证「子任务全程」抽屉：点击开关后用 `offsetParent !== null` 判可见性两轮均报「仍隐藏」——实际抽屉（position:fixed）早已打开且内容完整，是判据自身失效；同类探针在批 4 再犯一次（toast 容器）。
+
+**原因分析**：
+`offsetParent` 的语义是「最近的非静态定位祖先」，元素自身或祖先为 fixed 时该属性恒为 null——「null = 不可见」的直觉判据对浮层类 UI（抽屉/toast/对话框，多为 fixed）系统性失效。
+
+**解决方案**：
+浏览器验证浮层可见性一律用 `getComputedStyle(el)` 的 display/visibility/opacity（或 getBoundingClientRect 非空）判定，不用 offsetParent；M33 报告 O6/O16/O18 另有三条同族实测纪律（原生点击、busy 会话不发送、探针「点击即返+外层轮询」拆步）可一并复用。
+
+**影响范围**：
+一切内置浏览器驱动 UI 验收的浮层可见性断言（抽屉/toast/模态/下拉）。
