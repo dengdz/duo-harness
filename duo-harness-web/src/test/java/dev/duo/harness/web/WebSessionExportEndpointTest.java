@@ -151,8 +151,17 @@ class WebSessionExportEndpointTest {
         assertTrue(body.contains("风筝"), "未打开的会话内容可导出");
         assertTrue(body.contains("## 交付清单（模型声明）"), "交付声明随导出呈现");
         assertTrue(body.contains("风筝报告.md"));
-        // 导出后释放锁：会话可再被打开（无锁残留）
-        Session reopen = Session.load(second);
+        // 导出后释放锁：会话可再被打开（无锁残留）——释放发生在响应流写完后的 finally，
+        // 客户端断言与服端 close 存在微小竞态窗口（CI 慢 runner 显形，M34 发版实测）：
+        // 锁重试等待直至释放，不竞速
+        Session reopen = null;
+        for (int i = 0; i < 50 && reopen == null; i++) {
+            try {
+                reopen = Session.load(second);
+            } catch (dev.duo.harness.session.SessionLockedException e) {
+                Thread.sleep(100); // 服端 finally 尚未走到：等释放后重试
+            }
+        }
         assertEquals(2, reopen.events().size());
         reopen.close();
     }
