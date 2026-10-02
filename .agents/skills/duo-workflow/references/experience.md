@@ -431,3 +431,5 @@ M32 工单 04 做「CI 绿常态」取证时才发现：0.27.0 的 release workf
 
 **影响范围**：
 所有「tag 即发布」类流程的收口核对（M32 工单 05 盖章直接适用——1.0.0 Release 必须同款实查）；1.x 历次发版。
+
+**第二次实证（2026-10-02 同日，v1.0.1 首打）**：两查在首打当刻逮到 release run「全量构建与测试」失败——`WebSessionExportEndpointTest` 既有锁释放竞态（导出响应 finally 释放 vs 客户端断言竞速，CI 慢 runner 显形、本地绿），修复重打后二查通过。附加价值：无 gh CLI 环境下诊断走 check-runs annotations 公开 API（workflow 的失败诊断 emit 是可读性的关键投资）。两查不是仪式，是发版链路唯一能当场逮住 CI-only 失败的关口。
