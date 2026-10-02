@@ -127,7 +127,6 @@ final class WebEndpoints {
             WebHttp.respondJson(exchange, 200, json);
         }
     }
-
     /**
      * 停止入口（M23 工单 02，ADR-0025 决策一）：POST /api/stop 请求协作式中断——
      * 与 CLI 的 /stop、Ctrl+C 单击同语义：当前工具终止、已流出文本保留并打中断
@@ -531,6 +530,8 @@ final class WebEndpoints {
         }
         try {
             var root = WebHttp.JSON.createObjectNode();
+            // 鉴权形态（O17）：前端据此呈现「鉴权已关闭」页面横幅（authToken null = 关闭）
+            root.put("auth", face.authToken() == null ? "none" : "token");
             var plugins = root.putArray("plugins");
             for (var snapshot : face.ctx.snapshots()) {
                 plugins.addObject().put("name", snapshot.name()).put("state", snapshot.state().name());

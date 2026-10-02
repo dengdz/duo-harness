@@ -91,7 +91,11 @@ public final class WebPlugin implements Plugin<JsonNode> {
                 // 连接器状态板（BUG-20261002-01）：MCP 行在场时状态面连接器块经插件
                 // Context 读板——未声明则 hasService 真 ≠ 可读（内核错误前移拒读），
                 // statusJson 抛异常且 route 无兜底 → 连接裸关（状态面全盲实测形态）
-                dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME);
+                dev.duo.harness.tools.ConnectorStatusBoard.SERVICE_NAME,
+                // 技能注册表（BUG-20261002-06）：斜杠解释链第二级「技能直调」经
+                // skillsOrNull 读注册表——未声明则被声明闸门拒读并被 catch 吞成 null，
+                // 直调级永远未命中（/技能名 全部「未知命令」且提示不带技能清单）
+                dev.duo.harness.agent.skills.SkillRegistry.SERVICE_NAME);
     }
 
     @Override

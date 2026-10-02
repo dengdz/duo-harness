@@ -86,6 +86,16 @@ class WebPluginAssemblyTest {
     }
 
     @Test
+    void skillRegistryDeclaredAsOptionalDependency() {
+        // BUG-20261002-06 回归锁：斜杠解释链第二级「技能直调」经 skillsOrNull 读注册表
+        // ——未声明 optionalInject 则被声明闸门拒读并被 catch 吞成 null，直调级永远
+        // 未命中（/技能名 全部「未知命令」且提示不带技能清单，「hasService 真 ≠ 可读」
+        // 家族第四次重现）
+        assertTrue(new WebPlugin().optionalInject().contains(dev.duo.harness.agent.skills.SkillRegistry.SERVICE_NAME),
+                "WebPlugin 须声明 skills 可选依赖（斜杠技能直调第二级）");
+    }
+
+    @Test
     void statusServesConnectorSnapshotThroughPluginDeclarationGate(@TempDir Path tempDir) throws Exception {
         // BUG-20261002-01 端到端回归锁：MCP 首行发布形态（provideBoardService 同款，
         // 板发布在注册表）+ 全插件树启动 → GET /api/status 必须 200 且含连接器快照。

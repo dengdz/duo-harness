@@ -254,6 +254,8 @@ class WebFaceTest {
         JsonNode json = new ObjectMapper().readTree(body);
         assertEquals("ACTIVE", json.path("plugins").get(0).path("state").asText(), "ToolsPlugin ACTIVE");
         assertTrue(json.path("tools").toString().contains("echo"), "工具清单含 echo");
+        // O17 数据面：本测试装配未传 authToken（鉴权关）→ none；authToken 在场时同字段为 token
+        assertEquals("none", json.path("auth").asText(), "鉴权关闭装配 auth=none（页面横幅数据源）");
     }
 
     @Test
