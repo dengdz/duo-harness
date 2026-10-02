@@ -1,6 +1,6 @@
 # M33 浏览器实测质量期——「百例基线」
 
-Status: ready-for-agent（工单已拆 7 张见 [issues/](issues/)——01 设计与 smoke 即刻可开工，02-06 逐批执行，07 收口）
+Status: done（2026-10-02 五批 100/100 执行完毕 + 用户终验通过，M33 收口——工单 01-07 全 done 见 [issues/](issues/)；修复批以报告分级为入口另立项）
 
 ## Problem Statement
 
