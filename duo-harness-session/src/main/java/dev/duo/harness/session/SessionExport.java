@@ -131,6 +131,11 @@ public final class SessionExport {
         }
         out.append("\n- 导出时间: ").append(TIME.format(Instant.now()));
         out.append("\n- 事件数: ").append(String.valueOf(session.events().size())).append('\n');
+        if (session.skippedCorruptLines() > 0) {
+            // 坏行明示（BUG-20261002-07 症状③）：交付物对数据失真如实标注，不静默
+            out.append("\n- 坏行跳过: ").append(String.valueOf(session.skippedCorruptLines()))
+                    .append(" 条（无法解析为事件的日志行，未计入事件数）\n");
+        }
         out.append("\n---\n");
         List<String> attachments = new ArrayList<>();
         for (SessionEvent event : session.events()) {

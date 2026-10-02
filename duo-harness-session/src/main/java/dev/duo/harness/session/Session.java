@@ -60,6 +60,8 @@ public final class Session {
     private final String id;
     private final Path jsonl;
     private final List<SessionEvent> events = new ArrayList<>();
+    /** 坏行跳过计数（BUG-20261002-07）：load 时无法解析为事件的行数——跳过不断流，计数明示（导出/状态面可见）。 */
+    private int skippedCorruptLines;
     /**
      * 共享不可变快照（CoW，ADR-0014）：{@code events} 在 persist / load 追加后锁内
      * （load 为构造期单线程）重建，读侧 {@link #events()} 零拷贝返回此引用——读多写少
@@ -230,13 +232,27 @@ public final class Session {
                 session.formatVersion = SessionFormat.CURRENT_VERSION;
             }
             for (String line : eventLines) {
-                session.events.add(parse(line));
+                try {
+                    session.events.add(parse(line));
+                } catch (PluginException e) {
+                    // 坏行容错（BUG-20261002-07 症状①）：单行不可解析跳过不断流——
+                    // parse 将坏行 IOException 包装为 PluginException（「会话事件解析
+                    // 失败」）抛出，此前穿透 load 只捕 IOException 的释放缺口泄漏锁
+                    //（会话 409 占用死锁）且导出静默失真。结构损坏（重复头/头错位）
+                    // 在循环外的显式检查中保持 fail-loud，不经此处
+                    session.skippedCorruptLines++;
+                }
             }
             sealDanglingToolCalls(session);
             session.snapshot = List.copyOf(session.events); // 构造期单线程：返回前建初始快照
         } catch (IOException e) {
             session.close(); // 读取失败即释放锁，不留半开状态
             throw new PluginException("会话文件读取失败: " + jsonl, e);
+        } catch (RuntimeException e) {
+            // 释放缺口补齐（BUG-20261002-07 症状②）：parse 的 RuntimeException（结构性
+            // 损坏 PluginException 等）此前穿透本 catch 逃逸——锁泄漏，会话 409 占用死锁
+            session.close();
+            throw e;
         }
         return session;
     }
@@ -502,6 +518,15 @@ public final class Session {
      */
     public List<SessionEvent> events() {
         return snapshot;
+    }
+
+    /**
+     * 坏行跳过计数（BUG-20261002-07）：load 时无法解析为事件的行数。跳过不断流——
+     * 好事件全保留；计数经导出（markdown 头部明示）与 Web 分页端点暴露，交付物不再
+     * 静默失真。未发生坏行为 0。
+     */
+    public int skippedCorruptLines() {
+        return skippedCorruptLines;
     }
 
     /**

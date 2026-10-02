@@ -508,12 +508,21 @@ class SessionTest {
     }
 
     @Test
-    void loadRejectsCorruptLine() throws IOException {
+    void loadSkipsCorruptLineAndCounts() throws IOException {
+        // BUG-20261002-07 语义变更（原 loadRejectsCorruptLine 锁 fail-loud——M34 经用户
+        // 确认改为「跳过并计数」：坏行不再使整会话不可打开，跳过不断流计数明示）。
+        // 完整容错形态见 CorruptSessionToleranceTest（跳过/锁释放/导出明示三断言）
         Path file = sessionsDir().resolve("bad.jsonl");
         Files.createDirectories(sessionsDir());
         Files.writeString(file, "{不是JSON");
 
-        assertThrows(PluginException.class, () -> Session.load(file));
+        Session session = Session.load(file);
+        try {
+            assertEquals(0, session.events().size(), "无好事件");
+            assertEquals(1, session.skippedCorruptLines(), "坏行计数 1");
+        } finally {
+            session.close();
+        }
     }
 
     @Test

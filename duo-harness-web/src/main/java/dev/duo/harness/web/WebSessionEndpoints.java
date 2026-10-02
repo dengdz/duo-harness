@@ -302,7 +302,8 @@ final class WebSessionEndpoints {
                 .put(WebFace.FIELD_SESSION_ID, bound.id()) // 响应回带（M26-06）：前端第二道核对——不符即整页丢弃
                 .put("startEvent", window.startEvent())
                 .put("hasMore", window.earlierMessages() > 0)
-                .put("earlierCount", window.earlierMessages());
+                .put("earlierCount", window.earlierMessages())
+                .put("skippedCorruptLines", bound.skippedCorruptLines()); // 坏行计数（BUG-20261002-07）：交付面明示
         var arr = root.putArray("events");
         for (int i = window.startEvent(); i < before; i++) {
             arr.add(WebHttp.JSON.valueToTree(events.get(i)));
