@@ -57,42 +57,6 @@ export default defineConfig({
         ]
       },
       {
-        text: '决策记录（ADR）',
-        items: [
-          { text: '0001 自研插件容器内核', link: '/adr/0001-自研插件容器内核' },
-          { text: '0002 同步API与虚拟线程', link: '/adr/0002-同步API与虚拟线程' },
-          { text: '0003 Jackson统一序列化与配置绑定', link: '/adr/0003-Jackson统一序列化与配置绑定' },
-          { text: '0004 三支柱先行路线图', link: '/adr/0004-三支柱先行路线图' },
-          { text: '0005 文档站与Pages部署', link: '/adr/0005-文档站VitePress与Pages部署' },
-          { text: '0006 MCP接入采用官方JavaSDK', link: '/adr/0006-MCP接入采用官方JavaSDK' },
-          { text: '0007 里程碑重排agent循环提前', link: '/adr/0007-里程碑重排agent循环提前' },
-          { text: '0008 交互机制与呈现分离', link: '/adr/0008-交互机制与呈现分离seam与answerer' },
-          { text: '0009 治理计量切provider真实usage', link: '/adr/0009-治理计量切provider真实usage' },
-          { text: '0010 SSE快照加游标增量回放', link: '/adr/0010-SSE快照加游标增量回放' },
-          { text: '0011 CLI插件化呈现位对称与通用启动器', link: '/adr/0011-CLI插件化呈现位对称与通用启动器' },
-          { text: '0012 本机工具族与权限预设', link: '/adr/0012-本机工具族与权限预设' },
-          { text: '0013 会话尾部窗口快照与分页范式', link: '/adr/0013-会话尾部窗口快照与分页范式' },
-          { text: '0014 事件快照读侧零拷贝与单趟窗口', link: '/adr/0014-事件快照读侧零拷贝与单趟窗口' },
-          { text: '0015 subagent任务分解', link: '/adr/0015-subagent任务分解' },
-          { text: '0016 M16至1.0里程碑规划', link: '/adr/0016-M16至1.0里程碑规划' },
-          { text: '0017 子代理知识可见性模板opt-in', link: '/adr/0017-子代理知识可见性模板opt-in' },
-          { text: '0018 并发工具调度', link: '/adr/0018-并发工具调度' },
-          { text: '0019 扩展机制', link: '/adr/0019-扩展机制' },
-          { text: '0020 斜杠命令与运行中治理', link: '/adr/0020-斜杠命令与运行中治理' },
-          { text: '0021 web工具族', link: '/adr/0021-web工具族' },
-          { text: '0022 输入面与会话工具', link: '/adr/0022-输入面与会话工具' },
-          { text: '0023 沙箱出栈与M23+里程碑规划', link: '/adr/0023-沙箱出栈与M23+里程碑规划' },
-          { text: '0024 M23至1.0里程碑版图重排', link: '/adr/0024-M23至1.0里程碑版图重排' },
-          { text: '0025 M23执行与CLI体验三裁定', link: '/adr/0025-M23执行与CLI体验三裁定' },
-          { text: '0026 M24权限与安全深化六裁定', link: '/adr/0026-M24权限与安全深化六裁定' },
-          { text: '0027 技能写作规范移植与调用权分流', link: '/adr/0027-技能写作规范移植与调用权分流' },
-          { text: '0028 M26会话数据与检索立项决策', link: '/adr/0028-M26会话数据与检索立项决策' },
-          { text: '0029 M27至1.0版图重排第二弹', link: '/adr/0029-M27至1.0版图重排第二弹' },
-          { text: '0030 M28规范化重构立项决策', link: '/adr/0030-M28规范化重构立项决策' },
-          { text: '0031 M29文档与视觉立项决策', link: '/adr/0031-M29文档与视觉立项决策' }
-        ]
-      },
-      {
         text: '参考',
         items: [
           { text: 'config 全量字段参考', link: '/05-参考/config全量字段参考' },
