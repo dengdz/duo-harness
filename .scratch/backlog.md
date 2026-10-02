@@ -8,15 +8,15 @@
 
 - [x] （已销账）**present 事件 Web 呈现面**：→ 已于 M29-07 落地销账（成果卡片；2026-10-01 随工单 12 演进：present 工具退役，呈现改 ZCode 式产物预览卡自动推导，deliverable 事件检索/导出消费方不变）
 
-- [ ] **PluginSnapshot javadoc 与实现出入**：javadoc 称「Boot 装载为 yml id」，实测快照 name 为类 FQCN（M27 工单 04 的 BootYmlTest 按实现事实断言）。来源：M27-04 实测。→ M28 已收录（[ADR-0030](../docs/adr/0030-M28规范化重构立项决策.md) 裁定：改注释认事实；行为修正归装载域 1.0 后）
+- [x] （已销账）**PluginSnapshot javadoc 与实现出入**：→ 已于 M28 落地销账（[ADR-0030](../docs/adr/0030-M28规范化重构立项决策.md) 裁定「改注释认事实」）：javadoc 现文「一律为插件类全限定名（yml 装载与编程挂载同此；yml 行的 id 仅作装载行标识，不进快照名，BootYmlTest 按此事实断言）」（2026-10-02 M32 终审 javadoc 实文核对）。历史注：来源 M27-04 实测；行为修正归装载域 1.0 后
 
 - [ ] **共享 JsonMapper 收敛**：`new ObjectMapper()` 全仓主源码 23 处静态实例（23 文件每类一个）——「重量级对象每类自建」的模式噪音。收敛前须逐处核查配置差异（任一处 configure 过特性即不能共享，共享即行为变更）。来源：M28 模式对账册 P-03（2026-09-28，裁定不改挂账）。→ 1.0 后按需
 
 - [ ] **fileRefs 服务正门化（H-12 正解）**：服务化两难实测——①消费端 `ctx.as` 撞内核「未声明服务拒绝读取」（`injectedServices` 白名单，测试 root 上下文豁免故测试绿生产断链）；②提供方自产自声明撞 epoch 指纹循环（provide 新实例 → 指纹翻动 → recheck 无限重载）。正解 = 提供方归位 fs 插件（自建同根实例处 provide，提供方≠声明方无循环），web 插件 optionalInject 跨插件消费——涉及 fileRefs 所有权结构与两份自建实例归一，超出接口手术精度。来源：M28 工单 07 实测回退（2026-09-28）。→ 后续结构域立项
 - [ ] **演示入口缺省资源文件化读取残留（jar 形态必炸）**：AgentReplMain 对 /agent-demo.yml 经 `getResource().toURI()` 文件化读取（另有 DemoMain×2 / ContractGuardDemoMain / ApprovalDemoMain 同型，各用自有 demo yml）——发布入口（DuoMain 常驻 + headless）已切 `Boot.fromResource` 资源流（M30-01），演示入口非发布链路未动；若承诺 demo 入口 jar 形态可用需同切资源通道。来源：M30-01 透传排查实测（2026-10-01）。→ 视 README 对演示入口的承诺范围裁定（2026-10-01 M31 启动 grill 实测核定：README 与《运行Demo》对演示入口承诺均为 `mvn exec` 形态，`java -jar` 承诺仅覆盖 DuoMain——承诺外维持挂账，见 [ADR-0033](../docs/adr/0033-M31文档官方化立项决策.md) 范围排除节）
 
-- [ ] **user.dir 取值提取**：`Path.of(System.getProperty("user.dir"))` 全仓 19+ 处同形（M26-01 +11、M26-03 +1 装配、M26-04 +2 CLI/Web present 接线）——cwd 取值源一旦变化（如可配 cwd）需全量锁步改。来源：M26-01/02/03/04 四轮审查记档（M24-08「重复到阈值即提取」先例已过阈值）。→ M26-04 已到评估点：present 接线仍属装配侧取值、与落盘/检索同源，单独提取收益不足；顺延至 05（导出对账也要 cwd，第三消费方出现）或 07 收尾统一评估
-- [ ] **Session 大类拆分评估**：duo-harness-session Session.java 1213 行 / 17 public static，三职责同居——实例生命周期与锁（createDeferred/persist/HELD_LOCKS）、静态扫描查询面（list/latest/isOccupied/titleOf/permissionModeOf/hasAnyEventLine/readImageRefOf）、消息投影修复（sealDanglingToolCalls/repairToolMessageAdjacency/messageWindow）；M26 版本头、C2 titleOf、M30 defer 化逐票叠加而成。来源：M30 分支级收口 Standards 轴（2026-10-01）。→ 结构域立项时与 user.dir 提取同批评估
+- [x] （已销账）**user.dir 取值提取**：→ 已于 M28 落地销账（[ADR-0030](../docs/adr/0030-M28规范化重构立项决策.md) 核心 6 条必做之 H-15「user.dir 同形 22 处提取」）：cwd 取值收敛至 `core/api/boot/Cwd.java` 专类，grep 实测全仓残留 3 处且全在 Cwd 内（2026-10-02 M32 终审核对）。历史注：来源 M26-01/02/03/04 四轮审查记档（M24-08「重复到阈值即提取」先例过阈值）；present 接线评估曾顺延至 M26-05/07
+- [ ] **Session 大类拆分评估**：duo-harness-session Session.java 1213 行 / 17 public static，三职责同居——实例生命周期与锁（createDeferred/persist/HELD_LOCKS）、静态扫描查询面（list/latest/isOccupied/titleOf/permissionModeOf/hasAnyEventLine/readImageRefOf）、消息投影修复（sealDanglingToolCalls/repairToolMessageAdjacency/messageWindow）；M26 版本头、C2 titleOf、M30 defer 化逐票叠加而成。来源：M30 分支级收口 Standards 轴（2026-10-01）。→ 结构域立项时与 user.dir 提取同批评估（注 2026-10-02 M32 终审核对：本条登记晚于 M28（M30 收口审查）且未被 ADR-0030 H 清单收录，user.dir 已单独提取，评估钩子落空——维持挂账待后续结构域议题）
 
 ## 上下文与记忆（M25 衍生，2026-09-26 收尾登记）
 
@@ -33,12 +33,12 @@
 
 ## Web 呈现域（M10 grill 衍生）
 
-- [ ] **鉴权与局域网暴露**：loopback-only 维持。用户 2026-09-14 裁定"局域网多设备目前不需要"——要给别人用时重启（yml 静态访问令牌 + bind 配置 + "非回环绑定必须配令牌"的 fail-closed 联动，grill 已议定未落盘实施）。→ M16（ADR-0016）先落 Host/Origin 栅栏（封 DNS rebinding，不涉令牌），令牌 + bind 仍挂账于此
+- [ ] **鉴权与局域网暴露**：loopback-only 维持。用户 2026-09-14 裁定"局域网多设备目前不需要"——要给别人用时重启（yml 静态访问令牌 + bind 配置 + "非回环绑定必须配令牌"的 fail-closed 联动，grill 已议定未落盘实施）。→ M16（ADR-0016）先落 Host/Origin 栅栏（封 DNS rebinding，不涉令牌），令牌 + bind 仍挂账于此（注 2026-10-02 M32 终审核对：令牌半边已于 M24-06 落地销账、bind 挂 limitations M8#1，见本文件「M22 探测里程碑对账」节——本条仅存 bind 半边）
 - [x] **会话内容恢复范式：尾部窗口快照 + 向上分页 + 切换无刷新**（DSH 范式，2026-09-14 研究确定）：刷新/重连/切会话统一取**尾部 N 条消息**快照（携 `hasMore` + 投影基线）整窗替换，更早历史按页向上加载（DSH `PAGE_MESSAGES=50`、跳跃 200 条参照）；同时消除会话切换的 `location.reload()`。**DSH 不持久化游标、无全量重放路径**——用"限制快照大小"替代"增量游标"，一套机制覆盖三场景。需服务端分页参数 + 前端向上加载 UI；新开 ADR（ADR-0010 只覆盖连接层游标，不可改）。来源：M10 工单 05 刷新策略裁定 + DSH 源码精查。→ 0.8.0 已交付（M13，ADR-0013，2026-09-17 对账销账）
 - [x] （已销账）**代码语法高亮**：→ 已于 M29-08 落地销账：highlight.js v11.11.1 vendor 直挂 + github 主题，流式期逐步上色（2026-09-30 验收）
 - [ ] **计费口径统计**：cache 命中率、分桶明细——usage 已随 M10 落 assistant/message 日志，按需投影展示。→ 建议时机 M21（与会话查询/导出同期能力域）
 - [ ] **查阅组卡嵌套（工具调用分组投影）**：连续相关工具调用（搜索→读取）聚合为分组卡嵌套呈现（ZCode changes-group 组卡 + 查阅组形态，用户 M29 验收七张截图对照）——需要前端事件流聚合投影机制（按工具族/时序分组的架构级特性）。来源：M29 工单 07 验收后用户截图对照，工单 12 工具卡分型出范围项。→ 视工单 12 落地后观感再立项
-- [ ] **工具名协议化渲染**：前端散布 ask_user/exit_plan_mode 硬编码、后端"拒绝"魔法串判定审批语义，改元数据驱动。→ 后端魔法串部分已入册 M16（/api/answer 结构化协议）；前端元数据渲染建议时机 M23
+- [ ] **工具名协议化渲染**：前端散布 ask_user/exit_plan_mode 硬编码、后端"拒绝"魔法串判定审批语义，改元数据驱动。→ 后端魔法串部分已入册 M16（/api/answer 结构化协议）；前端元数据渲染建议时机 1.0 后（[ADR-0029](../docs/adr/0029-M27至1.0版图重排第二弹.md) M29 节「工具名协议化渲染留 1.0 后」，2026-10-02 M32 终审更正——原注 M23 已过未排期）
 - [ ] **流式思考展示**：思考过程实时渲染（边想边滚 + 完成后折叠收起）——完成态折叠卡已入 M29（ADR-0031：后端事件面一次补齐 + 前端折叠卡）；流式需适配器 reasoning 增量上报→agent 透传→会话事件增量帧→前端实时折叠渲染整条链。来源：M29 启动 grill Q8（ZCode 思考折叠形态参照，用户裁定完成态入本期、流式挂账）。→ 视 M29 完成态折叠使用反馈再立项
 - [ ] **状态面轮询统一**：5s setInterval 与 SSE 双通道并存，统一事件通道或论证保留轮询。→ 1.0 后菜单
 - [ ] **父呈现位动态时间上下文**（M16 工单 04 降级入账）：prompt 注册表仅静态片段（注册时刻冻结，长会话内变陈旧），动态时间需注册表扩展（按请求组装时刻注入）——子代理侧已由环境段覆盖（spawn 时新鲜生成），父呈现位待注册表支持。来源：M16 工单 04
@@ -47,7 +47,7 @@
 ## 文档与呈现（M8.5 衍生）
 
 - [x] （已销账）**视觉打磨**：→ 已于 M29-09/10/12 落地销账：走查九项 + 工具卡分型 + ZCode 形态全对齐（2026-10-01 用户验收通过）
-- [ ] **03-高级章节**：技能编写指南、MCP 深入、多插件协同（组装第二个 agent）。来源：M8.5 spec Out of Scope。→ 已入册 M29 文档与视觉期（ADR-0029 版图更正）。**2026-10-01 发版前核查勘误：三章工单（M29-02/03/04）仍 ready-for-agent 未实施，此前一条错误销账已回滚**——0.25.0 发版范围裁定见工单 11
+- [x] （已销账）**03-高级章节**：→ 已于 0.25.0 落地销账（M29 工单 02/03/04，CHANGELOG 0.25.0 在案）：技能编写指南 / MCP 深入 / 多插件协同三章在站（docs/03-高级/ 三文件 + nav「高级」分组，2026-10-02 M32 终审实证）。来源：M8.5 spec Out of Scope；历史注：2026-10-01 发版前核查曾有「未实施」勘误与错误销账回滚记录，三章随后于 0.25.0 交付
 
 ## 容器与测试基建（M12 衍生）
 
@@ -88,10 +88,18 @@
 - workflow / ralph（脚本化多子 agent 编排）、agent-team（roster/任务 DAG，DSH experimental）
 - LSP（seam + stdio + 诊断工具）、PTY 持久终端六件套、持久 shell
 - 跨 harness 委派后端（把真实 Claude Code/Codex 当子 agent 运行；duo 后端接口位已留）
-- prompt 更新 in-history 前缀缓存策略（reasoningEffort 分级已排期 M24——ADR-0024 修订）
+- prompt 更新 in-history 前缀缓存策略（reasoningEffort 分级已于 M24 交付——ADR-0026 决策六；M32 终审注更正，本条指缓存策略本身）
 - settings 热重载 + schema 驱动设置页（即 M1 遗留限制 1 的完整形态）、credentials OAuth 授权流
 - @session 跨会话引用、schedule 会话内定时提醒、JSONL 压缩帧/代际迁移链、agents[] 声明式自启
 - MCP resources/prompts 桥接（DSH 也仅桥接 tools——做了即超越对照系）
+- 桌面壳（ADR-0024 移出项——判据未触发：受控宿主需求不成立；M32 终审补录）
+- OTel 全套（ADR-0024 移出项——「至多随 M26 评估 model-attempt 级」评估点已过未评估，评估义务随出栈顺延；M32 终审补录）
+- SDK 薄客户端（ADR-0024 移出项——清单直列；M32 终审补录）
+- 远程部署 SSH/Docker/WSL（ADR-0024 移出项——清单直列；M32 终审补录）
+- cron / off-peak 定时与闲时任务（ADR-0024 移出项——清单直列；M32 终审补录）
+- browser-use 浏览器操作（ADR-0024 移出项——清单直列；M32 终审补录）
+- mailbox 信箱（ADR-0024 移出项——清单直列；M32 终审补录）
+- 会话级 rewind / checkpoint（ADR-0024 移出项——git 兜底文件回滚，对话回退工程量超收益；M32 终审补录）
 
 ## M22 探测里程碑对账（2026-09-21，ADR-0023）
 
@@ -105,4 +113,4 @@
 
 ## 会话生命周期（2026-10-01，M29 工单 12 验收期发现）
 
-- [ ] **会话持久化 defer 化**：页面加载/服务端重启即懒创建会话文件，2 天产生 370 个空会话全进侧栏（用户实测）。ZCode 对照：deferred/draft 三层防线——创建仅内存、首条真实事件才落盘、列表过滤，空会话既不堆积也不可见（研究锚点：docs/research/ZCode/Agent循环与会话/会话事件模型与持久化.md 增量段）。工单：.scratch/m30-release/issues/05-deferred-session.md（ready-for-agent；2026-10-01 用户裁定归属 M30/0.26.0 发布产物期，同日启动 grill 纳入范围并迁入统一目录，原路径 m30-session-lifecycle/issues/01）。
+- [x] （已销账）**会话持久化 defer 化**：→ 已于 0.26.0 落地销账（M30 工单 05，CHANGELOG 0.26.0 在案、工单 2026-10-01 用户验收 done）：新建会话只建内存态、首条消息才落盘、deferred 不进侧栏（顶层 currentId/currentTitle 供数）、空会话防御过滤（2026-10-02 M32 终审核对）。历史注：登记时实测 2 天堆积 370 个空会话，ZCode 对照 deferred/draft 三层防线（研究锚点 docs/research/ZCode/Agent循环与会话/会话事件模型与持久化.md 增量段）；工单 .scratch/m30-release/issues/05-deferred-session.md（2026-10-01 用户裁定归属 M30/0.26.0）
