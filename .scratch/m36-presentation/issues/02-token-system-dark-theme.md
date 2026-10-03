@@ -14,7 +14,7 @@ None (can start immediately)
 
 ## Status
 
-in-progress（实现与用户裁定通过、待提交；提交后随 08 单端到端验收转 done）
+done（2026-10-03 样式稿四轮用户目测裁定通过 + agent 代验收口，style-proof/01-09）
 
 ## Checklist
 

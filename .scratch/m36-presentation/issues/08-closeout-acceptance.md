@@ -12,7 +12,7 @@ M36 收口单。端到端验收叙事（done 判据，用户手动验收确认�
 
 ## Status
 
-ready-for-agent
+done（2026-10-03 用户授权 agent 代验通过——acceptance.md 八步自跑全过 + 全量回归 1159 例绿）
 
 ## Checklist
 

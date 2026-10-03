@@ -12,7 +12,7 @@
 
 ## Status
 
-in-progress（实现与浏览器三态走查通过、待提交；插件包真装腿随 08 收口验收件走用户手工腿）
+done（2026-10-03 用户授权 agent 代验通过——三态走查 + 插件包真装八步全过（acceptance.md），style-proof/04、11）
 
 ## Checklist
 

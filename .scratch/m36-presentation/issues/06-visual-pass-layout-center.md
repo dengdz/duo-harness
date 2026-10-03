@@ -12,7 +12,7 @@
 
 ## Status
 
-in-progress（实现与浏览器四项验收通过、待提交；随 08 收口转 done）
+done（2026-10-03 用户授权 agent 代验通过——四项验收实证，style-proof/06-09）
 
 ## Checklist
 

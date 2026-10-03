@@ -12,7 +12,7 @@ None (can start immediately)
 
 ## Status
 
-in-progress（实现与回归锁已完工待提交；提交后随 08 单端到端验收转 done）
+done（2026-10-03 用户授权 agent 代验通过——自跑证据见 acceptance.md，style-proof/ 归档）
 
 ## Checklist
 
