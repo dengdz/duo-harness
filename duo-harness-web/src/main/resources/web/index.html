@@ -45,6 +45,7 @@
   <!-- ===== §骨架层 · 状态面 ===== -->
   <section id="status">
     <h2>状态 <span class="hint">实时刷新</span></h2>
+    <button id="pcOpen" type="button" class="pc-open">插件中心</button>
     <div id="statusBody">
       <details class="status-fold" open>
         <summary class="status-group">上下文</summary>
@@ -78,6 +79,37 @@
     <button id="subagentClose">关闭</button>
   </div>
   <div id="subagentBody"></div>
+</aside>
+
+<!-- ===== §骨架层 · 插件中心抽屉（M35 工单 06）：四区（已装/待装/挂类路径/状态行），
+     走 /plugins/center/** 端点贡献口；破坏性操作（卸载/挂载换策略）二次确认 ===== -->
+<aside id="pluginCenterDrawer" hidden>
+  <div class="drawer-bar">
+    <b>插件中心</b>
+    <button id="pcClose">关闭</button>
+  </div>
+  <div id="pcBody">
+    <div class="pc-note">插件包放 <code>~/.duo/plugins/</code>；装前点名确认后装载，停/启/卸运行期生效，操作写回装配文件（重启后保持）。v1 信任模型：自用 + 熟人圈——装插件等于装任意代码。</div>
+    <details class="pc-fold" open>
+      <summary>已装与装配行</summary>
+      <table id="pcRows"><thead><tr><th>id</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+    </details>
+    <details class="pc-fold" open>
+      <summary>待装（目录扫描）</summary>
+      <div id="pcScan">—</div>
+    </details>
+    <details class="pc-fold">
+      <summary>挂类路径插件（换审批策略等内置实现替换）</summary>
+      <div class="pc-form">
+        <input id="pcClasspathId" placeholder="行 id（如 approval）">
+        <input id="pcClasspathFqcn" placeholder="入口类 FQCN">
+        <input id="pcClasspathConfig" placeholder='config JSON（可空，如 {}）'>
+        <button id="pcClasspathMount" type="button">挂载</button>
+        <div class="pc-note">若该 id 已有现行行，先在上方卸载再挂载（同名互斥）。</div>
+      </div>
+    </details>
+    <div id="pcStatusLine" class="pc-status-line">—</div>
+  </div>
 </aside>
 
 <script src="/web/marked.min.js"></script>

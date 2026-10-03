@@ -19,6 +19,13 @@
       <artifactId>duo-harness-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- Web 端点贡献口（webRoutes 视图类型；M35 工单 06）——功能域消费呈现域
+         贡献口的先例方向：插件中心 OWN 自己的 Web 集成面（旗舰示范） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-web</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- Jackson YAML（装配文件读写）经 core 传递依赖；slf4j 同源 -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>

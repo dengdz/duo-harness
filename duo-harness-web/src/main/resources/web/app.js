@@ -48,10 +48,11 @@ const duoTabId = (() => {
 
 const _duoFetch = window.fetch.bind(window);
 window.fetch = (url, opts = {}) => {
-  if (typeof url === 'string' && url.startsWith('/api/')) {
+  if (typeof url === 'string' && (url.startsWith('/api/') || url.startsWith('/plugins/'))) {
     opts = { ...opts, headers: { ...(opts.headers || {}) } };
-    // 标签身份随全部 /api 请求上报（SSE 走查询串——EventSource 不支持自定义头）
-    opts.headers['X-Tab-Id'] = duoTabId;
+    // 标签身份随全部 /api 请求上报（SSE 走查询串——EventSource 不支持自定义头）；
+    // /plugins/** 贡献端点只需鉴权（会话标签绑定与中心管理 API 无关）
+    if (url.startsWith('/api/')) opts.headers['X-Tab-Id'] = duoTabId;
     if (duoToken) opts.headers['X-Duo-Token'] = duoToken;
   }
   return _duoFetch(url, opts);
@@ -2433,3 +2434,199 @@ const app = (() => {
 })();
 
 sse.connect();
+
+// ===== §插件中心抽屉（M35 工单 06）：四区管理面，走 /plugins/center/** 贡献口 =====
+// 顶层 IIFE——只依赖顶层符号（$/showToast/errText），不触 render/sse IIFE 内部（M29 边界纪律）。
+(() => {
+  const drawer = $('#pluginCenterDrawer');
+  if (!drawer) return;
+
+  const pcApi = {
+    async get(path) {
+      const res = await fetch('/plugins/center/api/' + path);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
+      return res.json();
+    },
+    async post(path, body) {
+      const res = await fetch('/plugins/center/api/' + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || ('HTTP ' + res.status));
+      return res.json();
+    },
+  };
+
+  function openDrawer() {
+    drawer.hidden = false;
+    drawer.classList.add('open');
+    refresh();
+  }
+  function closeDrawer() {
+    drawer.classList.remove('open');
+    drawer.hidden = true;
+  }
+
+  async function act(label, fn) {
+    try {
+      await fn();
+      showToast(label + '完成', 'info');
+    } catch (err) {
+      showToast(label + '失败：' + errText(err));
+    }
+    refresh();
+  }
+
+  /** 停→改→启向导（无状态插件改配置）：读现状 → prompt 改 JSON → reconfigure 一步到位。 */
+  async function reconfigureFlow(row) {
+    const input = prompt('编辑插件 ' + row.id + ' 的配置 JSON：', row.configJson || '{}');
+    if (input === null) return;
+    let config;
+    try {
+      config = input.trim() === '' ? null : JSON.parse(input);
+    } catch (e) {
+      showToast('配置不是合法 JSON：' + errText(e));
+      return;
+    }
+    await act('改配置', () => pcApi.post('reconfigure', { id: row.id, config }));
+  }
+
+  async function installFlow(scanned) {
+    let inspection;
+    try {
+      inspection = await pcApi.get('inspect?jar=' + encodeURIComponent(scanned.path));
+    } catch (err) {
+      showToast('点名失败：' + errText(err));
+      return;
+    }
+    const candidates = inspection.candidateEntries || [];
+    let fqcn = candidates.length === 1 ? candidates[0] : null;
+    if (candidates.length !== 1) {
+      fqcn = prompt('入口类 FQCN（候选：' + (candidates.join(', ') || '无——手填') + '）');
+      if (!fqcn) return;
+    }
+    const id = prompt('装配行 id：', scanned.path.split('/').pop().replace(/\.jar$/i, ''));
+    if (!id) return;
+    const configText = prompt('config JSON（可空）：', '{}');
+    if (configText === null) return;
+    let config;
+    try {
+      config = configText.trim() === '' ? null : JSON.parse(configText);
+    } catch (e) {
+      showToast('配置不是合法 JSON：' + errText(e));
+      return;
+    }
+    await act('安装 ' + id, () => pcApi.post('install', {
+      jar: scanned.path, id, entryFqcn: fqcn, config,
+    }));
+  }
+
+  function renderRows(rows) {
+    const tbody = $('#pcRows tbody');
+    tbody.textContent = '';
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+
+      const idCell = document.createElement('td');
+      idCell.textContent = row.id;
+      tr.appendChild(idCell);
+
+      const stateCell = document.createElement('td');
+      stateCell.textContent = row.disabled ? '已停用' : (row.state === '-' ? '未运行' : row.state);
+      tr.appendChild(stateCell);
+
+      const opsCell = document.createElement('td');
+      opsCell.className = 'pc-row-ops';
+      if (row.disableable === false) {
+        const note = document.createElement('span');
+        note.className = 'pc-restart-only';
+        note.textContent = '需重启生效';
+        opsCell.appendChild(note);
+      } else {
+        const buttons = [];
+        if (!row.disabled) {
+          buttons.push(['停用', () => act('停用 ' + row.id, () => pcApi.post('disable', { id: row.id }))]);
+          buttons.push(['改配置', () => reconfigureFlow(row)]);
+        } else {
+          buttons.push(['启用', () => act('启用 ' + row.id, () => pcApi.post('enable', { id: row.id }))]);
+        }
+        buttons.push(['卸载', () => {
+          if (confirm('卸载插件 ' + row.id + '？其服务与工具将一并摘除。')) {
+            act('卸载 ' + row.id, () => pcApi.post('uninstall', { id: row.id }));
+          }
+        }]);
+        for (const [label, fn] of buttons) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = label;
+          b.addEventListener('click', fn);
+          opsCell.appendChild(b);
+        }
+      }
+      tr.appendChild(opsCell);
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderScan(scanned) {
+    const box = $('#pcScan');
+    box.textContent = '';
+    if (!scanned.length) {
+      box.textContent = '目录无待装插件包';
+      return;
+    }
+    for (const item of scanned) {
+      const line = document.createElement('div');
+      line.className = 'pc-scan-line';
+      const name = document.createElement('span');
+      name.textContent = item.path.split('/').pop() + '（' + Math.round(item.sizeBytes / 1024) + 'KB · sha ' + item.sha256.slice(0, 8) + '）';
+      const installBtn = document.createElement('button');
+      installBtn.type = 'button';
+      installBtn.textContent = '安装';
+      installBtn.addEventListener('click', () => installFlow(item));
+      line.appendChild(name);
+      line.appendChild(installBtn);
+      box.appendChild(line);
+    }
+  }
+
+  async function refresh() {
+    try {
+      const rows = await pcApi.get('rows');
+      renderRows(rows);
+      const scan = await pcApi.get('scan');
+      renderScan(scan);
+      const running = rows.filter(r => !r.disabled && r.state === 'ACTIVE').length;
+      $('#pcStatusLine').textContent = '共 ' + rows.length + ' 行：' + running + ' 活跃 / '
+          + (rows.length - running) + ' 未运行（状态实时，操作已写回装配文件）';
+    } catch (err) {
+      $('#pcStatusLine').textContent = '插件中心不可用：' + errText(err);
+    }
+  }
+
+  $('#pcOpen').addEventListener('click', openDrawer);
+  $('#pcClose').addEventListener('click', closeDrawer);
+  $('#pcClasspathMount').addEventListener('click', () => {
+    const id = $('#pcClasspathId').value.trim();
+    const fqcn = $('#pcClasspathFqcn').value.trim();
+    if (!id || !fqcn) {
+      showToast('挂类路径插件需要行 id 与入口类 FQCN');
+      return;
+    }
+    if (!confirm('挂载 ' + fqcn + ' 为行 ' + id + '？若该 id 已有现行行，请先卸载（同名互斥）。')) {
+      return;
+    }
+    let config = null;
+    const configText = $('#pcClasspathConfig').value.trim();
+    if (configText !== '') {
+      try {
+        config = JSON.parse(configText);
+      } catch (e) {
+        showToast('配置不是合法 JSON：' + errText(e));
+        return;
+      }
+    }
+    act('挂载 ' + id, () => pcApi.post('mount-classpath', { id, fqcn, config }));
+  });
+})();

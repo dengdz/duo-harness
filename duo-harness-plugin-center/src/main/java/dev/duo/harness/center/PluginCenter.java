@@ -88,9 +88,11 @@ public final class PluginCenter {
                                     List<String> candidateEntries) {
     }
 
-    /** 行状态（运行期与装配文件合并视图；disabled 行不在运行期，state 为 "-"）。 */
+    /** 行状态（运行期与装配文件合并视图；disabled 行不在运行期，state 为 "-"）。
+     * disableable=false 的行页面出"需重启生效"标注；configJson 供"停→改→启"预填。 */
     public record CenterRow(String id, String pluginName, String state,
-                            boolean disabled, String jarPath) {
+                            boolean disabled, String jarPath,
+                            boolean disableable, String configJson) {
     }
 
     // === 扫描 ===
@@ -168,12 +170,14 @@ public final class PluginCenter {
         Objects.requireNonNull(jar, "jar");
         requireId(id);
         Objects.requireNonNull(entryFqcn, "entryFqcn");
+        // 空 map 归一为 null：configType=null 的插件"声明即须不提供"（页面空 JSON = 无配置）
+        final Map<String, Object> normalized = config == null || config.isEmpty() ? null : config;
         PluginJarClassLoader loader = PluginJarClassLoader.open(jar);
         try {
             Plugin<?> plugin = (Plugin<?>) loader.loadPluginClass(entryFqcn)
                     .getDeclaredConstructor().newInstance();
             try {
-                rows.load(id, plugin, config, loader);
+                rows.load(id, plugin, normalized, loader);
             } catch (RuntimeException e) {
                 closeQuietly(loader);
                 throw e;
@@ -189,7 +193,7 @@ public final class PluginCenter {
         try {
             mutateYml(rowsNow -> {
                 rowsNow.add(new RowModel(id, entryFqcn, normalize(jar.toString()),
-                        config == null ? null : yaml.valueToTree(config), false));
+                        normalized == null ? null : yaml.valueToTree(normalized), false));
                 return rowsNow;
             });
         } catch (RuntimeException e) {
@@ -239,18 +243,69 @@ public final class PluginCenter {
         Map<String, CenterRow> merged = new LinkedHashMap<>();
         for (RowSnapshot snapshot : rows.rows()) {
             merged.put(snapshot.id(), new CenterRow(snapshot.id(), snapshot.pluginName(),
-                    snapshot.state().name(), false, null));
+                    snapshot.state().name(), false, null, true, null));
         }
         for (RowModel row : readRows()) {
+            boolean disableable = !UNDISABLEABLE.contains(row.name());
+            String configJson = row.config() == null ? null : row.config().toString();
             if (merged.containsKey(row.id())) {
                 CenterRow live = merged.get(row.id());
                 merged.put(row.id(), new CenterRow(live.id(), live.pluginName(), live.state(),
-                        false, row.jar()));
+                        false, row.jar(), disableable, configJson));
             } else {
-                merged.put(row.id(), new CenterRow(row.id(), row.name(), "-", true, row.jar()));
+                // yml 独有行：disabled 取装配行真实标记——"启用却不在运行期"是坏载
+                // 信号（state "-" 且 disabled=false），不吞成"已停用"
+                merged.put(row.id(), new CenterRow(row.id(), row.name(), "-", row.disabled(),
+                        row.jar(), disableable, configJson));
             }
         }
         return List.copyOf(merged.values());
+    }
+
+    /**
+     * 挂载类路径插件为新行（换审批策略等"用内置实现替换现行行"的通道）：
+     * 类从宿主 classpath 反射实例化，装载 + 装配落行与 {@link #install} 同纪律
+     * （写回失败回滚装载）。重复 id 由行级控制口点名拒绝——先卸现行行再挂。
+     */
+    public void installClasspath(String id, String fqcn, Map<String, Object> config) {
+        requireId(id);
+        Objects.requireNonNull(fqcn, "fqcn");
+        Plugin<?> plugin;
+        try {
+            plugin = (Plugin<?>) Class.forName(fqcn).getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new PluginException("类不可加载或不可实例化: " + fqcn + "（须在宿主 classpath 上）", e);
+        }
+        rows.load(id, plugin, config);
+        try {
+            mutateYml(rowsNow -> {
+                rowsNow.add(new RowModel(id, fqcn, null,
+                        config == null ? null : yaml.valueToTree(config), false));
+                return rowsNow;
+            });
+        } catch (RuntimeException e) {
+            rows.dispose(id);
+            throw e;
+        }
+    }
+
+    /**
+     * 改配置（"停→改→启"向导的服务端一步）：运行期拔除 → 装配行 config 替换 →
+     * 按新配置重建装载。不可拔行点名"需重启生效"。
+     */
+    public void reconfigure(String id, Map<String, Object> config) {
+        RowModel row = requireYmlRow(id);
+        requireDisableable(id, row.name());
+        rows.dispose(id); // 未装载（已停用）行：点名，页面按状态出按钮
+        mutateYml(rowsNow -> {
+            rowsNow.replaceAll(r -> id.equals(r.id())
+                    ? new RowModel(r.id(), r.name(), r.jar(),
+                            config == null ? null : yaml.valueToTree(config), false)
+                    : r);
+            return rowsNow;
+        });
+        loadFromRow(new RowModel(row.id(), row.name(), row.jar(),
+                config == null ? null : yaml.valueToTree(config), false));
     }
 
     // === 内部：运行期重建 ===

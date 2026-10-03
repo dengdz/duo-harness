@@ -75,6 +75,12 @@
       <artifactId>duo-harness-stats</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M35：插件中心（生态管理面，ADR-0037）——接入行之一（opt-in 装配） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-plugin-center</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
