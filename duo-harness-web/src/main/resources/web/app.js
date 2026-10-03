@@ -614,7 +614,8 @@ const render = (() => {
     'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
     circle: '<circle cx="12" cy="12" r="10"/>',
   };
-  /** 工具图标分配（ZCode 渲染器对齐：读/搜一族共用放大镜；未识别走 wrench 兜底）。 */
+  /** 工具图标分配（ZCode 渲染器对齐：读/搜一族共用放大镜；未识别走 wrench 兜底）。
+      第三方声明优先（M36 工单 05 注册表），内置表为先到方兜底。 */
   const TOOL_ICONS = {
     bash: 'terminal', read: 'search', write: 'file', edit: 'edit',
     glob: 'search', grep: 'search', session_search: 'book',
@@ -623,9 +624,11 @@ const render = (() => {
     task_stop: 'circle-stop', read_image: 'search',
   };
   function toolIcon(name) {
+    if (cardDeclarations.has(name)) return cardDeclarations.get(name).icon || 'wrench';
     return TOOL_ICONS[name] || 'wrench';
   }
-  /** 工具中文名映射（M29 工单 12 用户裁定：每类工具有对应中文名；未映射回退原名）。 */
+  /** 工具中文名映射（M29 工单 12 用户裁定：每类工具有对应中文名；未映射回退原名）。
+      第三方声明优先（M36 工单 05 注册表），内置表为先到方兜底。 */
   const TOOL_LABELS = {
     bash: '终端', read: '读取', write: '写入', edit: '编辑',
     glob: '查找文件', grep: '搜索内容', session_search: '会话搜索',
@@ -635,6 +638,7 @@ const render = (() => {
     read_image: '查看图片', exit_plan_mode: '计划呈交',
   };
   function toolLabel(name) {
+    if (cardDeclarations.has(name)) return cardDeclarations.get(name).label || name;
     return TOOL_LABELS[name] || name;
   }
 
@@ -645,8 +649,38 @@ const render = (() => {
       + (ICON_PATHS[name] || ICON_PATHS.wrench) + '</svg>';
   }
 
+  /* ===== 卡片声明注册表（M36 工单 05，ADR-0038 决策四）：展示卡开放面 =====
+   * 数据驱动（icon/label/summaryFields 纯数据，无代码）——第三方声明经呈现贡献口
+   * 校验、聚合端点序列化下发，此处注册进表；同名先到先得（内置图标/名称表即先到方，
+   * 第三方声明只落未注册的工具名）；声明缺席的工具回退既有形态。
+   * 交互卡（ask_user/exit_plan_mode/todo_write）独占不进表。 */
+  const cardDeclarations = new Map();
+
+  /** 第三方声明摄入（§5 聚合端点刷新时调用）：本次下发里不在者摘除（提供方拔除
+     → 该工具回退通用卡），新工具名注册（内置已占名者天然缺席于下发，不冲突）。 */
+  function registerCardDeclarations(decls) {
+    const incoming = new Map((decls || [])
+        .filter((d) => d && d.toolName && !cardDeclarations.has(d.toolName))
+        .map((d) => [d.toolName, d]));
+    for (const name of Array.from(cardDeclarations.keys())) {
+      if (cardDeclarations.get(name).thirdParty && !incoming.has(name)) {
+        cardDeclarations.delete(name);
+      }
+    }
+    for (const [name, decl] of incoming) {
+      cardDeclarations.set(name, {
+        toolName: name,
+        icon: decl.icon || 'wrench',
+        label: decl.label || name,
+        summaryFields: Array.isArray(decl.summaryFields) ? decl.summaryFields : [],
+        thirdParty: true,
+      });
+    }
+  }
+
   /** 参数摘要（M29 W5 + 工单 12 段结构重设计）：常见工具的关键参数一行摘要；
-   *  其余回退 null（通用卡展示摘要行 + 参数原文折叠）。 */
+   *  其余回退 null（通用卡展示摘要行 + 参数原文折叠）。第三方声明的 summaryFields
+   *  走通用抽取（M36 工单 05：声明驱动）。 */
   function paramSummary(toolName, argsJson) {
     try {
       const a = JSON.parse(argsJson || '{}');
@@ -657,6 +691,13 @@ const render = (() => {
       if (toolName === 'web_fetch' && a.url) return String(a.url);
       if (toolName === 'memory_write' && a.content) return String(a.content);
       if (toolName === 'session_search' && (a.query || a.keyword)) return String(a.query || a.keyword);
+      const decl = cardDeclarations.get(toolName);
+      if (decl && decl.thirdParty && decl.summaryFields.length) {
+        const parts = decl.summaryFields
+            .map((f) => a[f])
+            .filter((v) => v !== undefined && v !== null && v !== '');
+        if (parts.length) return parts.map((v) => String(v)).join(' ').slice(0, 120);
+      }
     } catch (e) { /* 回退原 JSON */ }
     return null;
   }
@@ -919,6 +960,14 @@ const render = (() => {
   }
 
   // ask_user 的结果即回答文本：冻结其提问卡，不再渲染普通工具卡
+  /** 工具结果失败判定（M36 工单 05）：status 结局字段优先（denied/failed = 失败
+     形态）；旧日志无字段回落文案嗅探（执行被拒绝/执行失败——历史文案在旧日志
+     原样保留，回放兼容）。 */
+  function resultFailed(event) {
+    if (event.status != null) return event.status !== 'ok';
+    return Boolean(event.isError) || /执行被拒绝|执行失败/.test(event.text || '');
+  }
+
   function toolResult(event) {
     if (event.toolName === 'ask_user') {
       resolveInteractionDock(); // dock 待答卡移入消息流（M29 工单 12 停靠模型）
@@ -959,14 +1008,17 @@ const render = (() => {
     // exit_plan_mode 的结果即复核结论：冻结其计划呈交卡
     if (event.toolName === 'exit_plan_mode') {
       const text = (event.text || '').trim();
-      resolveByToolName('exit_plan_mode', text, text.includes('已获批准'));
+      // 成败判定字段优先（M36 工单 05）：status=ok 批准 / denied 打回（isError 恒
+      // false，文案嗅探不可靠）；旧日志无字段回落文案嗅探（回放兼容）
+      const approved = event.status != null ? event.status === 'ok' : text.includes('已获批准');
+      resolveByToolName('exit_plan_mode', text, approved);
       return;
     }
     // skill 结果 = 技能加载内容：填 .skill-preview 限高直出（M29 工单 12 对齐 ZCode 预览形态）
     if (event.toolName === 'skill') {
       const card = (event.toolCallId && t.toolCards.get(event.toolCallId)); // 无兜底：缺 id 的结果忽略（M29 审查：旧兜底会误填 todo 卡）
       if (!card) return;
-      const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
+      const failed = resultFailed(event);
       const label = card.querySelector('.tcard-label');
       if (label) label.classList.remove('sweep');
       const status = card.querySelector('.tcard-status');
@@ -986,7 +1038,7 @@ const render = (() => {
     }
     const card = (event.toolCallId && t.toolCards.get(event.toolCallId)); // 无兜底：缺 id 的结果忽略（M29 审查：旧兜底会误填 todo 卡）
     if (!card) return;
-    const failed = event.isError || /执行被拒绝|执行失败/.test(event.text || '');
+    const failed = resultFailed(event);
     // 运行态收尾（对齐 ZCode ToolLayout）：类别词扫光停止；成功态状态槽留空（报忧不报喜），
     // 失败态槽内点线「执行失败」+ 悬停 title 看错误全文（statusLabel+tooltip 语义）
     const label = card.querySelector('.tcard-label');
@@ -1230,7 +1282,10 @@ const render = (() => {
   /** approval/decided 回放/实时：按 toolName 找最后一张同工具交互卡冻结。 */
   function approvalDecided(event) {
     resolveInteractionDock(); // dock 待答审批卡移入消息流（M29 工单 12 停靠模型）
-    const denied = (event.text || '').startsWith('deny');
+    // 决定判定字段优先（M36 工单 05）：decision 枚举 allow/deny；旧日志无字段回落
+    // 文案前缀嗅探（历史事件 text 原样保留，回放兼容）
+    const denied = event.decision != null ? event.decision === 'deny'
+        : (event.text || '').startsWith('deny');
     const cards = $$('.interactive', t.container).filter(c => c.dataset.toolName === (event.toolName || ''));
     const card = cards[cards.length - 1];
     if (event.toolName === 'exit_plan_mode') {
@@ -1585,6 +1640,7 @@ const render = (() => {
     interactiveCard, questionCard, approvalDecided, resolveCard,
     resolveInteractionDock, // M29 工单 12 停靠模型：§4 委托层乐观收口调用（IIFE 边界暴露）
     askFrozenLine, // M29 工单 12：§3 回放冻结摘要行调用（IIFE 边界暴露）
+    registerCardDeclarations, // M36 工单 05：§5 聚合端点刷新时摄入第三方展示卡声明（注册口）
     resetToHero, resetForReplay, showMessages, dispatch, prependEvents, replayInto
   };
 })();
@@ -2782,13 +2838,15 @@ sse.connect();
   }
 
   async function refreshThemes() {
-    let list = [];
+    let payload = { themes: [], cards: [] };
     try {
-      list = (await (await fetch('/api/presentation')).json()).themes || [];
+      payload = (await (await fetch('/api/presentation')).json()) || payload;
     } catch (err) {
       return; // 端点缺席/瞬时失败：保持现状（内置暗色不受影响）
     }
-    themes = list;
+    // 第三方展示卡声明同源摄入（M36 工单 05）：render IIFE 注册口，先到先得/随拔随清
+    render.registerCardDeclarations(payload.cards || []);
+    themes = payload.themes || [];
     const signature = themes.map((t) => t.id + '|' + (t.displayName || '')).join(';');
     if (signature !== lastSignature) {
       lastSignature = signature;
