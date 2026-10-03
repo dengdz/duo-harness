@@ -122,6 +122,7 @@ class ToolsServiceTest {
         ToolResult result = tools().execute("echo", NullNode.getInstance());
 
         assertTrue(result.isError());
+        assertEquals(ToolResult.OUTCOME_DENIED, result.outcome(), "治理否决 = denied 结局");
         assertTrue(String.valueOf(result.value()).contains("测试否决"));
         assertEquals(0, echo.executions.get(), "否决后工具本体不得执行");
     }
@@ -155,6 +156,7 @@ class ToolsServiceTest {
 
         assertEquals("治理后:echo:", result.value());
         assertFalse(result.isError());
+        assertEquals(ToolResult.OUTCOME_OK, result.outcome(), "正常完成 = ok 结局");
     }
 
     @Test
@@ -199,6 +201,7 @@ class ToolsServiceTest {
         ToolResult result = assertDoesNotThrow(() -> tools().execute("boom", NullNode.getInstance()));
 
         assertTrue(result.isError());
+        assertEquals(ToolResult.OUTCOME_FAILED, result.outcome(), "工具异常 = failed 结局");
         assertTrue(String.valueOf(result.value()).contains("工具内部炸了"),
                 String.valueOf(result.value()));
     }

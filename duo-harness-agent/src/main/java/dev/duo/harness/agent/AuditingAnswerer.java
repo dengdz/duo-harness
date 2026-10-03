@@ -63,9 +63,12 @@ public final class AuditingAnswerer implements Answerer {
         if (answer != null) {
             // 批准判定单点（C2 工单 05）：与审批工具共用同一判据——计划复核按
             // options[0] 命中、审批按 approved 布尔，见 InteractionRequest.isApproved
-            String decision = (InteractionRequest.isApproved(request, answer) ? "allow" : "deny")
-                    + "（回答者: " + answer.source() + "）";
-            session.get().append(SessionEvent.approvalDecided(request.subject(), decision));
+            boolean approved = InteractionRequest.isApproved(request, answer);
+            String decision = approved ? "allow" : "deny";
+            // 语义字段随事件落盘（M36 工单 01）：decision ∈ allow/deny + source = 回答者
+            // 呈现位 id，前端不再从 text 前缀嗅探；text 照旧保留人读形态
+            session.get().append(SessionEvent.approvalDecided(request.subject(),
+                    decision + "（回答者: " + answer.source() + "）", decision, answer.source()));
         }
         return answer;
     }

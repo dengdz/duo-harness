@@ -62,7 +62,7 @@ public final class AskUserTool implements ToolDefinition {
     }
 
     @Override
-    public String execute(ToolExecution execution) {
+    public Object execute(ToolExecution execution) {
         JsonNode args = execution.args();
         JsonNode questionNode = args.get("question");
         if (questionNode == null || questionNode.isNull()
@@ -76,8 +76,12 @@ public final class AskUserTool implements ToolDefinition {
         InteractionAnswer answer = answers.ask(InteractionRequest.question(
                 questionNode.asText(), options, multiSelect, execution.presenterId()));
         if (!answer.approved() || answer.values().isEmpty()) {
-            // fail-closed：无回答者 / 人未作答——收敛为 error 结果，模型可见原因后自行调整
-            throw new PluginException("提问无人应答（fail-closed），用户当前不可达");
+            // fail-closed：无回答者 / 用户拒绝——error 结果回模型（模型可见原因后自行调整）。
+            // 结局声明 denied（M36 工单 01）：拒绝/不可达是拒绝语义非执行故障。直接返回
+            // ToolResult 未经 markError，文本无「执行失败」前缀——前端该路径按 isError
+            // 判读不嗅文案，模型可见消息语义不变
+            return new ToolResult("提问无人应答（fail-closed），用户当前不可达",
+                    true, ToolResult.OUTCOME_DENIED);
         }
         return answer.values().stream().collect(Collectors.joining("\n"));
     }

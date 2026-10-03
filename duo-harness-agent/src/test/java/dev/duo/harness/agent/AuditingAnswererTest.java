@@ -49,6 +49,9 @@ class AuditingAnswererTest {
         assertEquals("{\"path\":\"a.txt\"}", session.events().get(0).text());
         assertEquals(SessionEvent.APPROVAL_DECIDED, session.events().get(1).type());
         assertEquals("allow（回答者: console）", session.events().get(1).text());
+        // 语义字段（M36 工单 01）：前端不再从 text 前缀嗅探
+        assertEquals("allow", session.events().get(1).decision());
+        assertEquals("console", session.events().get(1).source());
         // 审计事件不进对话投影
         assertEquals(0, session.deriveMessages().size());
     }
@@ -123,5 +126,7 @@ class AuditingAnswererTest {
 
         assertEquals(SessionEvent.APPROVAL_DECIDED, session.events().get(1).type());
         assertEquals("deny（回答者: web）", session.events().get(1).text(), "反馈文本（非批准项）记 deny");
+        assertEquals("deny", session.events().get(1).decision(), "语义字段与 text 前缀同判");
+        assertEquals("web", session.events().get(1).source());
     }
 }

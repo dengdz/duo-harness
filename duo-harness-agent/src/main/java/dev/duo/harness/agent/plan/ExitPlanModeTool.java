@@ -8,6 +8,7 @@ import dev.duo.harness.tools.InteractionRequest;
 import dev.duo.harness.tools.InteractionService;
 import dev.duo.harness.tools.ToolDefinition;
 import dev.duo.harness.tools.ToolExecution;
+import dev.duo.harness.tools.ToolResult;
 
 import java.util.List;
 import java.util.Objects;
@@ -116,7 +117,7 @@ public final class ExitPlanModeTool implements ToolDefinition, PlanSessionBinder
     }
 
     @Override
-    public String execute(ToolExecution execution) {
+    public Object execute(ToolExecution execution) {
         JsonNode planNode = execution.args().get("plan");
         if (planNode == null || planNode.isNull() || planNode.asText().isBlank()) {
             throw new PluginException(NAME + " 缺少必填参数 plan（完整计划内容）");
@@ -131,8 +132,11 @@ public final class ExitPlanModeTool implements ToolDefinition, PlanSessionBinder
         if (answer == null || !answer.approved() || answer.values().isEmpty()) {
             // fail-closed：无回答者 / 未作答 → 计划不批准（对齐 DSH：保持计划模式，
             // 不写 exited——模型可继续修改计划或由用户 /plan off 手动退出）
-            return "计划复核无人应答（fail-closed），计划未获批准。请继续完善计划，"
-                    + "或等待用户回来后再次呈交（用户也可用 /plan off 手动退出计划模式）。";
+            // 结局声明（M36 工单 01）：outcome = denied 供呈现层判读；isError 保持
+            // false——计划未获批准是正常业务结局，模型侧修订循环语义不变
+            return new ToolResult("计划复核无人应答（fail-closed），计划未获批准。请继续完善计划，"
+                    + "或等待用户回来后再次呈交（用户也可用 /plan off 手动退出计划模式）。",
+                    false, ToolResult.OUTCOME_DENIED);
         }
         // 批准判定单点（C2 工单 05）：与审计桥共用同一判据（options[0] 位置约定），
         // 此前按批准文案精确匹配的私有判据删除——改文案或调选项顺序不再两处分叉
@@ -143,7 +147,9 @@ public final class ExitPlanModeTool implements ToolDefinition, PlanSessionBinder
             return "计划已获批准（回答者: " + answer.source() + "）。请立即开始执行计划。";
         }
         String verdict = answer.values().get(0);
-        return "计划未获批准，用户要求继续修改计划。用户反馈：" + verdict
-                + "（回答者: " + answer.source() + "）。请按反馈修改后再次呈交。";
+        // 结局声明同上：denied + isError = false（用户要求继续修改，非执行失败）
+        return new ToolResult("计划未获批准，用户要求继续修改计划。用户反馈：" + verdict
+                + "（回答者: " + answer.source() + "）。请按反馈修改后再次呈交。",
+                false, ToolResult.OUTCOME_DENIED);
     }
 }

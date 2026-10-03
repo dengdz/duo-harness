@@ -1204,6 +1204,18 @@ public final class Session {
             // 失败标志（M25 工单 04）：仅 true 落盘——旧日志缺字段即 false，日志更瘦
             node.put("error", true);
         }
+        if (event.status() != null) {
+            // 结局枚举（M36 工单 01）：仅声明落盘——缺字段 = 未声明，消费方回落既有判读
+            node.put("status", event.status());
+        }
+        if (event.decision() != null) {
+            // 审批决定枚举（M36 工单 01）：allow / deny
+            node.put("decision", event.decision());
+        }
+        if (event.source() != null) {
+            // 审批决定来源：回答者呈现位 id
+            node.put("source", event.source());
+        }
         return JSON.writeValueAsString(node);
     }
 
@@ -1225,14 +1237,23 @@ public final class Session {
             // error 失败标志（M25 工单 04）：旧日志无此字段 = false（非已知失败，可裁）
             JsonNode errorNode = node.get("error");
             boolean error = errorNode != null && errorNode.asBoolean(false);
+            // 结构化语义字段（M36 工单 01）：旧日志无此字段 = null（结构未声明，消费方回落既有判读）
+            String status = textOrNull(node.get("status"));
+            String decision = textOrNull(node.get("decision"));
+            String source = textOrNull(node.get("source"));
             return new SessionEvent(type, at, text,
                     idNode == null || idNode.isNull() ? null : idNode.asText(),
                     nameNode == null || nameNode.isNull() ? null : nameNode.asText(),
                     reasoningNode == null || reasoningNode.isNull() ? null : reasoningNode.asText(),
-                    usage, error);
+                    usage, error, status, decision, source);
         } catch (IOException e) {
             throw new PluginException("会话事件解析失败: " + line, e);
         }
+    }
+
+    /** JSON 节点 → 可空文本（缺节点 / null 节点归 null——结构化语义字段的统一读取口径）。 */
+    private static String textOrNull(JsonNode field) {
+        return field == null || field.isNull() ? null : field.asText();
     }
 
 }

@@ -132,6 +132,7 @@ class ExitPlanModeToolTest {
         ToolResult result = tools.execute(ExitPlanModeTool.NAME, args("1. 加文件 2. 改文档"));
 
         assertFalse(result.isError());
+        assertEquals(ToolResult.OUTCOME_OK, result.outcome(), "批准 = ok 结局");
         String text = String.valueOf(result.value());
         assertTrue(text.contains("已获批准"), text);
         assertEquals(1, approvals.get(), "批准回调触发（装配侧摘除指导片段）");
@@ -151,6 +152,8 @@ class ExitPlanModeToolTest {
         ToolResult result = tools.execute(ExitPlanModeTool.NAME, args("计划"));
 
         assertFalse(result.isError(), "打回是继续计划的指令，非错误形态");
+        assertEquals(ToolResult.OUTCOME_DENIED, result.outcome(),
+                "打回 = denied 结局（M36 工单 01：与 isError 正交，模型侧语义不变）");
         String text = String.valueOf(result.value());
         assertTrue(text.contains("继续修改计划"), text);
         assertTrue(text.contains("第一步换成加测试"), "反馈原文进结果: " + text);
@@ -168,6 +171,7 @@ class ExitPlanModeToolTest {
         ToolResult result = tools.execute(ExitPlanModeTool.NAME, args("计划"));
 
         assertFalse(result.isError(), "fail-closed 为正常结果形态（计划不批准），非系统错误");
+        assertEquals(ToolResult.OUTCOME_DENIED, result.outcome(), "fail-closed = denied 结局");
         String text = String.valueOf(result.value());
         assertTrue(text.contains("fail-closed"), text);
         assertTrue(text.contains("未获批准"), text);

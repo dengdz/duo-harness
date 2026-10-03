@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 未发布（1.2.0 开发中）
+
+### Added
+
+- **事件载荷结构化语义字段（M36 工单 01，ADR-0038 决策五）**：`tool/result` 事件新增 `status` 结局枚举（`ok` / `denied` / `failed`——治理链拒绝〔准入/审批/guard/plan 白名单/子代理策略/提问拒绝/计划未获批准〕记 `denied`，异常/超时/输出违约记 `failed`）、`approval/decided` 事件新增 `decision`（allow/deny）与 `source`（回答者呈现位）字段——SSE 与 headless NDJSON（`tool_result` 帧新增 `outcome` 字段）同源对齐，前端呈现层语义判读从此有结构化依据、不再嗅探后端中文文案（前端切换随工单 05）。纯新增、1.x 向后兼容：旧文案照旧保留，旧日志缺字段 = 未声明；计划未获批准保持非错误形态（模型侧修订循环语义不变）
+
 ## 1.1.0（2026-10-03）
 
 ### Added

@@ -27,9 +27,16 @@ import java.util.Objects;
  * @param usage      真实 token 用量（仅 assistant/message 携带，provider 未报告为 null）
  * @param error      工具结果失败标志（仅 tool/result 携带，microcompact 豁免判定依据；
  *                   旧日志无此字段反序列化为 false——「非已知失败，可裁」）
+ * @param status     工具结果结局枚举（仅 tool/result 携带：ok / denied / failed——
+ *                   前端呈现层判读依据，替代文案嗅探；拒绝语义由治理链注入、计划批准
+ *                   语义由工具结果注入。旧日志与未知形态为 null——「结构未声明，回落
+ *                   既有 error/text 判读」）
+ * @param decision   审批决定枚举（仅 approval/decided 携带：allow / deny）
+ * @param source     审批决定来源（仅 approval/decided 携带：回答者呈现位 id）
  */
 public record SessionEvent(String type, long at, String text, String toolCallId, String toolName,
-                           String reasoning, TokenUsage usage, boolean error) {
+                           String reasoning, TokenUsage usage, boolean error,
+                           String status, String decision, String source) {
 
     /** 用户消息（每轮用户输入的完整文本）。 */
     public static final String USER_MESSAGE = "user/message";
@@ -231,6 +238,12 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         this(type, at, text, toolCallId, toolName, reasoning, usage, false);
     }
 
+    /** 兼容构造：M36 工单 01 前形态（无结构化语义字段——旧调用点与旧日志反序列化）。 */
+    public SessionEvent(String type, long at, String text, String toolCallId, String toolName,
+                        String reasoning, TokenUsage usage, boolean error) {
+        this(type, at, text, toolCallId, toolName, reasoning, usage, error, null, null, null);
+    }
+
     /**
      * 附件引用块（M21，ADR-0022）：user 消息携带的附件元数据（text = 引用 JSON）。
      * 字节在附件库、日志零字节；不投影进模型消息（多部件化随工单 05 进入请求），
@@ -305,8 +318,18 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
      */
     public static SessionEvent toolResult(String toolCallId, String toolName, String resultText,
                                           boolean error) {
+        return toolResult(toolCallId, toolName, resultText, error, null);
+    }
+
+    /**
+     * 便捷工厂：工具结果 + 结局枚举（M36 工单 01）——status ∈ ok / denied / failed
+     * （词汇与 {@code ToolResult.outcome} 常量一致），前端呈现层判读依据；null =
+     * 调用方未声明（悬置清理等合成路径），消费方回落既有 error/text 判读。
+     */
+    public static SessionEvent toolResult(String toolCallId, String toolName, String resultText,
+                                          boolean error, String status) {
         return new SessionEvent(TOOL_RESULT, System.currentTimeMillis(), resultText,
-                toolCallId, toolName, null, null, error);
+                toolCallId, toolName, null, null, error, status, null, null);
     }
 
     /** 便捷工厂：审批请求（工具调用被声明需审批、交由回答者作答前）。 */
@@ -327,9 +350,19 @@ public record SessionEvent(String type, long at, String text, String toolCallId,
         return new SessionEvent(RUN_ERROR, System.currentTimeMillis(), text);
     }
 
-    /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"）。 */
+    /** 便捷工厂：审批决定（text = 决定与回答者来源，如 "allow（回答者: console）"；语义字段缺省）。 */
     public static SessionEvent approvalDecided(String toolName, String decisionText) {
-        return new SessionEvent(APPROVAL_DECIDED, System.currentTimeMillis(), decisionText, null, toolName, null);
+        return approvalDecided(toolName, decisionText, null, null);
+    }
+
+    /**
+     * 便捷工厂：审批决定 + 语义字段（M36 工单 01）——decision ∈ allow / deny、
+     * source = 回答者呈现位 id，前端不再从 text 前缀嗅探；text 照旧保留人读形态。
+     */
+    public static SessionEvent approvalDecided(String toolName, String decisionText,
+                                               String decision, String source) {
+        return new SessionEvent(APPROVAL_DECIDED, System.currentTimeMillis(), decisionText,
+                null, toolName, null, null, false, null, decision, source);
     }
 
     /**

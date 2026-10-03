@@ -504,7 +504,7 @@ public final class ToolCallingAgent implements ChatAgent {
         String denyReason = dev.duo.harness.agent.plan.PlanMode.denyReason(
                 session, call.name(), call.argumentsJson(), planBashGate);
         if (denyReason != null) {
-            return ToolResult.error(denyReason);
+            return ToolResult.denied(denyReason);
         }
         return tools.execute(call.name(), argumentsAsJson(call.argumentsJson()), presenterId);
     }
@@ -519,8 +519,10 @@ public final class ToolCallingAgent implements ChatAgent {
                 turn.reasoningContent()));
         listener.onToolCall(call.name(), call.argumentsJson());
         String resultText = String.valueOf(result.value());
-        // 失败标志随事件落盘（M25 工单 04）：microcompact 豁免判定的依据——排障依据不被裁剪
-        session.append(SessionEvent.toolResult(call.id(), call.name(), resultText, result.isError()));
+        // 失败标志随事件落盘（M25 工单 04）：microcompact 豁免判定的依据——排障依据不被裁剪；
+        // 结局枚举随事件落盘（M36 工单 01）：前端呈现层判读依据，替代文案嗅探
+        session.append(SessionEvent.toolResult(call.id(), call.name(), resultText,
+                result.isError(), result.outcome()));
         invocations.add(new ToolInvocation(call.name(), call.argumentsJson(),
                 resultText, result.isError()));
         listener.onToolResult(call.name(), resultText, result.isError());

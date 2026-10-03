@@ -94,6 +94,10 @@ class HeadlessRunnerTest {
                         .filter(f -> "tool_result".equals(f.path("type").asText()))
                         .findFirst().orElseThrow().get("status").asText(),
                 "ask_user 被拒后工具结果为 error 形态");
+        assertEquals("denied", harness.frames.stream()
+                        .filter(f -> "tool_result".equals(f.path("type").asText()))
+                        .findFirst().orElseThrow().get("outcome").asText(),
+                "结局枚举同源透出（M36 工单 01）：治理否决 = denied");
         harness.close();
     }
 
@@ -127,6 +131,10 @@ class HeadlessRunnerTest {
                         .filter(f -> "tool_result".equals(f.path("type").asText()))
                         .findFirst().orElseThrow().get("status").asText(),
                 "审批被拒后工具结果为 error 形态");
+        assertEquals("denied", harness.frames.stream()
+                        .filter(f -> "tool_result".equals(f.path("type").asText()))
+                        .findFirst().orElseThrow().get("outcome").asText(),
+                "审批否决 = denied 结局（M36 工单 01）");
         harness.close();
     }
 

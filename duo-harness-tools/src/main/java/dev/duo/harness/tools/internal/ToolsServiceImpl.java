@@ -114,7 +114,7 @@ public final class ToolsServiceImpl implements ToolsService {
         Boolean allowed = owner.waterfall(PRE_EXECUTE, execution, e -> Boolean.TRUE);
         if (!Boolean.TRUE.equals(allowed) || execution.denied()) {
             String reason = execution.denied() ? execution.denyReason() : "被准入监听器否决";
-            return ToolResult.error("工具 \"" + toolName + "\" 执行被拒绝: " + reason);
+            return ToolResult.denied("工具 \"" + toolName + "\" 执行被拒绝: " + reason);
         }
 
         // 一段 b：审批（ask 三态）。策略解析者是 pre-execute 监听器（审批策略插件注册），
@@ -129,7 +129,7 @@ public final class ToolsServiceImpl implements ToolsService {
             log.info("审批决策：工具={} 结果={} 策略={}", toolName,
                     decision.outcome(), decision.policySource());
             if (decision.outcome() == ApprovalDecision.Outcome.DENY) {
-                return ToolResult.error("工具 \"" + toolName + "\" 执行被拒绝: "
+                return ToolResult.denied("工具 \"" + toolName + "\" 执行被拒绝: "
                         + decision.reason() + "（策略: " + decision.policySource() + "）");
             }
         }
@@ -140,7 +140,7 @@ public final class ToolsServiceImpl implements ToolsService {
             String reason = guard.check(execution);
             if (reason != null) {
                 log.info("guard 拒绝：工具={} 理由={}", toolName, reason);
-                return ToolResult.error("工具 \"" + toolName + "\" 执行被拒绝: " + reason + "（guard）");
+                return ToolResult.denied("工具 \"" + toolName + "\" 执行被拒绝: " + reason + "（guard）");
             }
         }
 
@@ -165,6 +165,11 @@ public final class ToolsServiceImpl implements ToolsService {
         // 三段：结果治理（监听器可改写结果或转错误形态）
         owner.waterfall(POST_EXECUTE, execution, e -> Boolean.TRUE);
 
+        // 工具自带完整语义（含 outcome 声明，如计划未获批准的 denied）直接采纳——
+        // outcome 与 isError 正交，模型侧语义由工具自查（M36 工单 01）
+        if (execution.result() instanceof ToolResult declared) {
+            return declared;
+        }
         return new ToolResult(execution.result(), execution.resultIsError());
     }
 

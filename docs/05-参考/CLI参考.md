@@ -50,7 +50,7 @@ agent 执行任务时输入不丢失，按形态分流：
 
 | 消费点 | 形态 |
 |---|---|
-| stdout | 逐行 JSON：`session{sessionId,cwd}` 开场 → `status{phase}` 相位 → `tool_call`/`tool_result` 工具过程 → `text` 提交点全文 → `final` 无损答案（消费锚点） |
+| stdout | 逐行 JSON：`session{sessionId,cwd}` 开场 → `status{phase}` 相位 → `tool_call`/`tool_result` 工具过程（`tool_result` 携 `status` 终态与 `outcome` 结局枚举 ok/denied/failed——M36 起同源透出，纯新增） → `text` 提交点全文 → `final` 无损答案（消费锚点） |
 | 退出码 | 完成→0；迭代上限/异常→1；SIGTERM→0、SIGINT→130；用法错误→2 |
 | 诊断 | 只走 stderr——stdout 可直接接 `jq` / `grep '"type":"final"'` 管道消费 |
 | 禁交互 | 审批/提问自动拒绝 + 显式 `error` 帧，流程不挂死；超长中间帧截断带 `truncated:true`（final 永不截断） |

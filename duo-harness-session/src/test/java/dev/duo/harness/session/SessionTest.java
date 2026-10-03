@@ -62,6 +62,39 @@ class SessionTest {
     }
 
     @Test
+    void structuredSemanticFieldsRoundTripAndLegacyLinesDefaultNull() throws IOException {
+        // M36 工单 01：status/decision/source 随事件落盘、重放读回；旧日志行缺字段 = null
+        // （结构未声明，消费方回落既有 error/text 判读）
+        Session session = Session.create(sessionsDir());
+        session.append(SessionEvent.toolResult("c1", "bash", "完成", false, "ok"));
+        session.append(SessionEvent.approvalDecided("write_file", "deny（回答者: web）", "deny", "web"));
+        session.append(SessionEvent.userMessage("无语义字段事件照常"));
+        session.close();
+
+        Session replayed = Session.load(session.jsonl());
+        assertEquals("ok", replayed.events().get(0).status(), "tool/result 结局枚举往返");
+        assertNull(replayed.events().get(0).decision(), "非审批事件 decision 为 null");
+        assertEquals("deny", replayed.events().get(1).decision(), "审批决定枚举往返");
+        assertEquals("web", replayed.events().get(1).source(), "审批决定来源往返");
+        assertNull(replayed.events().get(1).status(), "非工具事件 status 为 null");
+        assertNull(replayed.events().get(2).status(), "无声明事件 status 为 null");
+        replayed.close();
+
+        // 旧日志模拟：从落盘行剥掉新字段后重读 → 三字段全 null
+        List<String> legacy = Files.readAllLines(session.jsonl()).stream()
+                .map(line -> line.replace(",\"status\":\"ok\"", "")
+                        .replace(",\"decision\":\"deny\"", "")
+                        .replace(",\"source\":\"web\"", ""))
+                .toList();
+        Files.write(session.jsonl(), legacy);
+        Session legacyReplay = Session.load(session.jsonl());
+        assertNull(legacyReplay.events().get(0).status(), "旧日志 tool/result 无 status");
+        assertNull(legacyReplay.events().get(1).decision(), "旧日志 approval/decided 无 decision");
+        assertNull(legacyReplay.events().get(1).source(), "旧日志 approval/decided 无 source");
+        legacyReplay.close();
+    }
+
+    @Test
     void loadReplaysIdenticalSequence() {
         Session original = Session.create(sessionsDir());
         appendRound(original, "第一问", "第一答");

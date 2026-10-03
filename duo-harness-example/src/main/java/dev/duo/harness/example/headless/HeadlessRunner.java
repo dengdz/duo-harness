@@ -25,8 +25,8 @@ import java.util.LinkedHashMap;
  * <p>投影双源配对（{@link Projector}）：commit-point 词汇以会话事件流为唯一投影源
  * （{@code session.addListener}，只推订阅后的新事件——恢复会话天然不重放历史）；
  * tool_result 的 {@code status} 取 AgentListener 的 isError（事件层无失败标志），
- * callId 取订阅侧暂存的 tool/result 事件——两源在 agent 执行线程上同步成对到达，
- * 配对确定。</p>
+ * {@code outcome} 结局枚举取订阅侧暂存的 tool/result 事件（M36 工单 01，与 SSE
+ * 同源对齐），callId 同源——多源在 agent 执行线程上同步成对到达，配对确定。</p>
  */
 public final class HeadlessRunner {
 
@@ -160,12 +160,17 @@ public final class HeadlessRunner {
             }
         }
 
-        /** tool_result 帧：callId 来自订阅侧暂存事件、status 来自 isError（配对完成）。 */
+        /** tool_result 帧：callId/status 同源于暂存事件、status 终态取 isError（配对完成）。 */
         @Override public void onToolResult(String toolName, String resultText, boolean isError) {
             String callId = lastToolResult != null ? lastToolResult.toolCallId() : null;
             LinkedHashMap<String, Object> fields = NdjsonFrames.fields("callId", callId);
             fields.put("tool", toolName);
             fields.put("status", isError ? "error" : "completed");
+            if (lastToolResult != null && lastToolResult.status() != null) {
+                // 结局枚举同源透出（M36 工单 01）：ok/denied/failed 与既有 status
+                // （completed/error）并存——纯新增不改既有词汇，消费方按需取用
+                fields.put("outcome", lastToolResult.status());
+            }
             fields.put(isError ? "error" : "result", resultText);
             out.println(NdjsonFrames.frame("tool_result", fields));
         }

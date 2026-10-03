@@ -47,7 +47,7 @@ final class SubagentToolView implements ToolsService {
         var definition = delegate.list().stream()
                 .filter(def -> def.name().equals(toolName)).findFirst();
         if (definition.isPresent() && !approvalPolicy.allows(definition.get())) {
-            return ToolResult.error(approvalPolicy.denialReason(toolName));
+            return ToolResult.denied(approvalPolicy.denialReason(toolName));
         }
         return delegate.execute(toolName, args);
     }
