@@ -22,16 +22,16 @@ final class RowRegistry {
 
     private final Map<String, RowEntry> rows = Collections.synchronizedMap(new LinkedHashMap<>());
 
-    /** 行条目：装载时点冻结的插件类名 + 活句柄（状态经句柄实时读）。 */
-    record RowEntry(String pluginName, PluginHandle handle) {
+    /** 行条目：装载时点冻结的插件类名 + 活句柄（状态经句柄实时读）+ 随行关闭器（插件包行为类加载器）。 */
+    record RowEntry(String pluginName, PluginHandle handle, AutoCloseable closer) {
     }
 
     /** 登记（id 重复抛点名异常——防御性：boot 路径 parseRows 已静态查重，运行期路径调用方先查）。 */
-    synchronized void add(String id, String pluginName, PluginHandle handle) {
+    synchronized void add(String id, String pluginName, PluginHandle handle, AutoCloseable closer) {
         if (rows.containsKey(id)) {
             throw new PluginException("行 id \"" + id + "\" 已装载（重复登记点名拒绝）");
         }
-        rows.put(id, new RowEntry(pluginName, handle));
+        rows.put(id, new RowEntry(pluginName, handle, closer));
     }
 
     /** 按 id 取条目；未装载返回 null（调用方决定点名口径）。 */

@@ -39,7 +39,16 @@ public interface PluginRows {
      * 可寻。id 重复点名报错（拒绝重复装载）；装载失败（绑定或 apply 抛错）时
      * 同步抛出且不留登记残留。
      */
-    PluginHandle load(String id, Plugin<?> plugin, Object rawConfig);
+    default PluginHandle load(String id, Plugin<?> plugin, Object rawConfig) {
+        return load(id, plugin, rawConfig, null);
+    }
+
+    /**
+     * 同 {@link #load(String, Plugin, Object)}，另附随行关闭器：{@link #dispose}
+     * 拔除该行时执行（插件包行的类加载器释放通道，ADR-0037 决策二）；关闭失败
+     * 只记 warn——类加载器泄漏的兜底口径是"需重启生效"，不阻断拔除。
+     */
+    PluginHandle load(String id, Plugin<?> plugin, Object rawConfig, AutoCloseable closer);
 
     /**
      * 按 id 拔除：实例销毁（副作用逆序回滚、服务注销、依赖方自动回落等待），

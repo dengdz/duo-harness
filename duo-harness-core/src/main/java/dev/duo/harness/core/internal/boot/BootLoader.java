@@ -42,9 +42,9 @@ public final class BootLoader {
     /** 解析配置行用（容忍未知字段：行结构的正向兼容）。 */
     private static final ObjectMapper MAPPER = new ObjectMapper(new YAMLFactory());
 
-    /** 配置行（解析产物；id 必填、name 必填）。 */
+    /** 配置行（解析产物；id 必填、name 必填；jar 为插件包来源字段，缺省 = 纯 classpath 装载）。 */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record PluginRow(String id, String name, JsonNode config, boolean disabled) {
+    record PluginRow(String id, String name, String jar, JsonNode config, boolean disabled) {
     }
 
     /** 顶层结构：plugins: [行...]。 */
@@ -136,6 +136,11 @@ public final class BootLoader {
                 throw new BootException(BootException.Stage.PARSE_CONFIG,
                         "配置行 [" + row.id() + "] 缺 name（插件类 FQCN）");
             }
+            if (row.jar() != null && row.jar().isBlank()) {
+                throw new BootException(BootException.Stage.PARSE_CONFIG,
+                        "配置行 [" + row.id() + "] jar 字段为空白（插件包路径须为实值，"
+                                + "不装插件包请删除该字段）");
+            }
         }
         return rows;
     }
@@ -154,15 +159,13 @@ public final class BootLoader {
                 continue; // 保留行、不加载：禁用语义即"行在场而实例不在"
             }
             try {
-                Object instance = Class.forName(row.name()).getDeclaredConstructor().newInstance();
-                if (!(instance instanceof Plugin<?> plugin)) {
-                    problems.add("[" + row.id() + "] 类 " + row.name() + " 不是 Plugin 实现");
-                    continue;
-                }
+                LoadedPlugin lp = loadPluginInstance(row);
+                Plugin<?> plugin = lp.plugin();
                 Object rawConfig = row.config();
                 PluginHandle handle = root.plugin(plugin, rawConfig);
-                // 装载即登记（ADR-0037 行级控制）：行 id → 句柄，运行期可寻可拔
-                rootImpl.registerRow(row.id(), plugin.getClass().getName(), handle);
+                // 装载即登记（ADR-0037 行级控制）：行 id → 句柄，运行期可寻可拔；
+                // 插件包行随行携带类加载器（拔除时释放）
+                rootImpl.registerRow(row.id(), plugin.getClass().getName(), handle, lp.closer());
                 loaded.add(new Loaded(row, plugin, handle));
             } catch (ReflectiveOperationException e) {
                 problems.add("[" + row.id() + "] 插件类不可加载或不可实例化: " + row.name()
@@ -185,6 +188,57 @@ public final class BootLoader {
         // inject("pluginRows") + 视图接口消费；编程挂载树（Context.root()）不发布
         root.provide(PluginRows.SERVICE_NAME, PluginRowsImpl.of(rootImpl));
         return root;
+    }
+
+    /** 单行装载产物：插件实例 + 随行关闭器（插件包行为其类加载器，classpath 行为 null）。 */
+    private record LoadedPlugin(Plugin<?> plugin, AutoCloseable closer) {
+    }
+
+    /**
+     * 单行装载：classpath 行走手写反射；插件包行（jar: 在场）经
+     * {@link PluginJarClassLoader} 自优先装载——类不可加载/构造失败/损坏包
+     * 统一转为点名异常（LinkageError 也折进 PluginException，不让 Error 逃过
+     * 审计），关闭器随行返回、装载失败时当场释放。
+     */
+    private static LoadedPlugin loadPluginInstance(PluginRow row) throws ReflectiveOperationException {
+        if (row.jar() == null) {
+            Object instance = Class.forName(row.name()).getDeclaredConstructor().newInstance();
+            return new LoadedPlugin(asPluginOrThrow(row, instance), null);
+        }
+        PluginJarClassLoader loader = PluginJarClassLoader.open(Path.of(row.jar()));
+        try {
+            Object instance = loader.loadPluginClass(row.name()).getDeclaredConstructor().newInstance();
+            return new LoadedPlugin(asPluginOrThrow(row, instance), loader);
+        } catch (Exception | LinkageError e) {
+            closeLoaderQuietly(row, loader);
+            if (e instanceof ReflectiveOperationException re) {
+                throw re;
+            }
+            if (e instanceof PluginException pe) {
+                throw pe;
+            }
+            throw new PluginException("插件包类不可加载: " + row.name()
+                    + "（jar: " + row.jar() + "；原始错误: " + e + "）", e);
+        }
+    }
+
+    /** 实例类型核验：非 Plugin 实现点名拒绝（调用方审计口径与既有文案一致）。 */
+    private static Plugin<?> asPluginOrThrow(PluginRow row, Object instance) {
+        if (!(instance instanceof Plugin<?> plugin)) {
+            throw new PluginException("类 " + row.name() + " 不是 Plugin 实现");
+        }
+        return plugin;
+    }
+
+    private static void closeLoaderQuietly(PluginRow row, AutoCloseable closer) {
+        if (closer == null) {
+            return;
+        }
+        try {
+            closer.close();
+        } catch (Exception e) {
+            log.warn("行 {} 的插件包加载器关闭失败（泄漏时需重启生效兜底）", row.id(), e);
+        }
     }
 
     /** 收尾审计：FAILED 重抛点名、PENDING 点名缺失服务清单。 */

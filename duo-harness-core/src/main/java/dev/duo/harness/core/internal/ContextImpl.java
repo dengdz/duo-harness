@@ -92,9 +92,9 @@ public final class ContextImpl implements Context {
         return rows;
     }
 
-    /** 登记装载行（BootLoader 装载接线；id 重复点名拒绝）。public 供 internal.boot 跨包调用。 */
-    public void registerRow(String id, String pluginName, PluginHandle handle) {
-        rows.add(id, pluginName, handle);
+    /** 登记装载行（BootLoader 装载接线；id 重复点名拒绝；closer 为插件包随行关闭器，可 null）。 */
+    public void registerRow(String id, String pluginName, PluginHandle handle, AutoCloseable closer) {
+        rows.add(id, pluginName, handle, closer);
     }
 
     @Override
