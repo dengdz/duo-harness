@@ -76,4 +76,19 @@ public final class Boot {
         Objects.requireNonNull(resourcePath, "resourcePath");
         return dev.duo.harness.core.internal.boot.BootLoader.fromResource(resourcePath, onRootCreated);
     }
+
+    /**
+     * 确保用户装配文件在位并返回其路径（ADR-0037 工单 03 可写事实源）：
+     * {@code DUO_HOME/plugins.yml} 存在即直接返回（种子仅作升级漂移对账参照）；
+     * 缺失则把种子资源原子物化（临时文件 + 原子改名，不半写）后返回。缺省装配
+     * 的用户态正门——预检与装载都应读这份有效文件（编辑物化文件即改装配），
+     * 运行期行级操作的持久化也落回它（插件中心，M35 后续工单）。升级漂移
+     * （内置种子随版本演进）只记日志提示对账，不阻断启动。
+     *
+     * @param seedResource 内置种子资源（classpath 绝对形态，带 {@code /} 前缀）
+     * @return 有效装配文件路径（存在保证）
+     */
+    public static Path ensureUserAssembly(String seedResource) {
+        return dev.duo.harness.core.internal.boot.BootLoader.ensureUserAssembly(seedResource);
+    }
 }

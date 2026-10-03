@@ -53,13 +53,15 @@ public final class HeadlessBoot {
         return runFiltered(filteredCopy(yml), sessionId, prompt);
     }
 
-    /** 缺省装配分支（M30 工单 01）：classpath 文本读取（jar 正门）→ 同一预过滤机制。
+    /** 缺省装配分支（M30 工单 01 资源正门；M35 工单 03 起切用户装配文件——缺失则
+     * 原子物化种子，与 DuoMain 同源同文件）→ 同一预过滤机制。
      *
      * @return 进程退出码：0 成功；1 任务失败/会话不可用；2 usage 错误（调用方处理）
      */
     public static int runDefault(String sessionId, String prompt) throws Exception {
         interceptSigterm();
-        return runFiltered(filteredCopy(HeadlessArgs.defaultYmlText()), sessionId, prompt);
+        return runFiltered(filteredCopy(
+                Boot.ensureUserAssembly(HeadlessArgs.DEFAULT_YML_RESOURCE)), sessionId, prompt);
     }
 
     private static int runFiltered(Path filtered, String sessionId, String prompt) throws Exception {

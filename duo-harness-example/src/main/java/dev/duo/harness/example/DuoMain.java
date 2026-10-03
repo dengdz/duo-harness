@@ -130,21 +130,22 @@ public final class DuoMain {
             System.exit(HeadlessBoot.run(parsed.yml(), parsed.sessionId(), parsed.prompt()));
         }
         Path yml = args.length > 0 ? Path.of(args[0]) : null;
+        Path userAssembly = null;
         try {
             if (yml != null) {
                 validatePresenterRowOrder(yml);
             } else {
-                // 缺省装配分支：预检与装载各自开流、各自单次读取（classpath 资源可重复
-                // 打开，无共享流半途断流问题）——顺序钉死为「预检先行、通过后装载」；
-                // jar 形态资源 URI 非文件形态，不走文件化 Path（M30 工单 01）
-                validatePresenterRowOrder(HeadlessArgs.DEFAULT_YML_RESOURCE);
+                // 缺省装配分支：用户装配文件在位（缺失则原子物化种子，ADR-0037 工单 03）
+                // ——预检与装载同读这份有效文件（编辑物化文件即改装配，行序违例同样被预检拦住）
+                userAssembly = Boot.ensureUserAssembly(HeadlessArgs.DEFAULT_YML_RESOURCE);
+                validatePresenterRowOrder(userAssembly);
             }
         } catch (IllegalArgumentException | IOException e) {
             System.err.println(e.getMessage());
             System.exit(2);
         }
         Context root = yml != null ? Boot.from(yml)
-                : Boot.fromResource(HeadlessArgs.DEFAULT_YML_RESOURCE);
+                : Boot.from(userAssembly);
         CountDownLatch stopped = new CountDownLatch(1);
         Thread hook = new Thread(() -> {
             try {

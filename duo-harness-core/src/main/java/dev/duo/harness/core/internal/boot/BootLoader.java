@@ -11,6 +11,7 @@ import dev.duo.harness.core.api.PluginHandle;
 import dev.duo.harness.core.api.PluginRows;
 import dev.duo.harness.core.api.PluginState;
 import dev.duo.harness.core.api.boot.BootException;
+import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.core.internal.ContextImpl;
 import dev.duo.harness.core.internal.PluginRowsImpl;
 import org.slf4j.Logger;
@@ -19,10 +20,15 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -94,15 +100,98 @@ public final class BootLoader {
 
     /** classpath 资源读文本：绝对路径（带 / 前缀）经本类类加载器解析，缺失/IO 同 READ_CONFIG 点名。 */
     private static String readResource(String resourcePath) {
+        return new String(readResourceBytes(resourcePath), StandardCharsets.UTF_8);
+    }
+
+    /** classpath 资源读字节（文本与种子指纹共用；缺失/IO 同 READ_CONFIG 点名）。 */
+    private static byte[] readResourceBytes(String resourcePath) {
         try (InputStream in = BootLoader.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
                 throw new BootException(BootException.Stage.READ_CONFIG,
                         "读取配置资源失败（类路径缺失）: classpath:" + resourcePath);
             }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            return in.readAllBytes();
         } catch (IOException e) {
             throw new BootException(BootException.Stage.READ_CONFIG,
                     "读取配置资源失败: classpath:" + resourcePath, e);
+        }
+    }
+
+    // === 用户装配（ADR-0037 工单 03：可写事实源） ===
+
+    /** 用户装配文件名（DUO_HOME 根下；物化后为缺省装配的唯一装载来源）。 */
+    static final String USER_ASSEMBLY_FILE = "plugins.yml";
+
+    /** 种子指纹文件名（物化时点的种子内容指纹，升级漂移对账锚）。 */
+    private static final String SEED_MARK_SUFFIX = ".seed";
+
+    /**
+     * 确保用户装配文件在位并返回其路径：{@code DUO_HOME/plugins.yml} 存在即直接
+     * 返回（种子资源仅作升级漂移对账参照）；缺失则把种子资源原子物化（临时文件
+     * + 原子改名，不半写）后返回。升级漂移（内置种子随版本演进）只记日志提示
+     * 对账，不阻断启动。public 供 api 包 Boot.ensureUserAssembly 委托。
+     */
+    public static Path ensureUserAssembly(String seedResource) {
+        Path assembly;
+        Path mark;
+        try {
+            Path home = DuoHome.resolve().root();
+            Files.createDirectories(home);
+            assembly = home.resolve(USER_ASSEMBLY_FILE);
+            mark = home.resolve(USER_ASSEMBLY_FILE + SEED_MARK_SUFFIX);
+        } catch (IOException e) {
+            throw new BootException(BootException.Stage.READ_CONFIG,
+                    "用户装配目录创建失败（duo home）", e);
+        }
+        if (Files.exists(assembly)) {
+            checkSeedDrift(seedResource, mark);
+            return assembly;
+        }
+        byte[] seed = readResourceBytes(seedResource);
+        try {
+            atomicWrite(assembly, seed);
+            Files.writeString(mark, sha256Hex(seed));
+        } catch (IOException e) {
+            throw new BootException(BootException.Stage.READ_CONFIG,
+                    "缺省装配物化失败: " + assembly + "（磁盘/权限）", e);
+        }
+        log.info("缺省装配已物化: {} ← 种子 {}（此后该文件为唯一装载来源，改文件即改装配；"
+                + "升级新增行以启动日志提示对账）", assembly, seedResource);
+        return assembly;
+    }
+
+    /** 升级漂移对账：物化指纹 ≠ 当前种子指纹时日志提示（新增行不自动出现），不阻断。 */
+    private static void checkSeedDrift(String seedResource, Path mark) {
+        try {
+            String current = sha256Hex(readResourceBytes(seedResource));
+            String materializedAt = Files.exists(mark) ? Files.readString(mark).trim() : null;
+            if (materializedAt == null || materializedAt.isBlank()) {
+                log.info("用户装配在册但缺种子指纹（{} 缺失）——跳过漂移对账", mark);
+            } else if (!materializedAt.equals(current)) {
+                log.info("内置装配种子已演进（物化指纹 {} ≠ 当前 {}）：新增插件行不会自动出现——"
+                        + "对账后删除用户装配文件与指纹文件，重启即重新物化", materializedAt, current);
+            }
+        } catch (IOException e) {
+            log.warn("种子漂移对账失败（不阻断启动）: {}", seedResource, e);
+        }
+    }
+
+    /** 原子写：临时文件 + 同目录原子改名（不支持原子改名的文件系统回落普通改名）。 */
+    private static void atomicWrite(Path target, byte[] bytes) throws IOException {
+        Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
+        Files.write(tmp, bytes);
+        try {
+            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tmp, target);
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 不可用（JDK 必备算法）", e);
         }
     }
 
