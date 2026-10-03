@@ -9,8 +9,8 @@ import java.util.List;
  * PENDING），{@link #load} 即根作用域编程挂载（服务回归、依赖方自动重载）。
  *
  * <p>获取：根作用域经 {@link #of(Context)}；树内插件经服务 {@code pluginRows}
- * （boot 成功后自动发布，视图接口方法名与服务名逐字一致；编程挂载的
- * {@link Context#root()} 树不自动发布，径用 {@code of}）。</p>
+ * （boot 装载前发布——装载行可声明依赖它，如插件中心；视图接口方法名与服务名
+ * 逐字一致；编程挂载的 {@link Context#root()} 树不自动发布，径用 {@code of}）。</p>
  *
  * <p>运行期操作不回写 yml——配置文件仍是重启后装配的唯一事实源；操作的
  * 持久化（装/停/卸落盘）属插件中心的编排职责（ADR-0037 决策二）。</p>

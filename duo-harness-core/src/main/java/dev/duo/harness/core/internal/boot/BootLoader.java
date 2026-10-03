@@ -119,8 +119,8 @@ public final class BootLoader {
 
     // === 用户装配（ADR-0037 工单 03：可写事实源） ===
 
-    /** 用户装配文件名（DUO_HOME 根下；物化后为缺省装配的唯一装载来源）。 */
-    static final String USER_ASSEMBLY_FILE = "plugins.yml";
+    /** 用户装配文件名（DUO_HOME 根下；物化后为缺省装配的唯一装载来源）。public 供插件中心（M35 工单 05）写回同一定位。 */
+    public static final String USER_ASSEMBLY_FILE = "plugins.yml";
 
     /** 种子指纹文件名（物化时点的种子内容指纹，升级漂移对账锚）。 */
     private static final String SEED_MARK_SUFFIX = ".seed";
@@ -239,6 +239,9 @@ public final class BootLoader {
         Context root = Context.root();
         onRootCreated.accept(root);
         ContextImpl rootImpl = (ContextImpl) root;
+        // 行级控制服务（ADR-0037 内核受控口一）：装载前发布——装载行可声明依赖它
+        // （如插件中心），服务在册即随行激活；编程挂载树（Context.root()）不发布
+        root.provide(PluginRows.SERVICE_NAME, PluginRowsImpl.of(rootImpl));
         List<Loaded> loaded = new ArrayList<>(rows.size());
         List<String> problems = new ArrayList<>(rows.size());
         List<Throwable> causes = new ArrayList<>(rows.size());
@@ -273,9 +276,6 @@ public final class BootLoader {
                     "插件树启动失败（" + source + "），" + problems.size() + " 个问题：",
                     problems, causes);
         }
-        // 行级控制服务（ADR-0037 内核受控口一）：boot 成功后发布，树内插件经
-        // inject("pluginRows") + 视图接口消费；编程挂载树（Context.root()）不发布
-        root.provide(PluginRows.SERVICE_NAME, PluginRowsImpl.of(rootImpl));
         return root;
     }
 

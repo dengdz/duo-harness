@@ -20,15 +20,22 @@
 
 ## Status
 
-ready-for-agent
+in-progress（实现与回归锁已完工待提交；提交后随 09 单端到端验收转 done）
 
 ## Checklist
 
-- [ ] 模块骨架：pom + README 模块表登记 + 插件行接入（opt-in，行在场即启用）
-- [ ] 目录扫描：待装清单（同 jar 已在 yml 行不重复列）
-- [ ] 装前点名：零副作用读类声明 + sha256；点名校字段齐备（消费服务、config 类型、来源三元组）
-- [ ] 编排四操作：装（点名确认后装载 + 落盘新行）/ 停（`disabled` 落盘 + 运行期拔除）/ 卸（删行 + 拔除）/ 启用（行翻转 + 装载）
-- [ ] 不可拔清单：呈现位/管理插件自身标记，停用请求如实报"需重启生效"
-- [ ] yml 写回：结构化重写 + 写后回读断言（Boot 能装载写回产物）
-- [ ] S2 装配缝测试（插件异常断言沿 cause 链——M27 经验；声明闸门用例走插件上下文——M34 经验）
-- [ ] CHANGELOG 记账（用户可见：插件中心能力，同 diff）
+- [x] 模块骨架：`duo-harness-plugin-center`（pom 依赖仅 core + junit，Jackson-YAML 经 core 传递）+ 根 pom modules + README 模块表；插件行 opt-in（行在场即启用）
+- [x] 目录扫描：`~/.duo/plugins/*.jar` 待装清单，已装按规范化绝对路径对账不重复列
+- [x] 装前点名：零副作用 jar 条目级扫描（候选入口类按"常量池引用 core Plugin 接口名"字节启发式）+ sha256 + 包三元组；点名不构成信任锚（装载正确性由行级控制口把关）
+- [x] 编排四操作：装（rows.load 带 closer + 落盘 jar 行，**写回失败自动回滚装载**）/ 停（dispose + `disabled: true` 落盘）/ 卸（dispose + 删行）/ 启用（翻回 + 运行期重建——插件包行重建类加载器）
+- [x] 不可拔清单：cli 呈现位（FQCN 字面，模块不依赖 cli）+ 插件中心自身；停/启都点名"需重启生效"
+- [x] yml 写回：结构化重写（Jackson-YAML，注释不保留为既定口径）+ 原子写（tmp + ATOMIC_MOVE）
+- [x] S2 装配缝测试：6 用例全流程（插件上下文声明闸门在场——center 行 inject pluginRows；fixture jar 测试内现打）
+- [x] CHANGELOG 记账（用户可见：插件中心能力，同 diff）
+
+## Comments
+
+- **关键时机修正（本单发现）**：`pluginRows` 服务原在 boot 收尾发布——装载行若声明依赖它（插件中心正是），audit 时点仍在 PENDING → 整树启动失败。修正为**装载前发布**（activate 开头），PluginRows javadoc 同步；PluginCenterTest 全树装配即此时机的回归锁。
+- **行解析口径错置自查（2026-10-03）**：初版把 ContextImpl 配置绑定的 `FAIL_ON_MISSING_CREATOR_PROPERTIES` 错搬到行解析 mapper——`jar` 是可选字段，宽容才是 boot 同款口径。教训：配置语义从源头抄，不从记忆拼（"两个 mapper 两种口径"：ContextImpl 严格绑定 config record，BootLoader 宽容解析行结构）。
+- **candidateEntries 启发式边界**：类文件常量池引用 core Plugin 接口名即候选——可能多报（引用即候选）不漏报（实现必然引用）；候选仅供页面预填与确认，最终以装载为准。
+- **验证**：PluginCenterTest 6 用例（S2 装配缝：点名/装/停启循环/卸/自身不可拔/缺席点名）+ 全仓 13+1 模块 1136 例全绿（mvn exit 0）。

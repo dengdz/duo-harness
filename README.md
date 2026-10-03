@@ -57,6 +57,7 @@ java -jar duo-harness-1.0.1.jar
 | `duo-harness-web` | Web 呈现域：本地 HTTP 服务（对话 + 状态 + HITL 卡片，SSE 实时推送，loopback + 随机令牌鉴权）；工具卡分型 / 思考折叠卡 / 产物预览卡 / 语法高亮 |
 | `duo-harness-cli` | CLI 呈现域：终端 REPL（/new、/plan、/permission、审批 y/n、ask 选项、/技能名直调）——与 Web 面对称的呈现位 |
 | `duo-harness-stats` | 第三方插件形态范例（ADR-0029）：事件监听 / 命令 / 工具 / 服务消费四扩展点串一插件 |
+| `duo-harness-plugin-center` | 插件中心（M35，ADR-0037）：目录扫描 / 装前点名 / 装·停·卸·启用编排 / 装配写回——插件生态管理面，独立插件形态 |
 | `duo-harness-example` | 插件装配与发布入口（DuoMain，`java -jar` 即跑）+ 机制演示入口（DemoMain 等，见文档站快速开始末节） |
 
 ## 文档
