@@ -493,3 +493,17 @@ AskUserQuestion 是同步交互，异步会话下用户可能长时间不在；�
 
 **影响范围**：
 所有 grill/to-spec/to-tickets 的确认类问询；更广地，一切「同步问询 + 异步用户」的交互场景。
+
+## [2026-10-03] 新建插件模块的接入双挂载核对：根 pom module + example 依赖行缺一即 ClassNotFound
+
+**问题描述**：
+M36 工单 04 新建 `duo-harness-theme-light` 模块：只加了根 pom `<module>`，example 的 shade fat-jar 构建后运行时装载行 `ClassNotFoundException`——example 无此依赖，shade 全量打包自然不含它（unzip grep 零命中实证）。
+
+**原因分析**：
+新模块要进 `java -jar` 运行面有**两处挂载**缺一不可：①根 pom `<module>`（进 reactor 构建链）；②example pom 依赖行（进 shade fat-jar）。②漏掉时构建全绿、包内容缺模块——缺陷在运行期才爆，构建侧零信号。
+
+**解决方案**：
+新建插件模块的机械核对清单（四项）：①根 pom `<module>`；②需要进运行面的加 example 依赖行（对齐 stats/plugin-center/theme-light「接入行」注释先例）；③服务发布核对 SERVICE_NAME 与视图接口方法名逐字一致；④消费方 optionalInject/inject 显式声明（M34 三盲教训）。产物核验加一步：`unzip -l fat-jar | grep <新模块包路径>` 非零才算构建闭环。
+
+**影响范围**：
+所有新建模块（尤其要进 `java -jar` 运行面的）；「构建绿 ≠ 运行面在册」同族（陈旧产物家族新变体：构建成功但产物从未包含新代码）。
