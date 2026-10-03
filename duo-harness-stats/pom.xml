@@ -35,4 +35,10 @@
       <artifactId>junit-jupiter</artifactId>
     </dependency>
   </dependencies>
+
+  <!-- 插件包交货形态（M35 工单 07，ADR-0037）：v1 = 常规 `mvn package` 产物——
+       模块 jar 只含自有类，宿主 API 与公共库（jackson/slf4j 等）由宿主 classpath
+       供给（自优先加载器约定：插件包不得打入宿主供给的类，实测会撞加载器约束）。
+       需要自带宿主没有的独有库的作者，自行 shade 并逐件排除宿主供给面（交货文档
+       于 M35 工单 08 落文档站）。 -->
 </project>

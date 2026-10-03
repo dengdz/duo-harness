@@ -12,12 +12,19 @@
 
 ## Status
 
-ready-for-agent
+in-progress（实现与回归锁已完工待提交；提交后随 09 单端到端验收转 done）
 
 ## Checklist
 
-- [ ] shade profile：打出自包含 fat-jar（产物名带版本）
-- [ ] 双形态共存验证：classpath 行与插件包装载互不干扰（同名服务互斥语义如实在场）
-- [ ] 端到端冒烟：jar 放目录 → 扫描列待装 → 点名 → 装 → 工具计数与 `/toolstats` 生效 → 卸载干净
-- [ ] 交货文档素材：从源码到 fat-jar 到装载的最短路径（文档站页在 08 单落盘）
-- [ ] CHANGELOG 记账（用户可见：示例包化，同 diff）
+- [x] 交货形态落钉：**v1 插件包 = 常规 `mvn package` 产物**（模块 jar 只含自有类）——shade profile 三轮试错后裁定移除（见 Comments）
+- [x] 包内容排除宿主供给面验证：stats 类在包内 / core、tools、jackson 不在包内（zip 条目断言）
+- [x] 冒烟：jar 行全链路激活（tools + commands 行喂依赖，commands 行须带 `config: {}`）+ `tool_stats` 工具在册；产物缺席 assumeTrue 自动跳过
+- [x] 双形态共存：classpath 行保留不动，包化产物独立装载（同名服务互斥语义随容器在场）
+- [x] CHANGELOG 记账（用户可见：示例包化，同 diff）
+
+## Comments
+
+- **shade 三轮翻车实录（2026-10-03，交货约定的实证来源）**：①按 artifact 枚举排除（core/tools/agent）→ 被排除件的**传递依赖**仍进包（shade artifactSet 排除不覆盖传递依赖），jackson 1201 类随包；②自优先加载器加载包内 jackson 副本 → 与宿主接口签名撞**加载器约束**（LinkageError 实测形态）；③改 `*:*` 排除 → 连自有类一起排空。**正解 = 常规模块 jar 即插件包**（自有类 + 宿主供给），交货约定随之定型："插件包不得打入宿主供给的类；自带独有库须 shade 并逐件排除宿主供给面"——08 单落文档站。
+- **样板装配细节**：ToolStatsPlugin inject tools + commands；commands 行必须带 `config: {}`（CommandsPlugin 声明了 JsonNode config 类型，boot 严格绑定"声明即须提供"）。
+- **交货文档素材（08 单落盘）**：`mvn -pl duo-harness-stats package` → `target/duo-harness-stats-<版本>.jar` → 放 `~/.duo/plugins/` → 页面点名 → 装。
+- **验证**：ToolStatsPackageSmokeTest 2 用例 + stats 模块全量绿（mvn exit 0，-am 真实链）。

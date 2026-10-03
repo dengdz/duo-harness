@@ -6,6 +6,7 @@
 
 ### Added
 
+- **插件包化交货样板（M35 工单 07，ADR-0037）**：tool-stats 双形态交付——classpath 行保留不动；**v1 插件包 = 常规 `mvn -pl duo-harness-stats package` 产物**（模块 jar 只含自有类），宿主 API 与公共库由宿主 classpath 供给。实测钉死交货约定：插件包不得打入宿主供给的类（自优先加载器会生成副本、与接口签名撞加载器约束 LinkageError），且 shade 的 artifactSet 排除不覆盖被排除件的传递依赖——需要自带宿主没有的独有库的作者须逐件排除宿主供给面（交货文档随工单 08 落文档站）；冒烟两查（包内容排除宿主供给面 / jar 行激活且 tool_stats 在册，产物缺席自动跳过）
 - **插件中心（M35 工单 05，ADR-0037 决策三）**：新模块 `duo-harness-plugin-center`——yml 行 `dev.duo.harness.center.PluginCenterPlugin` 在场即发布 `pluginCenter` 服务：插件目录（`~/.duo/plugins/`）扫描待装清单（已装按规范化路径对账不重复列）、装前点名（包三元组 + sha256 + 候选入口类字节启发式，**零副作用不装载类**；点名不构成信任锚）、装/停/卸/启用编排（经 `pluginRows` 行级控制口运行期热生效，写回失败自动回滚装载——运行态与装配文件不分裂）+ 装配文件结构化写回（唯一事实源；注释不保留为既定口径）；不可拔清单（cli 呈现位/插件中心自身）停启点名"需重启生效"。装载时机修正：`pluginRows` 服务改为 boot 装载前发布——装载行可声明依赖它（否则依赖行被启动审计判 PENDING 失败）
 - **端点命名空间贡献口（M35 工单 04，ADR-0037 内核受控口二）**：WebPlugin 发布 `webRoutes` 服务——插件按前缀申请制在 `/plugins/<前缀>/**` 挂接 HTTP 端点（`claim` 申请前缀、`mount` 挂端点；前缀冲突与非法段点名拒绝，对齐服务同名互斥口径）；贡献端点与内部端点同一条铁律——鉴权栅栏 fail-closed 全覆盖（无 token 403、`auth: none` 行为一致）、处理器异常一律 500 + 日志绝不连接裸关；`claim` 移除器挂提供方作用域即得"拔除即摘除路由"。边界：静态资源服务、前端页面结构与 SSE 枢纽仍在内核独占面
 - **用户装配可写事实源（M35 工单 03，ADR-0037 决策二）**：新增 `Boot.ensureUserAssembly(seedResource)`——`java -jar` 缺省装配（DuoMain 常驻与 headless 同源同文件）首启把内置种子原子物化到 `~/.duo/plugins.yml`（临时文件 + 原子改名，不半写），此后该文件为**唯一装载来源**：编辑文件即改装配（重启生效），内置种子不再回灌；升级新增插件行以启动日志提示对账（物化指纹 sidecar `plugins.yml.seed` 比对，不阻断启动）；行序预检同切有效文件（编辑后的行序违例照样被拦）
