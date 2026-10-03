@@ -13,7 +13,9 @@ Status: 待用户手动验收（done 定义：用户亲手复跑本件并确认�
 ./mvnw -pl duo-harness-example -am package -DskipTests
 ./mvnw -pl duo-harness-stats package -DskipTests
 
-# 1) 准备临时部署（独立 DUO_HOME，不碰真实数据）
+# 1) 准备临时部署（独立 DUO_HOME，不碰真实数据）。
+#    关键：预写 DUO_HOME/plugins.yml（缺省物化路径的账本）——插件中心的一切
+#    操作写回这份文件，装配即页面所见。勿用显式 yml 参数启动（与账本脱节）
 export M35=/tmp/m35-accept
 rm -rf $M35 && mkdir -p $M35/duo-home/plugins
 cat > $M35/duo-home/config.yml <<'EOF'
@@ -22,7 +24,7 @@ llm:
   apiKey: accept-key
   model: accept-model
 EOF
-cat > $M35/assembly.yml <<'EOF'
+cat > $M35/duo-home/plugins.yml <<'EOF'
 plugins:
   - id: tools
     name: dev.duo.harness.tools.ToolsPlugin
@@ -49,8 +51,9 @@ EOF
 # 2) 第三方插件包进目录（样板即交货形态：常规模块 jar）
 cp duo-harness-stats/target/duo-harness-stats-1.0.1.jar $M35/duo-home/plugins/
 
-# 3) 启动（保持前台；另开终端做浏览器与 curl 步骤）
-DUO_HOME=$M35/duo-home java -jar duo-harness-example/target/duo-harness-1.0.1.jar $M35/assembly.yml
+# 3) 启动（无 yml 参数 = 缺省物化路径：plugins.yml 在位即直接装载）。
+#    保持前台；另开终端做浏览器与 curl 步骤
+DUO_HOME=$M35/duo-home java -jar duo-harness-example/target/duo-harness-1.0.1.jar
 ```
 
 浏览器开 `http://127.0.0.1:18090`（auth:none 有常驻横幅属预期），逐步核对：

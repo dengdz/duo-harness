@@ -170,14 +170,16 @@ public final class PluginCenter {
         Objects.requireNonNull(jar, "jar");
         requireId(id);
         Objects.requireNonNull(entryFqcn, "entryFqcn");
-        // 空 map 归一为 null：configType=null 的插件"声明即须不提供"（页面空 JSON = 无配置）
-        final Map<String, Object> normalized = config == null || config.isEmpty() ? null : config;
         PluginJarClassLoader loader = PluginJarClassLoader.open(jar);
+        Object rawConfig;
+        Plugin<?> plugin;
         try {
-            Plugin<?> plugin = (Plugin<?>) loader.loadPluginClass(entryFqcn)
+            plugin = (Plugin<?>) loader.loadPluginClass(entryFqcn)
                     .getDeclaredConstructor().newInstance();
+            rawConfig = normalizeRawConfig(plugin,
+                    config == null ? null : yaml.valueToTree(config));
             try {
-                rows.load(id, plugin, normalized, loader);
+                rows.load(id, plugin, rawConfig, loader);
             } catch (RuntimeException e) {
                 closeQuietly(loader);
                 throw e;
@@ -193,7 +195,7 @@ public final class PluginCenter {
         try {
             mutateYml(rowsNow -> {
                 rowsNow.add(new RowModel(id, entryFqcn, normalize(jar.toString()),
-                        normalized == null ? null : yaml.valueToTree(normalized), false));
+                        rawConfig == null ? null : yaml.valueToTree(rawConfig), false));
                 return rowsNow;
             });
         } catch (RuntimeException e) {
@@ -270,19 +272,19 @@ public final class PluginCenter {
     public void installClasspath(String id, String fqcn, Map<String, Object> config) {
         requireId(id);
         Objects.requireNonNull(fqcn, "fqcn");
-        // 空 map 归一为 null（与 install 同口径：页面空 JSON = 无配置）
-        final Map<String, Object> normalized = config == null || config.isEmpty() ? null : config;
         Plugin<?> plugin;
         try {
             plugin = (Plugin<?>) Class.forName(fqcn).getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new PluginException("类不可加载或不可实例化: " + fqcn + "（须在宿主 classpath 上）", e);
         }
-        rows.load(id, plugin, normalized);
+        Object rawConfig = normalizeRawConfig(plugin,
+                config == null ? null : yaml.valueToTree(config));
+        rows.load(id, plugin, rawConfig);
         try {
             mutateYml(rowsNow -> {
                 rowsNow.add(new RowModel(id, fqcn, null,
-                        normalized == null ? null : yaml.valueToTree(normalized), false));
+                        rawConfig == null ? null : yaml.valueToTree(rawConfig), false));
                 return rowsNow;
             });
         } catch (RuntimeException e) {
@@ -298,18 +300,15 @@ public final class PluginCenter {
     public void reconfigure(String id, Map<String, Object> config) {
         RowModel row = requireYmlRow(id);
         requireDisableable(id, row.name());
-        // 空 map 归一为 null（与 install 同口径；null 对 configType=null 插件是唯一合法形态）
-        final Map<String, Object> normalized = config == null || config.isEmpty() ? null : config;
+        JsonNode node = config == null ? null : yaml.valueToTree(config);
         rows.dispose(id); // 未装载（已停用）行：点名，页面按状态出按钮
         mutateYml(rowsNow -> {
             rowsNow.replaceAll(r -> id.equals(r.id())
-                    ? new RowModel(r.id(), r.name(), r.jar(),
-                            normalized == null ? null : yaml.valueToTree(normalized), false)
+                    ? new RowModel(r.id(), r.name(), r.jar(), node, false)
                     : r);
             return rowsNow;
         });
-        loadFromRow(new RowModel(row.id(), row.name(), row.jar(),
-                normalized == null ? null : yaml.valueToTree(normalized), false));
+        loadFromRow(new RowModel(row.id(), row.name(), row.jar(), node, false));
     }
 
     // === 内部：运行期重建 ===
@@ -327,7 +326,8 @@ public final class PluginCenter {
                     Plugin<?> plugin = (Plugin<?>) loader.loadPluginClass(row.name())
                             .getDeclaredConstructor().newInstance();
                     try {
-                        rows.load(row.id(), plugin, row.config(), loader);
+                        rows.load(row.id(), plugin,
+                                normalizeRawConfig(plugin, row.config()), loader);
                         return;
                     } catch (RuntimeException e) {
                         closeQuietly(loader);
@@ -343,11 +343,25 @@ public final class PluginCenter {
             }
             Plugin<?> plugin = (Plugin<?>) Class.forName(row.name())
                     .getDeclaredConstructor().newInstance();
-            rows.load(row.id(), plugin, row.config());
+            rows.load(row.id(), plugin, normalizeRawConfig(plugin, row.config()));
         } catch (ReflectiveOperationException e) {
             throw new PluginException("插件行重建失败: " + row.id() + "（类 " + row.name()
                     + " 不可加载或不可实例化）", e);
         }
+    }
+
+    /**
+     * 装配配置归一（按 configType 分流，ADR-0037 工单 06 实测口径）：页面语义
+     * "config JSON 可空/给 {}" 对两类插件含义不同——configType=null 的插件任何
+     * 形态的配置都非法（归一为 null）；声明了 config 类型的插件 {} 是合法值
+     * （原样传，缺字段由严格绑定点名）。
+     */
+    private static JsonNode normalizeRawConfig(Plugin<?> plugin, JsonNode node) {
+        if (node != null && node.isObject() && node.isEmpty()
+                && plugin.configType() == null) {
+            return null;
+        }
+        return node;
     }
 
     // === 内部：不可拔与 id 纪律 ===

@@ -188,4 +188,16 @@ class PluginCenterTest {
         assertThrows(PluginException.class, () -> center.uninstall("no-such"));
         assertThrows(PluginException.class, () -> center.inspect(tempHome.resolve("不存在.jar")));
     }
+
+    @Test
+    void installClasspathEmptyConfigServesJsonNodeConfigTypePlugin() {
+        // 回归锁（M35 工单 06 实测）：JsonNode config 型插件给空 {} 是合法配置——
+        // 归一化按 configType 分流，不得把空对象误判为"未提供配置"
+        center.installClasspath("json-node-row", JsonNodeConfigPlugin.class.getName(), Map.of());
+
+        assertTrue(center.status().stream()
+                .filter(r -> r.id().equals("json-node-row"))
+                .findFirst().orElseThrow().state().equals("ACTIVE"));
+        center.uninstall("json-node-row");
+    }
 }
