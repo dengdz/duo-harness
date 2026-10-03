@@ -270,17 +270,19 @@ public final class PluginCenter {
     public void installClasspath(String id, String fqcn, Map<String, Object> config) {
         requireId(id);
         Objects.requireNonNull(fqcn, "fqcn");
+        // 空 map 归一为 null（与 install 同口径：页面空 JSON = 无配置）
+        final Map<String, Object> normalized = config == null || config.isEmpty() ? null : config;
         Plugin<?> plugin;
         try {
             plugin = (Plugin<?>) Class.forName(fqcn).getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new PluginException("类不可加载或不可实例化: " + fqcn + "（须在宿主 classpath 上）", e);
         }
-        rows.load(id, plugin, config);
+        rows.load(id, plugin, normalized);
         try {
             mutateYml(rowsNow -> {
                 rowsNow.add(new RowModel(id, fqcn, null,
-                        config == null ? null : yaml.valueToTree(config), false));
+                        normalized == null ? null : yaml.valueToTree(normalized), false));
                 return rowsNow;
             });
         } catch (RuntimeException e) {
@@ -296,16 +298,18 @@ public final class PluginCenter {
     public void reconfigure(String id, Map<String, Object> config) {
         RowModel row = requireYmlRow(id);
         requireDisableable(id, row.name());
+        // 空 map 归一为 null（与 install 同口径；null 对 configType=null 插件是唯一合法形态）
+        final Map<String, Object> normalized = config == null || config.isEmpty() ? null : config;
         rows.dispose(id); // 未装载（已停用）行：点名，页面按状态出按钮
         mutateYml(rowsNow -> {
             rowsNow.replaceAll(r -> id.equals(r.id())
                     ? new RowModel(r.id(), r.name(), r.jar(),
-                            config == null ? null : yaml.valueToTree(config), false)
+                            normalized == null ? null : yaml.valueToTree(normalized), false)
                     : r);
             return rowsNow;
         });
         loadFromRow(new RowModel(row.id(), row.name(), row.jar(),
-                config == null ? null : yaml.valueToTree(config), false));
+                normalized == null ? null : yaml.valueToTree(normalized), false));
     }
 
     // === 内部：运行期重建 ===

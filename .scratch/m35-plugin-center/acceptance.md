@@ -37,6 +37,7 @@ plugins:
     config: {}
   - id: approval
     name: dev.duo.harness.tools.ApprovalPlugin
+    config: {}
   - id: plugin-center
     name: dev.duo.harness.center.PluginCenterPlugin
   - id: web
