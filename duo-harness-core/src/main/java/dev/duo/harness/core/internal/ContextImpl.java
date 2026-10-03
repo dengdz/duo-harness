@@ -55,6 +55,8 @@ public final class ContextImpl implements Context {
     private final ServiceRegistry services;
     /** 插件实例登记簿：根创建、全树共享，承担服务变化的传导。 */
     private final PluginRegistry pluginInstances;
+    /** 装载行登记簿（行 id → 句柄，ADR-0037 行级控制）：仅根创建，子作用域为 null。 */
+    private final RowRegistry rows;
     /** 本作用域的读取许可（inject ∪ optionalInject，插件实例传入）；根作用域为 null = 不限制。 */
     private final Set<String> injectedServices;
 
@@ -66,6 +68,7 @@ public final class ContextImpl implements Context {
         this.events = new EventsImpl();
         this.services = new ServiceRegistry();
         this.pluginInstances = new PluginRegistry();
+        this.rows = new RowRegistry();
         this.injectedServices = null;
     }
 
@@ -75,7 +78,23 @@ public final class ContextImpl implements Context {
         this.events = events;
         this.services = services;
         this.pluginInstances = pluginInstances;
+        this.rows = null;
         this.injectedServices = injectedServices;
+    }
+
+    /** 根作用域判别（行级控制口只及根：行登记簿仅根持有）。 */
+    boolean isRoot() {
+        return injectedServices == null;
+    }
+
+    /** 装载行登记簿（仅根非 null；子作用域调用即编程错误）。 */
+    RowRegistry rows() {
+        return rows;
+    }
+
+    /** 登记装载行（BootLoader 装载接线；id 重复点名拒绝）。public 供 internal.boot 跨包调用。 */
+    public void registerRow(String id, String pluginName, PluginHandle handle) {
+        rows.add(id, pluginName, handle);
     }
 
     @Override

@@ -8,8 +8,11 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
 import dev.duo.harness.core.api.PluginHandle;
+import dev.duo.harness.core.api.PluginRows;
 import dev.duo.harness.core.api.PluginState;
 import dev.duo.harness.core.api.boot.BootException;
+import dev.duo.harness.core.internal.ContextImpl;
+import dev.duo.harness.core.internal.PluginRowsImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -141,6 +144,7 @@ public final class BootLoader {
                                     Consumer<Context> onRootCreated) {
         Context root = Context.root();
         onRootCreated.accept(root);
+        ContextImpl rootImpl = (ContextImpl) root;
         List<Loaded> loaded = new ArrayList<>(rows.size());
         List<String> problems = new ArrayList<>(rows.size());
         List<Throwable> causes = new ArrayList<>(rows.size());
@@ -157,6 +161,8 @@ public final class BootLoader {
                 }
                 Object rawConfig = row.config();
                 PluginHandle handle = root.plugin(plugin, rawConfig);
+                // 装载即登记（ADR-0037 行级控制）：行 id → 句柄，运行期可寻可拔
+                rootImpl.registerRow(row.id(), plugin.getClass().getName(), handle);
                 loaded.add(new Loaded(row, plugin, handle));
             } catch (ReflectiveOperationException e) {
                 problems.add("[" + row.id() + "] 插件类不可加载或不可实例化: " + row.name()
@@ -175,6 +181,9 @@ public final class BootLoader {
                     "插件树启动失败（" + source + "），" + problems.size() + " 个问题：",
                     problems, causes);
         }
+        // 行级控制服务（ADR-0037 内核受控口一）：boot 成功后发布，树内插件经
+        // inject("pluginRows") + 视图接口消费；编程挂载树（Context.root()）不发布
+        root.provide(PluginRows.SERVICE_NAME, PluginRowsImpl.of(rootImpl));
         return root;
     }
 

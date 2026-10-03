@@ -8,7 +8,7 @@ yml 树激活后，上层编排能按行 id 在运行期拔除一个插件实例
 
 ## Status
 
-ready-for-agent
+in-progress（实现与回归锁已完工待提交；提交经用户确认后随 09 单端到端验收转 done）
 
 ## Checklist
 
@@ -17,4 +17,12 @@ ready-for-agent
 - [ ] 重复 id 装载点名报错（消息含先注册方 id）
 - [ ] S1 测试：提供方拔除 → 依赖方 UNLOADING→PENDING；重装 → 自动重载（先例 BootYmlTest 形态；插件异常断言沿 cause 链——M27 经验）
 - [ ] 并发口径记档：与依赖指纹 recheck 的交互单线程语义测试为主，深度竞态沿用已知限制 #2 口径
-- [ ] CHANGELOG 记账（内核新公开 API 属用户可见变更，同 diff）
+- [x] CHANGELOG 记账（内核新公开 API 属用户可见变更，同 diff）
+
+## Comments
+
+- **实现形态（2026-10-03）**：`PluginRows` 接口 + `RowSnapshot`（api 包）→ `PluginRowsImpl`（internal，根作用域门面）→ `RowRegistry`（行 id → 句柄，LinkedHashMap 保装载序 + synchronizedMap，仅根持有）；`ContextImpl` 增 `isRoot()` / `rows()` / `registerRow()`；BootLoader 装载即登记 + boot 成功后自动发布 `pluginRows` 服务。六态状态机零改动（只开门不加机制）。
+- **apply 失败的登记语义（超出工单字面的落钉）**：装载两路径分叉——绑定失败同步抛 PluginConfigException、无登记残留；apply 失败不抛（内核既有契约：错误统一经 handle），行登记为 FAILED、可拔除后同 id 重试。测试两路径各锁（bindingFailure... / applyFailure...）。
+- **并发口径**：行管理整段持锁（查重-登记原子性优先于并发吞吐）——操作者驱动的低频动作，串行化可接受；与依赖指纹 recheck 的深度竞态沿用已知限制 #2 口径，未新增多线程测试（工单原文口径）。
+- **验证**：PluginRowsTest 9 用例全绿（S1 boot 缝；重试件用无服务发布的 ConsumerPlugin——GreeterPlugin 会撞树上同名服务互斥）；core 模块全量 104 例 0 失败 0 错误。
+- **待办**：提交待用户确认（红线 1）。

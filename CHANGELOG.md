@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 未发布
+
+### Added
+
+- **运行期行级控制 API（M35 工单 01，ADR-0037 内核受控口一）**：新增 `PluginRows` 接口（`rows` / `get` / `load` / `dispose`）与 `RowSnapshot`——按装载行 id 在运行期查询、拔除、重装插件实例，六态状态机与依赖指纹语义原样复用（拔除 = 服务注销 + 依赖方自动回落 PENDING，重装 = 服务回归 + 依赖方自动重载，重复 id 点名拒绝）；boot 装载产物按行 id 自动登记，boot 成功后自动发布 `pluginRows` 服务（树内插件经 inject 声明 + 视图接口消费，方法名与服务名逐字一致；编程挂载树径用 `PluginRows.of(root)`）。运行期操作不回写 yml——配置文件仍是重启装配的唯一事实源，操作持久化归插件中心（M35 后续工单）
+
 ## 1.0.1（2026-10-02）
 
 > **1.0 首个修订号**（M34 修复批）：M33 百例浏览器实测（100/100，报告见 `.scratch/m33-browser-audit/report.md`）坐实的 7 档 P2 缺陷全部处置——5 档修复（各带回归锁）、2 档复现尝试不可复现关闭（偶发先例，再现重开）。安全栅栏六形态复验 fail-closed 全过，无 P0/P1。
