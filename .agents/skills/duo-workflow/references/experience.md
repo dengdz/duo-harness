@@ -172,6 +172,8 @@ python 的 `str.replace` old 不存在时不报错；转义层级（bash heredoc
 **影响范围**：
 所有 agent 执行的批量代码修改与 mvn 构建命令。
 
+**第四次重现（2026-10-03，M35 工单 04 验证）+ 两个新变体**：`-pl duo-harness-web test` 忘 `-am` 再现（sibling 依赖解析失败）；更隐蔽的新变体是**结果判定被管道吞掉**——`./mvnw ... | grep -E "..." | head; echo "exit: $?"` 取的是 head 的退出码（恒 0），编译失败被读成绿，且陈旧 surefire 报告（上一轮的 103 例）被当成本轮证据。解决方案升级为双保险：①真实退出码必须在无管道语句取（`cmd > log 2>&1; echo $?`）；②证据以"删旧报告后重新生成"的 surefire 计数为准（target/ 陈旧报告会冒充本轮结果）。
+
 ## [2026-09-22] L1 grill 开工前必读 duo-workflow experience.md：不因加载非 duo 技能而豁免
 
 **问题描述**：
