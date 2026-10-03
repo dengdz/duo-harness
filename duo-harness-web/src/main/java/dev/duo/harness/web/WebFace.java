@@ -81,6 +81,8 @@ public final class WebFace {
     final WebTabs tabs;
     /** 端点贡献口（ADR-0037 内核受控口二；WebPlugin 发布为 webRoutes 服务）。 */
     final WebContributedRoutes contributed;
+    /** 呈现贡献口（ADR-0038 决策四；WebPlugin 发布为 presentationRegistry 服务）。 */
+    private final PresentationContributions presentation;
     private final WebEndpoints endpoints;
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
@@ -101,6 +103,7 @@ public final class WebFace {
         this.hub = new WebSseHub(webAnswerer);
         this.tabs = new WebTabs(session, hub);
         this.contributed = new WebContributedRoutes(server, this.gate);
+        this.presentation = new PresentationContributions();
         this.endpoints = new WebEndpoints(this);
     }
 
@@ -324,6 +327,11 @@ public final class WebFace {
     /** 端点贡献口（WebPlugin 发布为 webRoutes 服务；插件按前缀申请制挂端点，ADR-0037）。 */
     public WebRouteRegistry routes() {
         return contributed;
+    }
+
+    /** 呈现贡献口（WebPlugin 发布为 presentationRegistry 服务；插件按申请制注册主题与展示卡，ADR-0038）。 */
+    public PresentationRegistry presentation() {
+        return presentation;
     }
 
     /** 实际绑定端口（构造传 0 时为系统分配值）。 */

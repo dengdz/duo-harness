@@ -1,0 +1,27 @@
+plugins:
+  # 头号风险自证夹具（M36 工单 03）：主题行先于 web 行——optionalInject 缺席不阻塞
+  # 启动（哑激活），web 行发布 presentationRegistry 后依赖指纹变化自动重载本行完成注册
+  - id: theme-first
+    name: dev.duo.harness.web.ThemeContributorTestPlugin
+    config: {}   # Void configType 严格绑定：无配置也须显式空对象（M35-09 先例）
+
+  # 以下为纯 Web 最小装配（同 web-assembly-test.yml 口径）
+  - id: tools
+    name: dev.duo.harness.tools.ToolsPlugin
+
+  - id: prompts
+    name: dev.duo.harness.agent.prompt.PromptPlugin
+    config:
+      systemPrompt: "装配测试用 system 提示。"
+
+  - id: answers
+    name: dev.duo.harness.tools.InteractionPlugin
+
+  - id: commands
+    name: dev.duo.harness.agent.commands.CommandsPlugin
+    config: {}
+
+  - id: web
+    name: dev.duo.harness.web.WebPlugin
+    config:
+      port: 0   # 随机端口：不与本机常驻服务/其他测试冲突

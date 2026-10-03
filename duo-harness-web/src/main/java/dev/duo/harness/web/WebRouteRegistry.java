@@ -16,7 +16,8 @@ import dev.duo.harness.core.api.PluginException;
  * 挂到本插件作用域（{@code ctx.effect}），作用域回滚时路由同步 404。</p>
  *
  * <p>边界：仅 HTTP 端点通道——静态资源服务、前端页面结构与 SSE 枢纽仍在
- * 内核独占面（呈现层开放的后续台阶见 ADR-0037 决策四）。</p>
+ * 内核独占面；展示面声明（主题/展示卡）已经呈现贡献口 {@link PresentationRegistry}
+ * 开放（ADR-0038，M36），插件自带页面/整页替换仍属后续期。</p>
  */
 public interface WebRouteRegistry {
 

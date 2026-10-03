@@ -243,6 +243,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
             // 申请制挂端点（插件中心是第一个消费者）；贡献路由的摘除由消费方把 claim
             // 移除器挂自己作用域，本服务注销随本插件拔除自动发生
             ctx.provide(WebRouteRegistry.SERVICE_NAME, face.routes());
+            // 呈现贡献口（ADR-0038 决策四）：发布 presentationRegistry 服务——插件按
+            // 申请制注册主题与展示卡声明（改值不改构：声明经内核校验后经聚合端点
+            // 序列化下发，无直达前端注入面）；无 Web 部署下消费方 optionalInject 优雅缺席
+            ctx.provide(PresentationRegistry.SERVICE_NAME, face.presentation());
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);

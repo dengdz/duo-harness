@@ -62,6 +62,7 @@ final class WebEndpoints {
         route(server, "/api/session/page", session::handleSessionPage);
         route(server, "/api/subagent/events", session::handleSubagentEvents);
         route(server, "/api/events", this::handleEvents);
+        route(server, "/api/presentation", this::handlePresentation);
     }
 
     /** 挂载单个端点：统一前置入口栅栏（Host/Origin 校验），通过才交端点处理器。 */
@@ -134,6 +135,35 @@ final class WebEndpoints {
         if (json != null) {
             WebHttp.respondJson(exchange, 200, json);
         }
+    }
+
+    /**
+     * 呈现贡献聚合表（M36 工单 03）：已注册主题（token 值集）与展示卡声明——
+     * 前端主题机制与卡片注册表的数据源。声明经呈现贡献口校验注册，此处只读
+     * 快照序列化下发（改值不改构：无任何插件直达前端的注入通道）。
+     */
+    private void handlePresentation(HttpExchange exchange) throws IOException {
+        var root = WebHttp.JSON.createObjectNode();
+        var themes = root.putArray("themes");
+        for (PresentationRegistry.ThemeDeclaration theme : face.presentation().themes()) {
+            var node = themes.addObject();
+            node.put("id", theme.themeId());
+            node.put("displayName", theme.displayName());
+            var tokens = node.putObject("tokens");
+            theme.tokens().forEach(tokens::put);
+        }
+        var cards = root.putArray("cards");
+        for (PresentationRegistry.CardDeclaration card : face.presentation().cards()) {
+            var node = cards.addObject();
+            node.put("toolName", card.toolName());
+            node.put("icon", card.icon());
+            node.put("label", card.label());
+            var fields = node.putArray("summaryFields");
+            if (card.summaryFields() != null) {
+                card.summaryFields().forEach(fields::add);
+            }
+        }
+        WebHttp.respondJson(exchange, 200, root.toString());
     }
     /**
      * 停止入口（M23 工单 02，ADR-0025 决策一）：POST /api/stop 请求协作式中断——

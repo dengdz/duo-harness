@@ -100,6 +100,68 @@ class WebPluginAssemblyTest {
     }
 
     @Test
+    void presentationRegistryServicePublishedForPluginContribution(@TempDir Path tempDir) throws Exception {
+        // 呈现贡献口（ADR-0038 决策四）：WebPlugin 发布 presentationRegistry 服务——
+        // 插件经视图接口申请主题与展示卡声明（聚合端点 /api/presentation 下发）
+        Path home = tempDir.resolve("duo-home");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("config.yml"), """
+                llm:
+                  baseUrl: https://placeholder.local
+                  apiKey: test-key
+                  model: test-model
+                """);
+        System.setProperty(DuoHome.PROP_OVERRIDE, home.toString());
+        try {
+            Path yml = Path.of(WebPluginAssemblyTest.class.getResource("/web-assembly-test.yml").toURI());
+            Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
+            try {
+                PresentationRegistry registry = root.as(
+                        PresentationRegistry.PresentationView.class).presentationRegistry();
+                assertNotNull(registry, "presentationRegistry 服务应在册（呈现贡献口）");
+                assertTrue(registry.themes().isEmpty() && registry.cards().isEmpty(),
+                        "无插件注册时聚合快照为空集（不抛错）");
+            } finally {
+                root.dispose();
+            }
+        } finally {
+            System.clearProperty(DuoHome.PROP_OVERRIDE);
+        }
+    }
+
+    @Test
+    void themeRowBeforeWebSelfHealsViaDependencyFingerprint(@TempDir Path tempDir) throws Exception {
+        // 头号风险自证（M36 工单 03）：主题行先于 web 行装载——optionalInject 缺席
+        // 不阻塞启动（哑激活），web 行发布服务后依赖指纹变化自动重载完成注册
+        // （PluginInstance 可选依赖语义）；Boot 收尾审计不判 PENDING
+        Path home = tempDir.resolve("duo-home");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("config.yml"), """
+                llm:
+                  baseUrl: https://placeholder.local
+                  apiKey: test-key
+                  model: test-model
+                """);
+        System.setProperty(DuoHome.PROP_OVERRIDE, home.toString());
+        try {
+            Path yml = Path.of(WebPluginAssemblyTest.class
+                    .getResource("/presentation-theme-first.yml").toURI());
+            Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
+            try {
+                PresentationRegistry registry = root.as(
+                        PresentationRegistry.PresentationView.class).presentationRegistry();
+                assertEquals(List.of("test-dark"),
+                        registry.themes().stream().map(PresentationRegistry.ThemeDeclaration::themeId).toList(),
+                        "主题行先于 web 行：服务后到经指纹自动重载完成注册");
+            } finally {
+                root.dispose();
+            }
+        } finally {
+            System.clearProperty(DuoHome.PROP_OVERRIDE);
+        }
+    }
+
+    @Test
     void workspaceDeclaredAsOptionalDependency() {
         // 网络读档位恢复（PresenterAssembly.restorePermissionMode）与双面 /permission
         // 依赖本声明经 Web 插件 Context 惰性解析 workspace——缺失即内核"错误前移"拒绝
