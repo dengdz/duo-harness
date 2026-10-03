@@ -25,6 +25,7 @@
     <module>duo-harness-cli</module>
     <module>duo-harness-stats</module>
     <module>duo-harness-plugin-center</module>
+    <module>duo-harness-theme-light</module>
     <module>duo-harness-example</module>
   </modules>
 

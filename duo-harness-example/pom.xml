@@ -81,6 +81,12 @@
       <artifactId>duo-harness-plugin-center</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M36：亮色主题样板（ADR-0038 决策二）——第三方主题的官方示范接入行（opt-in 装配） -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-theme-light</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

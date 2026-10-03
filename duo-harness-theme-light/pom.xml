@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.duo</groupId>
+    <artifactId>duo-harness</artifactId>
+    <version>1.1.0</version>
+  </parent>
+
+  <artifactId>duo-harness-theme-light</artifactId>
+  <description>亮色主题样板（M36 工单 04，ADR-0038）：官方亮色 token 值集——「内置只出暗色精品、亮色留第三方」裁定的官方示范形态，兼作第三方主题作者参照实现（与 tool-stats 工具样板同位）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 呈现贡献口接口（PresentationRegistry）在 web 域——plugin-center 依赖 web 同款先例 -->
+    <dependency>
+      <groupId>dev.duo</groupId>
+      <artifactId>duo-harness-web</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+  </dependencies>
+
+  <!-- 插件包交货形态（M35 工单 07 先例）：常规 `mvn package` 产物——模块 jar 只含
+       自有类，宿主 API 由宿主 classpath 供给（自优先加载器约定：不得打入宿主类）。 -->
+</project>

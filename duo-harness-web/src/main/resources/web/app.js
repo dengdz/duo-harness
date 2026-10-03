@@ -2628,3 +2628,98 @@ sse.connect();
     act('挂载 ' + id, () => pcApi.post('mount-classpath', { id, fqcn, config }));
   });
 })();
+
+/* ===== §5 主题机制（M36 工单 04，ADR-0038 决策二）：呈现贡献口聚合端点 → 主题
+   选择器 → token 值集套根元素；选择经 localStorage 持久化（跨标签一致——鉴权令牌
+   先例）；所选主题消失（停/卸，5s 节拍跟随状态轮询检测）自动回落内置暗色。
+   顶层段零 render/sse IIFE 依赖（M29 边界纪律：只触 DOM 与顶层符号） ===== */
+(() => {
+  const STORAGE_KEY = 'duo-theme';
+  let themes = [];
+  let appliedThemeId = null;
+  let appliedTokenNames = [];
+  let lastSignature = null;
+
+  // 套值先清旧集——第三方值集只增不改名，残留上一套变量会混主题
+  function applyTokens(tokens) {
+    for (const name of appliedTokenNames) {
+      document.documentElement.style.removeProperty(name);
+    }
+    appliedTokenNames = [];
+    for (const [name, value] of Object.entries(tokens || {})) {
+      document.documentElement.style.setProperty(name, value);
+      appliedTokenNames.push(name);
+    }
+  }
+
+  function rebuildOptions() {
+    const select = document.getElementById('themeSelect');
+    if (!select) return;
+    select.innerHTML = '';
+    const builtin = document.createElement('option');
+    builtin.value = '';
+    builtin.textContent = '主题：内置暗色';
+    select.appendChild(builtin);
+    for (const t of themes) {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = '主题：' + (t.displayName || t.id);
+      select.appendChild(opt);
+    }
+  }
+
+  async function refreshThemes() {
+    let list = [];
+    try {
+      list = (await (await fetch('/api/presentation')).json()).themes || [];
+    } catch (err) {
+      return; // 端点缺席/瞬时失败：保持现状（内置暗色不受影响）
+    }
+    themes = list;
+    const signature = themes.map((t) => t.id + '|' + (t.displayName || '')).join(';');
+    if (signature !== lastSignature) {
+      lastSignature = signature;
+      rebuildOptions();
+    }
+    const select = document.getElementById('themeSelect');
+    if (!select) return;
+    const saved = (() => {
+      try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; }
+    })();
+    const picked = themes.find((t) => t.id === saved);
+    if (picked) {
+      select.value = picked.id;
+      if (appliedThemeId !== picked.id) {
+        applyTokens(picked.tokens);
+        appliedThemeId = picked.id;
+      }
+      return;
+    }
+    // 无有效选择：回落内置暗色（所选主题刚停/卸 → 顺带清持久化）
+    select.value = '';
+    if (appliedThemeId !== null) {
+      applyTokens(null);
+      appliedThemeId = null;
+    }
+    if (saved) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* 存储不可用忽略 */ }
+    }
+  }
+
+  document.getElementById('themeSelect').addEventListener('change', () => {
+    const select = document.getElementById('themeSelect');
+    const picked = themes.find((t) => t.id === select.value);
+    if (!picked) {
+      applyTokens(null);
+      appliedThemeId = null;
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* 忽略 */ }
+      return;
+    }
+    applyTokens(picked.tokens);
+    appliedThemeId = picked.id;
+    try { localStorage.setItem(STORAGE_KEY, picked.id); } catch (e) { /* 存储不可用：当次会话有效 */ }
+  });
+
+  refreshThemes();
+  setInterval(refreshThemes, 5000); // 与状态轮询同拍：主题停/卸后 5s 内自动回落
+})();

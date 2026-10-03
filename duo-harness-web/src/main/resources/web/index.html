@@ -46,6 +46,10 @@
   <section id="status">
     <h2>状态 <span class="hint">实时刷新</span></h2>
     <button id="pcOpen" type="button" class="pc-open">插件中心</button>
+    <!-- 主题选择器（M36 工单 04）：第三方主题经呈现贡献口注册后出现在此列表 -->
+    <select id="themeSelect" class="theme-select" aria-label="主题">
+      <option value="">主题：内置暗色</option>
+    </select>
     <!-- 鉴权关闭警示行（M34-05；M36 工单 02 用户裁定归位状态区——常驻不糊脸） -->
     <div id="authStateLine" class="auth-state-line" hidden>⚠ 鉴权已关闭（web.auth: none）——本机任何进程可直接访问此会话</div>
     <div id="statusBody">

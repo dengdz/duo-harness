@@ -756,4 +756,12 @@
   padding: 2px 10px; font-size: 12px; cursor: pointer; color: var(--text);
   margin-bottom: 6px;
 }
-.pc-open:hover { background: var(--surface-2); }
+  .pc-open:hover { background: var(--surface-2); }
+
+  /* ===== §样式层 · 主题选择器（M36 工单 04）：内置暗色 + 第三方主题列表 ===== */
+  .theme-select {
+    margin: 4px 8px 2px; padding: 6px 8px; width: calc(100% - 16px);
+    border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+    font: inherit; font-size: 12px; color: var(--text);
+  }
+  .theme-select:focus { outline: none; border-color: var(--brand); }
