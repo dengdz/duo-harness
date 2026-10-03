@@ -2476,94 +2476,203 @@ sse.connect();
     refresh();
   }
 
-  /** 停→改→启向导（无状态插件改配置）：读现状 → prompt 改 JSON → reconfigure 一步到位。 */
-  async function reconfigureFlow(row) {
-    const input = prompt('编辑插件 ' + row.id + ' 的配置 JSON：', row.configJson || '{}');
-    if (input === null) return;
-    let config;
-    try {
-      config = input.trim() === '' ? null : JSON.parse(input);
-    } catch (e) {
-      showToast('配置不是合法 JSON：' + errText(e));
+  /** 行内二次确认（M36 工单 06：原生 confirm 退役）——首点进入 armed 态（按钮变
+     「确认？」语义色实底），3s 无操作回弹；再点执行。 */
+  function armConfirm(button, armedLabel, fn) {
+    if (button.dataset.armed === '1') {
+      clearTimeout(Number(button.dataset.timer));
+      delete button.dataset.armed;
+      button.textContent = button.dataset.restore;
+      button.classList.remove('pc-btn-armed');
+      fn();
       return;
     }
-    await act('改配置', () => pcApi.post('reconfigure', { id: row.id, config }));
+    button.dataset.armed = '1';
+    button.dataset.restore = button.textContent;
+    button.textContent = armedLabel;
+    button.classList.add('pc-btn-armed');
+    button.dataset.timer = String(setTimeout(() => {
+      delete button.dataset.armed;
+      button.textContent = button.dataset.restore;
+      button.classList.remove('pc-btn-armed');
+    }, 3000));
   }
 
-  async function installFlow(scanned) {
+  function pcBtn(label, onClick, extraClass) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (extraClass) b.classList.add(extraClass);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function badgeClass(row) {
+    if (row.disabled) return 'pc-badge-dim';
+    if (row.state === 'ACTIVE') return 'pc-badge-ok';
+    if (row.state === 'PENDING') return 'pc-badge-warn';
+    if (row.state === 'FAILED' || row.state === 'ERROR') return 'pc-badge-fail';
+    return 'pc-badge-dim';
+  }
+
+  /** 停→改→启向导（行内展开表单，M36 工单 06：原生 prompt 退役）——再点收起。 */
+  function reconfigureFlow(row, expand) {
+    if (!expand.hidden && expand.dataset.mode === 'reconfigure') {
+      expand.hidden = true;
+      return;
+    }
+    expand.dataset.mode = 'reconfigure';
+    expand.hidden = false;
+    expand.textContent = '';
+    const form = document.createElement('div');
+    form.className = 'pc-expand-form';
+    const area = document.createElement('textarea');
+    area.className = 'pc-expand-input';
+    area.rows = 4;
+    area.value = row.configJson || '{}';
+    area.setAttribute('aria-label', '插件 ' + row.id + ' 的配置 JSON');
+    const hint = document.createElement('div');
+    hint.className = 'pc-restart-only';
+    hint.textContent = '无状态插件走停→改→启（运行期热生效）；拔不得的插件提示重启生效。';
+    const apply = pcBtn('应用', async () => {
+      let config;
+      const text = area.value.trim();
+      try {
+        config = text === '' ? null : JSON.parse(text);
+      } catch (e) {
+        showToast('配置不是合法 JSON：' + errText(e));
+        return;
+      }
+      expand.hidden = true;
+      await act('改配置', () => pcApi.post('reconfigure', { id: row.id, config }));
+    });
+    const cancel = pcBtn('取消', () => { expand.hidden = true; });
+    const bar = document.createElement('div');
+    bar.className = 'pc-expand-bar';
+    bar.append(apply, cancel);
+    form.append(area, hint, bar);
+    expand.appendChild(form);
+    area.focus();
+  }
+
+  /** 装前点名安装单（待装行内展开，M36 工单 06：原生 prompt 退役）——
+     拉点名展示入口类候选（唯一候选只读），行 id 预填文件名，config 可空。 */
+  async function installFlow(scanned, expand) {
+    if (!expand.hidden && expand.dataset.mode === 'install') {
+      expand.hidden = true;
+      return;
+    }
+    expand.dataset.mode = 'install';
+    expand.hidden = false;
+    expand.textContent = '';
+    const note = document.createElement('div');
+    note.className = 'pc-restart-only';
+    note.textContent = '装前点名中…（零副作用读包元数据）';
+    expand.appendChild(note);
     let inspection;
     try {
       inspection = await pcApi.get('inspect?jar=' + encodeURIComponent(scanned.path));
     } catch (err) {
+      expand.hidden = true;
       showToast('点名失败：' + errText(err));
       return;
     }
+    expand.textContent = '';
     const candidates = inspection.candidateEntries || [];
-    let fqcn = candidates.length === 1 ? candidates[0] : null;
-    if (candidates.length !== 1) {
-      fqcn = prompt('入口类 FQCN（候选：' + (candidates.join(', ') || '无——手填') + '）');
-      if (!fqcn) return;
+    const form = document.createElement('div');
+    form.className = 'pc-expand-form';
+    const fqcnLabel = document.createElement('div');
+    fqcnLabel.className = 'pc-restart-only';
+    fqcnLabel.textContent = candidates.length === 1
+        ? '入口类（装前点名单候选）'
+        : '入口类 FQCN（候选：' + (candidates.join(', ') || '无——手填') + '）';
+    const fqcnInput = document.createElement('input');
+    fqcnInput.className = 'pc-expand-input';
+    if (candidates.length === 1) {
+      fqcnInput.value = candidates[0];
+      fqcnInput.readOnly = true;
     }
-    const id = prompt('装配行 id：', scanned.path.split('/').pop().replace(/\.jar$/i, ''));
-    if (!id) return;
-    const configText = prompt('config JSON（可空）：', '{}');
-    if (configText === null) return;
-    let config;
-    try {
-      config = configText.trim() === '' ? null : JSON.parse(configText);
-    } catch (e) {
-      showToast('配置不是合法 JSON：' + errText(e));
-      return;
-    }
-    await act('安装 ' + id, () => pcApi.post('install', {
-      jar: scanned.path, id, entryFqcn: fqcn, config,
-    }));
+    const idLabel = document.createElement('div');
+    idLabel.className = 'pc-restart-only';
+    idLabel.textContent = '装配行 id';
+    const idInput = document.createElement('input');
+    idInput.className = 'pc-expand-input';
+    idInput.value = scanned.path.split('/').pop().replace(/\.jar$/i, '');
+    const configLabel = document.createElement('div');
+    configLabel.className = 'pc-restart-only';
+    configLabel.textContent = 'config JSON（可空）';
+    const configArea = document.createElement('textarea');
+    configArea.className = 'pc-expand-input';
+    configArea.rows = 3;
+    configArea.value = '{}';
+    const install = pcBtn('确认安装', async () => {
+      const id = idInput.value.trim();
+      if (!id) {
+        showToast('装配行 id 必填');
+        return;
+      }
+      let config;
+      const text = configArea.value.trim();
+      try {
+        config = text === '' ? null : JSON.parse(text);
+      } catch (e) {
+        showToast('配置不是合法 JSON：' + errText(e));
+        return;
+      }
+      expand.hidden = true;
+      await act('安装 ' + id, () => pcApi.post('install', {
+        jar: scanned.path, id, entryFqcn: fqcnInput.value.trim(), config,
+      }));
+    }, 'pc-btn-danger');
+    const cancel = pcBtn('取消', () => { expand.hidden = true; });
+    const bar = document.createElement('div');
+    bar.className = 'pc-expand-bar';
+    bar.append(install, cancel);
+    form.append(fqcnLabel, fqcnInput, idLabel, idInput, configLabel, configArea, bar);
+    expand.appendChild(form);
+    (candidates.length === 1 ? idInput : fqcnInput).focus();
   }
 
   function renderRows(rows) {
-    const tbody = $('#pcRows tbody');
-    tbody.textContent = '';
+    const box = $('#pcRows');
+    box.textContent = '';
     for (const row of rows) {
-      const tr = document.createElement('tr');
+      const line = document.createElement('div');
+      line.className = 'pc-row';
 
-      const idCell = document.createElement('td');
-      idCell.textContent = row.id;
-      tr.appendChild(idCell);
+      const id = document.createElement('span');
+      id.className = 'pc-row-id';
+      id.textContent = row.id;
 
-      const stateCell = document.createElement('td');
-      stateCell.textContent = row.disabled ? '已停用' : (row.state === '-' ? '未运行' : row.state);
-      tr.appendChild(stateCell);
+      const badge = document.createElement('span');
+      badge.className = 'pc-badge ' + badgeClass(row);
+      badge.textContent = row.disabled ? '已停用' : (row.state === '-' ? '未运行' : row.state);
 
-      const opsCell = document.createElement('td');
-      opsCell.className = 'pc-row-ops';
+      const ops = document.createElement('span');
+      ops.className = 'pc-row-ops';
+      const expand = document.createElement('div');
+      expand.className = 'pc-row-expand';
+      expand.hidden = true;
+
       if (row.disableable === false) {
         const note = document.createElement('span');
         note.className = 'pc-restart-only';
         note.textContent = '需重启生效';
-        opsCell.appendChild(note);
+        ops.appendChild(note);
       } else {
-        const buttons = [];
         if (!row.disabled) {
-          buttons.push(['停用', () => act('停用 ' + row.id, () => pcApi.post('disable', { id: row.id }))]);
-          buttons.push(['改配置', () => reconfigureFlow(row)]);
+          ops.appendChild(pcBtn('停用', () => act('停用 ' + row.id, () => pcApi.post('disable', { id: row.id }))));
+          ops.appendChild(pcBtn('改配置', () => reconfigureFlow(row, expand)));
         } else {
-          buttons.push(['启用', () => act('启用 ' + row.id, () => pcApi.post('enable', { id: row.id }))]);
+          ops.appendChild(pcBtn('启用', () => act('启用 ' + row.id, () => pcApi.post('enable', { id: row.id }))));
         }
-        buttons.push(['卸载', () => {
-          if (confirm('卸载插件 ' + row.id + '？其服务与工具将一并摘除。')) {
-            act('卸载 ' + row.id, () => pcApi.post('uninstall', { id: row.id }));
-          }
-        }]);
-        for (const [label, fn] of buttons) {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.textContent = label;
-          b.addEventListener('click', fn);
-          opsCell.appendChild(b);
-        }
+        const unload = pcBtn('卸载', () => armConfirm(unload, '确认卸载？',
+            () => act('卸载 ' + row.id, () => pcApi.post('uninstall', { id: row.id }))), 'pc-btn-danger');
+        ops.appendChild(unload);
       }
-      tr.appendChild(opsCell);
-      tbody.appendChild(tr);
+      line.append(id, badge, ops);
+      line.appendChild(expand);
+      box.appendChild(line);
     }
   }
 
@@ -2575,6 +2684,8 @@ sse.connect();
       return;
     }
     for (const item of scanned) {
+      const wrap = document.createElement('div');
+      wrap.className = 'pc-scan-wrap';
       const line = document.createElement('div');
       line.className = 'pc-scan-line';
       const name = document.createElement('span');
@@ -2582,10 +2693,13 @@ sse.connect();
       const installBtn = document.createElement('button');
       installBtn.type = 'button';
       installBtn.textContent = '安装';
-      installBtn.addEventListener('click', () => installFlow(item));
-      line.appendChild(name);
-      line.appendChild(installBtn);
-      box.appendChild(line);
+      const expand = document.createElement('div');
+      expand.className = 'pc-row-expand';
+      expand.hidden = true;
+      installBtn.addEventListener('click', () => installFlow(item, expand));
+      line.append(name, installBtn);
+      wrap.append(line, expand);
+      box.appendChild(wrap);
     }
   }
 
@@ -2612,9 +2726,6 @@ sse.connect();
       showToast('挂类路径插件需要行 id 与入口类 FQCN');
       return;
     }
-    if (!confirm('挂载 ' + fqcn + ' 为行 ' + id + '？若该 id 已有现行行，请先卸载（同名互斥）。')) {
-      return;
-    }
     let config = null;
     const configText = $('#pcClasspathConfig').value.trim();
     if (configText !== '') {
@@ -2625,7 +2736,9 @@ sse.connect();
         return;
       }
     }
-    act('挂载 ' + id, () => pcApi.post('mount-classpath', { id, fqcn, config }));
+    // 行内二次确认（M36 工单 06：原生 confirm 退役）——同名互斥提示进按钮 armed 文案
+    armConfirm($('#pcClasspathMount'), '确认挂载？同名互斥',
+        () => act('挂载 ' + id, () => pcApi.post('mount-classpath', { id, fqcn, config })));
   });
 })();
 

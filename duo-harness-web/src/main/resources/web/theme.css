@@ -54,9 +54,20 @@
     color: var(--text);
     height: 100vh;
     display: grid;
-    grid-template-columns: 220px 1fr 360px;
+    /* 弹性三列（M36 工单 06）：固定像素列在窄视口吃掉对话区（820px 时中列仅 192px）——
+       两翼 minmax 钳位、中列 minmax(0,1fr) 防内容撑破 */
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(280px, 360px);
     gap: 12px;
     padding: 12px;
+  }
+  /* 窄视口纵排：980px 以下三列挤爆，各区纵排限高自滚（会话/状态收窄、对话区占主） */
+  @media (max-width: 980px) {
+    body {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+    #sessions { max-height: 22vh; }
+    #status { max-height: 30vh; }
   }
   section {
     background: var(--surface);
@@ -716,19 +727,55 @@
   color: var(--text-dim); font-size: 12px; padding-bottom: 8px;
   margin-bottom: 8px; border-bottom: 1px solid var(--border);
 }
-.pc-fold { margin-bottom: 10px; }
-.pc-fold summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
-#pcRows { width: 100%; font-size: 12px; border-collapse: collapse; }
-#pcRows th, #pcRows td {
-  border-bottom: 1px solid var(--border); padding: 4px 6px; text-align: left;
-  font-family: var(--mono);
-}
-.pc-row-ops button {
-  margin-right: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer;
-  border: 1px solid var(--border); background: var(--surface);
-  border-radius: 6px; color: var(--text);
-}
-.pc-restart-only { color: var(--text-dim); font-size: 11px; }
+  .pc-fold { margin-bottom: 10px; }
+  .pc-fold summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+  /* 已装行卡（M36 工单 06 精修：裸表格退役）——id + 状态徽标 + 操作组 + 行内展开表单 */
+  .pc-rows { display: flex; flex-direction: column; }
+  .pc-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 7px 10px; margin-bottom: 6px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .pc-row-id { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--text); }
+  .pc-badge {
+    flex-shrink: 0; font-size: 11px; font-weight: 600;
+    padding: 1px 8px; border-radius: 99px;
+  }
+  .pc-badge-ok { background: var(--ok-tint); color: var(--ok); }
+  .pc-badge-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+  .pc-badge-fail { background: var(--danger-tint); color: var(--danger); }
+  .pc-badge-dim { background: var(--surface); color: var(--text-dim); }
+  .pc-row-ops { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+  .pc-row-ops button, .pc-btn {
+    padding: 2px 10px; font-size: 11px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface);
+    border-radius: 6px; color: var(--text);
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  }
+  .pc-row-ops button:hover, .pc-btn:hover { border-color: var(--brand); color: var(--brand-strong); }
+  .pc-row-ops button.pc-btn-danger:hover, .pc-btn.pc-btn-danger:hover {
+    border-color: var(--danger); color: var(--danger);
+  }
+  /* armed 二次确认态（行内确认替代原生 confirm）——语义色实底，悬停不回品牌色 */
+  .pc-row-ops button.pc-btn-armed, .pc-btn.pc-btn-armed {
+    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
+  }
+  .pc-row-ops button.pc-btn-armed:hover, .pc-btn.pc-btn-armed:hover {
+    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
+  }
+  /* 行内展开表单（改配置向导 / 装前点名安装单——原生 prompt 退役） */
+  .pc-row-expand { width: 100%; }
+  .pc-expand-form { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+  .pc-expand-input {
+    width: 100%; padding: 5px 8px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--text);
+    font-family: var(--mono); font-size: 12px; resize: vertical;
+  }
+  .pc-expand-input:focus { outline: none; border-color: var(--brand); }
+  .pc-expand-bar { display: flex; gap: 6px; }
+  .pc-scan-wrap { margin-bottom: 6px; }
+  .pc-restart-only { color: var(--text-dim); font-size: 11px; }
 #pcScan { font-size: 12px; }
 .pc-scan-line {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
