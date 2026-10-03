@@ -1,33 +1,56 @@
 /*
- * Web 双面样式层：DSH 亮色设计 token（来源 prototype.html 冻结版）+ 组件样式。
- * 与 index.html（骨架）、app.js（脚本）分文件维护，经 /web/ 白名单资源服务；
- * 新样式在对应组件区块内追加，token 只增不改名（页面行为对齐的锚点）。
+ * Web 双面样式层：主题令牌（Theme Token，ADR-0038）+ 组件样式。
+ * 与 index.html（骨架）、app.js（脚本）分文件维护，经 /web/ 白名单资源服务。
+ * token 契约：只增不改名；:root 缺省值 = 内置暗色精品主题（开发者工具精致风，
+ * M36 工单 02 用户裁定），原亮色值集留作后续亮色主题素材。第三方主题经呈现
+ * 贡献口提交 token 值集（值过字面量白名单、url() 拒收），换肤 = 换一套变量值，
+ * 不改本文件任何选择器。
  */
-  /* ===== §样式层 · 设计 token（DSH 亮色，来源 prototype.html 冻结版） ===== */
+  /* ===== §样式层 · 设计 token（内置暗色精品；亮色值集见 git 历史本行前版本） ===== */
   :root {
-    --brand: rgb(86, 134, 254);        /* dsw-static-deepseek-450 */
-    --brand-strong: rgb(65, 118, 230); /* dsw-static-deepseek-500 */
-    --brand-tint: rgb(237, 243, 254);  /* dsw-static-deepseek-50 */
-    --surface: #ffffff;
-    --surface-2: #f5f6f7;
-    --border: rgba(0, 0, 0, 0.1);
-    --text: #1a1f27;
-    --text-dim: #6b7280;
-    --text-faint: rgba(26, 31, 39, 0.4); /* M29 工单 06：极浅字色（思考折叠卡，对标 ZCode foreground-subtlest） */
+    /* 品牌阶 */
+    --brand: rgb(100, 150, 255);       /* 深底提亮版 dsw-static-deepseek-450 */
+    --brand-strong: rgb(133, 173, 255);
+    --brand-tint: rgba(100, 150, 255, 0.13); /* 暗底薄纱：品牌色低透明度 */
+    --on-brand: #ffffff;               /* 品牌实底按钮前景（两主题同值） */
+    /* 底色阶（页面底最深、面板浮起、嵌套再亮——深色 UI 层级惯例） */
+    --bg-page: #0b0f16;
+    --surface: #12161f;
+    --surface-2: #1a202b;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.18); /* 悬停强调边 */
+    /* 文本阶 */
+    --text: #dce2eb;
+    --text-dim: #8d96a5;
+    --text-faint: rgba(220, 226, 235, 0.38); /* 极浅字色（思考折叠卡，对标 ZCode foreground-subtlest） */
     --sweep-strong: var(--text-dim); --sweep-soft: var(--text-faint); /* M29 工单 12：运行态扫光两端/中点色（附录 A3 映射） */
-    --danger: #dc2626;
-    --danger-tint: #fef2f2;
-    --ok: #16a34a;
-    --shadow-lv1: 0 2px 4px rgba(0, 0, 0, 0.05);
-    --shadow-lv2: 0 4px 12px rgba(0, 0, 0, 0.02), 0 2px 8px rgba(0, 0, 0, 0.04);
+    /* 语义色（暗底亮化：GitHub dark 语义档） */
+    --danger: #ff7b72;
+    --danger-tint: rgba(255, 123, 114, 0.12);
+    --danger-soft: rgba(255, 123, 114, 0.75); /* 失败词浅红（tcard-status.fail） */
+    --on-danger: #0b0f16;              /* 危险实底前景（暗色主题亮红底配深字） */
+    --ok: #3fb950;
+    --ok-tint: rgba(63, 185, 80, 0.15);   /* 成功徽标底薄纱 */
+    --warn: #e3b341;                   /* PENDING 琥珀（暗底亮化） */
+    --diff-del-bg: rgba(255, 123, 114, 0.1);
+    --diff-add-bg: rgba(63, 185, 80, 0.1);
+    /* 几何与投影 */
+    --shadow-lv1: 0 2px 4px rgba(0, 0, 0, 0.35);
+    --shadow-lv2: 0 4px 12px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.22);
+    --shadow-drawer: -12px 0 34px rgba(0, 0, 0, 0.5); /* 右缘抽屉投影 */
     --radius: 16px;
     --radius-sm: 12px;
     --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace; /* CJK 补齐对齐 ZCode styles.css:138-141（Consolas 无中文字形会落宋体） */
+    /* 子代理名八色（M36 工单 02：暗底亮化 text-*-400 档；序列 amber/rose/orange/emerald/cyan/sky/violet/pink 同 ZCode subagentColors.ts） */
+    --agent-color-0: #fbbf24; --agent-color-1: #fb7185;
+    --agent-color-2: #fb923c; --agent-color-3: #34d399;
+    --agent-color-4: #22d3ee; --agent-color-5: #38bdf8;
+    --agent-color-6: #a78bfa; --agent-color-7: #f472b6;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    background: var(--surface-2);
+    background: var(--bg-page);
     color: var(--text);
     height: 100vh;
     display: grid;
@@ -59,7 +82,7 @@
     font-family: var(--mono);
     background: transparent;
     color: var(--text-dim);
-    border: 1px dashed var(--border, #8884);
+    border: 1px dashed var(--border);
   }
   .msg.cmdresult {
     font-family: var(--mono);
@@ -152,7 +175,7 @@
     font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 99px; /* M29 工单 12：徽标对齐代码档 12px（用户裁定） */
     display: inline-flex; align-items: center; gap: 4px;
   }
-  .badge-ok { background: #dcfce7; color: var(--ok); }
+  .badge-ok { background: var(--ok-tint); color: var(--ok); }
   .badge-fail { background: var(--danger-tint); color: var(--danger); }
   .badge-run { background: var(--brand-tint); color: var(--brand-strong); }
   details.result { margin-top: 8px; }
@@ -199,11 +222,12 @@
     border-radius: 10px; background: var(--surface); cursor: pointer; font: inherit; font-size: 14px; /* ZCode PermissionDialog.tsx:815/819：审批选项行 text-ui-base */
   }
   .choice:hover { border-color: var(--brand); background: var(--brand-tint); }
-  .choice.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .choice.primary { background: var(--brand); color: var(--on-brand); border-color: var(--brand); }
   .choice.primary:hover { background: var(--brand-strong); }
   .free-input { display: flex; gap: 6px; margin-top: 6px; }
   .free-input input {
     flex: 1; padding: 7px 10px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text);
     border-radius: 8px; font: inherit; font-size: 14px; outline: none;
   }
   .free-input input:focus { border-color: var(--brand); }
@@ -236,7 +260,7 @@
     background: var(--ok);
   }
   .todo-list li[data-status="completed"] .todo-mark::after {
-    content: '✓'; color: #fff; font-size: 9px; line-height: 1;
+    content: '✓'; color: var(--on-brand); font-size: 9px; line-height: 1;
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   }
   .todo-list li[data-status="in_progress"] .todo-mark {
@@ -246,8 +270,9 @@
     border: 1.5px dashed var(--text-dim);
   }
   @keyframes todo-breathe {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(86, 134, 254, 0.35); }
-    50% { box-shadow: 0 0 0 4px rgba(86, 134, 254, 0.15); }
+    /* color-mix 从 var(--brand) 现场调薄纱——第三方主题换 brand 后呼吸圈自动跟随 */
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 35%, transparent); }
+    50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 15%, transparent); }
   }
   .todo-list li[data-status="completed"] > span:last-child {
     color: var(--text-dim); text-decoration: line-through;
@@ -263,7 +288,7 @@
     position: absolute; left: 12px; right: 12px; bottom: calc(100% - 4px);
     max-height: 220px; overflow-y: auto;
     background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    box-shadow: 0 -4px 16px rgba(0,0,0,0.18); z-index: 30; padding: 4px;
+    box-shadow: var(--shadow-lv2); z-index: 30; padding: 4px;
   }
   .at-item {
     padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
@@ -275,12 +300,13 @@
   .at-empty { padding: 6px 10px; font-size: 11px; color: var(--text-dim); }
   #input {
     flex: 1; padding: 10px 14px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text);
     border-radius: var(--radius-sm); font: inherit; outline: none;
   }
   #input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-tint); }
   #send {
     padding: 10px 22px; border: none; border-radius: var(--radius-sm);
-    background: var(--brand); color: #fff; font: inherit; cursor: pointer;
+    background: var(--brand); color: var(--on-brand); font: inherit; cursor: pointer;
   }
   #send:hover { background: var(--brand-strong); }
   #send:disabled { opacity: 0.6; cursor: default; }
@@ -332,7 +358,7 @@
   .card {
     transition: border-color 0.15s ease, box-shadow 0.15s ease; /* M29 W9：仅过渡不加入场动画（反闪烁裁定） */
   }
-  .card:hover { border-color: rgba(0, 0, 0, 0.18); }
+  .card:hover { border-color: var(--border-strong); }
 
   /* ===== §样式层 · 状态面分区折叠（M29 W6：原生 details，长表默认收起） ===== */
   details.status-fold > summary.status-group {
@@ -401,7 +427,7 @@
   }
   .tcard-row .tcard-status { flex-shrink: 0; }
   .tcard-status.fail { /* 失败态：四字浅红 + 点线下划线；悬停浮窗见 ::after */
-    color: rgba(220, 38, 38, 0.75); font-size: 14px;
+    color: var(--danger-soft); font-size: 14px;
     text-decoration: underline dotted; text-underline-offset: 2px;
     position: relative;
   }
@@ -463,8 +489,8 @@
     max-height: 240px; overflow-y: auto; /* M29 工单 12 对齐：内滚替代折叠（ZCode max-h-60） */
   }
   .diff-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-all; }
-  .diff-line.del { background: rgba(220, 38, 38, 0.08); color: var(--danger); }
-  .diff-line.add { background: rgba(22, 163, 74, 0.08); color: var(--ok); }
+  .diff-line.del { background: var(--diff-del-bg); color: var(--danger); }
+  .diff-line.add { background: var(--diff-add-bg); color: var(--ok); }
   .diff-line::before { content: attr(data-sign) ' '; font-weight: 600; }
   .skill-preview { /* M29 工单 12 对齐：技能加载内容限高直出（ZCode max-h-25）；
       SKILL.md 本就是文档，markdown 渲染（结构化排版，无 pre-wrap） */
@@ -474,12 +500,13 @@
     overflow-wrap: break-word;
     max-height: 100px; overflow-y: auto;
   }
-  /* 子代理名 8 色对齐 ZCode subagentColors.ts SUBAGENT_TEXT_COLOR_CLASS（亮色 text-*-700），
-     序列同 SUBAGENT_COLORS：amber/rose/orange/emerald/cyan/sky/violet/pink */
-  .agent-color-0 { color: #b45309; } .agent-color-1 { color: #be123c; }
-  .agent-color-2 { color: #c2410c; } .agent-color-3 { color: #047857; }
-  .agent-color-4 { color: #0e7490; } .agent-color-5 { color: #0369a1; }
-  .agent-color-6 { color: #7c3aed; } .agent-color-7 { color: #be185d; }
+  /* 子代理名 8 色对齐 ZCode subagentColors.ts SUBAGENT_TEXT_COLOR_CLASS，
+     序列同 SUBAGENT_COLORS：amber/rose/orange/emerald/cyan/sky/violet/pink
+     （M36 工单 02：色值收编为 token，暗底亮化 text-*-400 档） */
+  .agent-color-0 { color: var(--agent-color-0); } .agent-color-1 { color: var(--agent-color-1); }
+  .agent-color-2 { color: var(--agent-color-2); } .agent-color-3 { color: var(--agent-color-3); }
+  .agent-color-4 { color: var(--agent-color-4); } .agent-color-5 { color: var(--agent-color-5); }
+  .agent-color-6 { color: var(--agent-color-6); } .agent-color-7 { color: var(--agent-color-7); }
   .agent-name { /* M29 工单 12 对齐：max-width 截断 + title 悬停全名（ZCode max-w-36） */
     display: inline-block; max-width: 144px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -502,6 +529,15 @@
     box-shadow: var(--shadow-lv2);
   }
   .toast.info { background: var(--brand-tint); color: var(--brand-strong); border-color: var(--brand); }
+
+  /* ===== §样式层 · 鉴权关闭警示行（M34-05 立项；M36 工单 02 三改定型：
+     状态面板内薄纱行（用户裁定归位状态区）——token 化，JS 内联样式退役 ===== */
+  .auth-state-line {
+    margin: 0 8px 6px; padding: 6px 10px;
+    font-size: 12px; line-height: 1.5;
+    background: var(--danger-tint); color: var(--danger);
+    border: 1px solid var(--danger); border-radius: 8px;
+  }
 
   /* ===== §样式层 · 初始状态（EmptyHero） ===== */
   #hero {
@@ -591,7 +627,7 @@
   td.mono { font-family: var(--mono); font-size: 11px; }
   .state { font-weight: 600; }
   .state-ACTIVE { color: var(--ok); }
-  .state-PENDING { color: #d97706; }
+  .state-PENDING { color: var(--warn); }
   .desc { color: var(--text-dim); }
   .context-line {
     font-family: var(--mono); font-size: 11px; color: var(--text);
@@ -619,7 +655,7 @@
   #subagentDrawer {
     position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 48vw);
     background: var(--surface); border-left: 1px solid var(--border);
-    box-shadow: -12px 0 34px rgba(15, 23, 42, 0.16);
+    box-shadow: var(--shadow-drawer);
     display: flex; flex-direction: column; z-index: 60;
     transform: translateX(100%); transition: transform 0.2s ease;
   }
@@ -654,7 +690,7 @@
 .att-chip {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px; padding: 2px 6px; border-radius: 10px;
-  background: var(--bubble-user, #e5e7eb); color: inherit;
+  background: var(--brand-tint); color: inherit; /* 用户气泡同底（--bubble-user 未定义回退已退役，M36 工单 02 收编） */
 }
 .att-chip .att-remove {
   border: none; background: none; cursor: pointer; font-size: 12px;
@@ -670,7 +706,7 @@
 #pluginCenterDrawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 48vw);
   background: var(--surface); border-left: 1px solid var(--border);
-  box-shadow: -12px 0 34px rgba(15, 23, 42, 0.16);
+  box-shadow: var(--shadow-drawer);
   display: flex; flex-direction: column; z-index: 60;
   transform: translateX(100%); transition: transform 0.2s ease;
 }

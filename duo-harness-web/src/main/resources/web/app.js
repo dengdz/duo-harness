@@ -2302,15 +2302,13 @@ const app = (() => {
     try {
       const data = await api.status();
       statusFailures = 0;
-      // 鉴权关闭横幅（O17 / BUG-20261002-06 关联）：auth:none 时页面顶部常驻警示——
-      // 打开页面的任何人即刻看到不安全状态（启动日志横幅只有启动者可见）
-      if (data.auth === 'none' && !$('#authBanner')) {
-        const banner = document.createElement('div');
-        banner.id = 'authBanner';
-        banner.style.cssText = 'position:sticky;top:0;z-index:50;padding:6px 14px;'
-            + 'background:#b91c1c;color:#fff;font-size:13px;text-align:center;';
-        banner.textContent = '⚠ 鉴权已关闭（web.auth: none）——本机任何进程可直接访问此会话';
-        document.body.prepend(banner);
+      // 鉴权关闭警示（O17 / BUG-20260925 关联 → M36 工单 02 用户裁定归位）：
+      // auth:none 时状态面板顶部警示行显示（系统健康视图的一部分，常驻不糊脸）；
+      // 形态演进：body prepend 横幅（M34-05 原形态）→ 浮动脉囊 → 状态区行
+      if (data.auth === 'none') {
+        $('#authStateLine').hidden = false;
+      } else {
+        $('#authStateLine').hidden = true;
       }
       renderContext(data.context);
       const plugins = $('#plugins tbody');
