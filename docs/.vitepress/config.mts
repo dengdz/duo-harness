@@ -37,6 +37,7 @@ export default defineConfig({
           { text: '模型与思考档位', link: '/02-指南/模型与思考档位' },
           { text: '导出与检索', link: '/02-指南/导出与检索' },
           { text: '子代理', link: '/02-指南/子代理' },
+          { text: '插件中心', link: '/02-指南/插件中心' },
           { text: 'hooks', link: '/02-指南/hooks' },
           { text: 'MCP 接入', link: '/02-指南/MCP接入' }
         ]
@@ -46,7 +47,8 @@ export default defineConfig({
         items: [
           { text: '技能编写指南', link: '/03-高级/技能编写指南' },
           { text: 'MCP 深入', link: '/03-高级/MCP深入' },
-          { text: '多插件协同', link: '/03-高级/多插件协同' }
+          { text: '多插件协同', link: '/03-高级/多插件协同' },
+          { text: '插件包交货指南', link: '/03-高级/插件包交货指南' }
         ]
       },
       {

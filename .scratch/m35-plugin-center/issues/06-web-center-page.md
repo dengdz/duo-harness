@@ -36,3 +36,4 @@ in-progress（实现与浏览器实测已完工待提交；提交后随 09 单�
 - **两处实测修正**：①Jackson 对 Path 的默认序列化是 file: URI 形态——scan 响应投影为纯字符串 + 桥端 pathFrom 宽容解析；②空 config JSON 须归一为 null（configType=null 插件"声明即须不提供"——空 map 也算提供了配置）。
 - **原生 prompt 对话框在 IAB 自动化下未能捕获**（页面 prompt 流的自动化驱动留 09 人工验收）；安装动作经端点驱动验证 + 页面渲染态截图，功能等价（同一桥端点）。
 - **验证**：PluginCenterWebBridgeTest 4 用例（自动挂接/装停端到端/业务点名 400/鉴权 403 覆盖）+ PluginCenterTest 6 用例回归 + 全模块链 mvn exit 0。
+- **视觉取舍（2026-10-03 用户裁定）**：本单交付为"功能达标 + 复用既有抽屉骨架"的最快可用形态，视觉刻意从简；页面视觉债务（横幅形态/三列布局/抽屉精修）经用户选 B 裁定并入 M36 主题 token 期——已落 backlog「Web 呈现视觉债务」条目。
