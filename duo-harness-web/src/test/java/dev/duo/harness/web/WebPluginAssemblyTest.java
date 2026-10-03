@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -58,6 +59,38 @@ class WebPluginAssemblyTest {
             try {
                 assertFalse(dev.duo.harness.session.Session.isOccupied(existing),
                         "Web 装配不得抢占既有最新会话（应自建新会话）");
+            } finally {
+                root.dispose();
+            }
+        } finally {
+            System.clearProperty(DuoHome.PROP_OVERRIDE);
+        }
+    }
+
+    interface WebRoutesView {
+
+        WebRouteRegistry webRoutes();
+    }
+
+    @Test
+    void webRoutesServicePublishedForPluginContribution(@TempDir Path tempDir) throws Exception {
+        // 端点贡献口（ADR-0037 内核受控口二）：WebPlugin 发布 webRoutes 服务——
+        // 插件（插件中心是第一个消费者）经视图接口申请前缀挂端点
+        Path home = tempDir.resolve("duo-home");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("config.yml"), """
+                llm:
+                  baseUrl: https://placeholder.local
+                  apiKey: test-key
+                  model: test-model
+                """);
+        System.setProperty(DuoHome.PROP_OVERRIDE, home.toString());
+        try {
+            Path yml = Path.of(WebPluginAssemblyTest.class.getResource("/web-assembly-test.yml").toURI());
+            Context root = dev.duo.harness.core.api.boot.Boot.from(yml);
+            try {
+                WebRouteRegistry registry = root.as(WebRoutesView.class).webRoutes();
+                assertNotNull(registry, "webRoutes 服务应在册（端点贡献口）");
             } finally {
                 root.dispose();
             }

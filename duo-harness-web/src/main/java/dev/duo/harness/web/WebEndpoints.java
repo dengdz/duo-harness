@@ -66,15 +66,23 @@ final class WebEndpoints {
 
     /** 挂载单个端点：统一前置入口栅栏（Host/Origin 校验），通过才交端点处理器。 */
     private void route(HttpServer server, String path, Endpoint endpoint) {
+        routeHandler(server, path, face.gate, endpoint::handle);
+    }
+
+    /**
+     * 统一包裹（内部路由与贡献口 {@link WebContributedRoutes} 共用）：栅栏前置 +
+     * 异常 500 兜底。兜底是铁律（BUG-20261002-01）：异常一律 500 + 日志，绝不留
+     * 「连接裸关」的空响应——此前 statusJson 抛 IllegalStateException 经此逃逸，
+     * 客户端只见连接被关、服务端零日志（状态面全盲实测形态）。
+     */
+    static void routeHandler(HttpServer server, String path, WebEntryGate gate,
+                             com.sun.net.httpserver.HttpHandler handler) {
         server.createContext(path, exchange -> {
             try {
-                if (face.gate.admits(exchange)) {
-                    endpoint.handle(exchange);
+                if (gate.admits(exchange)) {
+                    handler.handle(exchange);
                 }
             } catch (Exception e) {
-                // 端点兜底（BUG-20261002-01）：异常一律 500 + 日志，绝不留「连接裸关」
-                // 的空响应——此前 statusJson 抛 IllegalStateException 经此逃逸，客户端只
-                // 见连接被关、服务端零日志（状态面全盲实测形态）
                 WebFace.log.error("端点处理失败 path={}", path, e);
                 WebHttp.respondText(exchange, 500, "服务端处理失败（详情见服务端日志）");
             }

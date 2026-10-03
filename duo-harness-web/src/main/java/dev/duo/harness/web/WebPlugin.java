@@ -239,6 +239,10 @@ public final class WebPlugin implements Plugin<JsonNode> {
             if (ctx.hasService(dev.duo.harness.tools.fs.BackgroundTaskRegistry.SERVICE_NAME)) {
                 face.setBackgroundTaskRegistry(ctx.as(WebBackgroundTasksView.class).backgroundTasks());
             }
+            // 端点贡献口（ADR-0037 内核受控口二）：发布 webRoutes 服务——插件按前缀
+            // 申请制挂端点（插件中心是第一个消费者）；贡献路由的摘除由消费方把 claim
+            // 移除器挂自己作用域，本服务注销随本插件拔除自动发生
+            ctx.provide(WebRouteRegistry.SERVICE_NAME, face.routes());
         } catch (java.io.IOException e) {
             session.close(); // 启动失败即释放会话独占锁：不给失败的启动留占用
             throw new PluginException("Web 服务启动失败（端口 " + port + "）", e);

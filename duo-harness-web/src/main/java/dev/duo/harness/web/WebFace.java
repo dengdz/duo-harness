@@ -79,6 +79,8 @@ public final class WebFace {
     final WebEntryGate gate;
     final WebSseHub hub;
     final WebTabs tabs;
+    /** 端点贡献口（ADR-0037 内核受控口二；WebPlugin 发布为 webRoutes 服务）。 */
+    final WebContributedRoutes contributed;
     private final WebEndpoints endpoints;
 
     private WebFace(HttpServer server, Context ctx, ToolsService tools, Session session,
@@ -98,6 +100,7 @@ public final class WebFace {
         this.gate = new WebEntryGate(server.getAddress().getPort(), authToken);
         this.hub = new WebSseHub(webAnswerer);
         this.tabs = new WebTabs(session, hub);
+        this.contributed = new WebContributedRoutes(server, this.gate);
         this.endpoints = new WebEndpoints(this);
     }
 
@@ -316,6 +319,11 @@ public final class WebFace {
     /** 鉴权令牌访问器（WebPlugin 打印带 token 的 URL 用；关闭时 null）。 */
     public String authToken() {
         return gate.authToken();
+    }
+
+    /** 端点贡献口（WebPlugin 发布为 webRoutes 服务；插件按前缀申请制挂端点，ADR-0037）。 */
+    public WebRouteRegistry routes() {
+        return contributed;
     }
 
     /** 实际绑定端口（构造传 0 时为系统分配值）。 */

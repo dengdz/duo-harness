@@ -8,12 +8,18 @@
 
 ## Status
 
-ready-for-agent
+in-progress（实现与回归锁已完工待提交；提交后随 09 单端到端验收转 done）
 
 ## Checklist
 
-- [ ] 贡献口注册 API：前缀申请 + 端点挂接；前缀冲突点名（对齐服务同名互斥口径）
-- [ ] 鉴权栅栏覆盖：无 token 401 / 带 token 放行 / `auth: none` 行为一致（S3 HTTP 缝，先例 WebFaceAuthTest 形态）
-- [ ] 路由层兜底：贡献端点内抛错 → 500 + 日志，不再连接裸关（BUG-20261002-01 回归锁形态复用）
-- [ ] 提供方插件拔除 → 贡献端点同步摘除（404，不挂死）
-- [ ] CHANGELOG 记账（用户可见：插件可贡献端点，同 diff）
+- [x] 贡献口注册 API：`WebRouteRegistry`（claim 申请前缀 / mount 挂端点）+ `WebContributedRoutes` 实现；前缀占用点名、非法段（空白/含 /、. 段/非 ASCII）点名
+- [x] 鉴权栅栏覆盖：贡献端点无 token 403 / 带 token 200 / `auth: none` 直达（S3 HTTP 缝；实态为 403——Web 栅栏既有口径即 fail-closed 403，工单原文 401 系笔误，语义一致）
+- [x] 路由层兜底：贡献端点内抛错 → 500 + 文本响应 + 日志（WebEndpoints.routeHandler 统一包裹，内部路由与贡献口共用同一份兜底代码——BUG-20261002-01 铁律单点化）
+- [x] 提供方拔除 → 贡献端点同步摘除：claim 移除器挂消费方作用域（ctx.effect 即得）；摘除后同前缀可复用
+- [x] CHANGELOG 记账（用户可见：插件可贡献端点，同 diff）
+
+## Comments
+
+- **实现形态（2026-10-03）**：`WebContributedRoutes`（前缀占用表 + 每前缀路径清单，synchronized 串行化）挂 WebFace；挂接统一走 `WebEndpoints.routeHandler` 新静态包裹（内部 `route()` 同步收敛到它——兜底代码单点化）；WebPlugin 在 face 启动成功后发布 `webRoutes` 服务；`HttpServer.removeContext` 摘除。
+- **摘除后的可观测形态（实测澄清）**：web 单页有 `/` 兜底上下文（JDK 最长前缀匹配），贡献路由摘除后请求落回单页（200 HTML）而非 404——摘除的本质是"贡献处理器退出调用链"；404 形态仅存在于无兜底上下文的部署。测试按"pong 不再出现"断言，工单原文的 404 预期就此勘误。
+- **验证**：WebRouteContributionTest 7 用例 + WebPluginAssemblyTest 增 1 例（webRoutes 服务在册）+ web 模块全量 111 例全绿（-am 真实链，mvn exit 0）。
