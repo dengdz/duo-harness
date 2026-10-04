@@ -665,3 +665,11 @@
 - **发现与修复**：阻断 2 全修——①多轴共识的 CliPlugin 两处陈旧注释（类 Javadoc :75-76 与 replLoop catch :785 仍写「stop 关输入流」）改写现在时；②CHANGELOG Fixed 记账（BUG-20261004-01）。建议修 3（工单票滞后全量补齐 / javaPathCandidates 同名去重 + 无消费方 source 字段删除 / CoT 泄漏「jstack 坐实」轻剪）+ 记档 5（存活 JVM 内 cli dispose 边界、CliPlugin 修复四处升格记档、smoke 失败退化、回归锁 sleep 竞态、BackendHandle.child 声明消费方）。
 - **模式化问题（新）**：①**子进程 stderr/stdout 的双流假设**——`java -version` 退出 0 走 stderr，execFileSync 成功路径只回 stdout 直接把版本探测打瞎（首跑冒烟实锤）；**凡是「执行外部命令解析其输出」的代码先问「输出口在哪条流」**，聚合双流用 spawnSync。②**阻塞 IO 的跨线程关闭直觉**——JDK BufferedReader close 与阻塞 readLine 同锁（InternalLock），「关流打断读者」是死锁不是打断；跨线程终止阻塞 IO 只有两法：对端 EOF（pipe 写端关闭）或进程收尾。③**模态对话框在自动化流程里是挂死点**——验收型运行路径的失败出口必须走 stderr/退出码，dialog 只留交互模式。
 - **对后续建议**：工单 04 退出编排直接复用本票 stop 语义（SIGTERM→0.5s 干净退已实证）；行级轴 F1 的「存活 JVM 内 cli dispose」边界在 pluginRows 场景若有真实需求再立项，当前记档即可。
+
+### 2026-10-04 · M37 工单 03 审查（1.3.0 分支，工作树 vs HEAD 86f0a3a9：托盘常驻与窗口形态）
+
+- **范围/基点**：工作树 vs 86f0a3a9，desktop/ 三文件（window-control.ts 新增/main.ts 重写/测试新增）+ 票据，覆盖率 100%（零 Java diff——行级/Java 轴豁免待用户确认，豁免两条件之①理由已记票面审查轮节）。
+- **轴**：Standards（P2 1/P3 4）+ Spec（缺口 3/越票面 4/偏差 1）双轴并行；行级与 Java 轴无适用对象。
+- **发现与修复**：P2/阻断 4 全修——①createWindow 工厂不回写全局 window（销毁重建后窗体累积，唯一硬性缺陷）；②「点击显隐」被 context menu 吞左键 + tray 局部变量 GC 风险——改双手势（click→toggle/right-click→popUp）+ tray 全局持有；③dock 恢复缺失补 app.on('activate')；④smoke 静默打印改断言不符 exit(1)。建议修 4（非 darwin 拦截平台门、openPath 吞错显式化 + showItemInFolder 定位语义、菜单/托盘动作路由合一、safely 回调兜底）+ 记档 2（smoke 固定 delay 观察、createWindow 防御抛错）。
+- **模式化问题（新）**：①**Electron Tray 双坑同源**——局部变量 GC 致托盘消失 + setContextMenu 吞左键 click 事件；「点击显隐 + 右键菜单」要手动 popUpContextMenu，这两个坑写在一起因为都源于「托盘不是普通组件，是常驻单例」。②**验收脚本断言必须硬失败**——「应为 X」的 console.log 在 CI 上是假通过（本票 smoke 初版形态），断言不符必须 exit 非 0；与「陈旧产物家族」同族：验证输出存在 ≠ 验证通过。③**GUI 交互的自动化边界要如实记档**——托盘左右键/dock 点击无法脚本化，程序化等价物（toggle 函数断言）+ 留人手项双轨，票面写明哪些是程序化证据哪些待真人。
+- **对后续建议**：工单 04 退出编排复用 quitting 置位 + before-quit 时机（Electron before-quit 先于窗口 close 的语义已在本票核证）；托盘手势的真人验收与 05 通知点击验收可并作一次 mac 手动验收件。
