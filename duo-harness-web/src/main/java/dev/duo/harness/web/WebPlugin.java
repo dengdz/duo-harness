@@ -41,7 +41,8 @@ import java.util.Set;
  *
  * <p>配置（块内字段可省）：</p>
  * <pre>{@code config:
- *   port: 8080        # 监听端口（省略默认 8080；只绑 127.0.0.1）
+ *   port: 8080        # 监听端口（省略默认 8080；只绑 127.0.0.1。覆盖优先级：系统属性
+ *                     # duo.web.port > 环境变量 DUO_WEB_PORT > 本值，M37 工单 01——桌面壳注入口）
  *   maxIterations: 30 # 单轮对话迭代上限（省略默认 10；计划模式等探索型任务建议调高）
  *   maxParallelToolCalls: 10 # 单轮并发安全工具并行上限（省略默认 10；=1 即完全串行，排障用）
  *   pipelineTimeoutMs: 120000 # 工具执行管线缺省超时毫秒（省略默认 120s）
@@ -55,6 +56,18 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     /** 默认监听端口。 */
     public static final int DEFAULT_PORT = 8080;
+
+    /** 端口合法下界（0 = 随机分配语义，WebFace 既有）。 */
+    public static final int MIN_PORT = 0;
+
+    /** 端口合法上界。 */
+    public static final int MAX_PORT = 65535;
+
+    /** 端口覆盖的系统属性名（测试注入专用口，优先级最高——DuoHome 同构）。 */
+    public static final String PORT_PROP_OVERRIDE = "duo.web.port";
+
+    /** 端口覆盖的环境变量名（桌面壳注入口，ADR-0039 决策六：壳选端口注入，装配文件不动）。 */
+    public static final String PORT_ENV_OVERRIDE = "DUO_WEB_PORT";
 
     /** 悬空作答的兜底超时（无断连触发时的最终收口，10 分钟）。 */
     private static final long ANSWER_TIMEOUT_MS = 10 * 60 * 1000L;
@@ -105,8 +118,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     @Override
     public Disposable apply(Context ctx, JsonNode config) {
-        int port = config != null && config.hasNonNull("port")
-                ? config.get("port").asInt(DEFAULT_PORT) : DEFAULT_PORT;
+        int port = resolvePort(config);
         // 鉴权令牌（M24 工单 06，ADR-0026 决策五）：缺省生成随机令牌（fail-closed），
         // web.auth: none 显式关闭（启动横幅警示）；非法值 FAILED 点名
         String authMode = parseAuth(config);
@@ -312,11 +324,14 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // 同一监听器挂载单点（旧会话 close 清空监听器，不泄漏）
         attachFileRefs.accept(session);
         if (authToken != null) {
-            System.out.println("Web 面已启动（鉴权开启）: http://127.0.0.1:" + face.port()
-                    + "/?token=" + authToken);
+            System.out.println("Web 面已启动（鉴权开启）: " + webReadyUrl(face.port(), authToken));
         } else {
-            System.out.println("Web 面已启动（鉴权已关闭——本机任何进程可直接访问；服务仅绑 127.0.0.1）: http://127.0.0.1:" + face.port());
+            System.out.println("Web 面已启动（鉴权已关闭——本机任何进程可直接访问；服务仅绑 127.0.0.1）: "
+                    + webReadyUrl(face.port(), null));
         }
+        // 机器锚点行（M37 工单 01，ADR-0039 决策六）：桌面壳（Electron）逐行扫 stdout
+        // 认锚点拿启动 URL——壳认锚点不认人读文案，文案演进不碎壳；人读行原样保留
+        System.out.println("duo:web-ready url=" + webReadyUrl(face.port(), authToken));
         return face::stop;
     }
 
@@ -324,6 +339,59 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebToolsView {
 
         ToolsService tools();
+    }
+
+    /**
+     * 启动 URL（锚点行与人读行共用同一构造，防两处漂移）：{@code http://127.0.0.1:<port>}
+     * + 鉴权开启时的 {@code ?token=} 查询段（auth: none 无查询段）。
+     */
+    static String webReadyUrl(int port, String authToken) {
+        return "http://127.0.0.1:" + port
+                + (authToken != null ? "/?token=" + authToken : "");
+    }
+
+    /**
+     * 解析监听端口（M37 工单 01，ADR-0039 决策六）：三级覆盖——系统属性
+     * {@code duo.web.port}（测试注入专用口）&gt; 环境变量 {@code DUO_WEB_PORT}
+     * （桌面壳注入口：壳选空闲端口注入，装配文件不动）&gt; 装配 {@code config.port}
+     * （缺省 8080，CLI/Web 直跑行为不变）。与 {@link DuoHome} 解析优先级同构；
+     * 覆盖值空白等价未设，非法/越界回落下一级并 stdout 点名（不启动失败——壳侧
+     * 起不来应归因壳，后端保持可用）。
+     */
+    static int resolvePort(JsonNode config) {
+        return resolvePort(config,
+                System.getProperty(PORT_PROP_OVERRIDE), System.getenv(PORT_ENV_OVERRIDE));
+    }
+
+    /** 端口解析的可注入形态（测试缝：JVM 进程内无法修改环境变量，DuoHome 先例）。 */
+    static int resolvePort(JsonNode config, String propValue, String envValue) {
+        Integer resolved = parsePortOverride(propValue, PORT_PROP_OVERRIDE);
+        if (resolved == null) {
+            resolved = parsePortOverride(envValue, PORT_ENV_OVERRIDE);
+        }
+        if (resolved != null) {
+            return resolved;
+        }
+        return config != null && config.hasNonNull("port")
+                ? config.get("port").asInt(DEFAULT_PORT) : DEFAULT_PORT;
+    }
+
+    /** 覆盖值解析：空白等价未设（null 回落）；非法/越界点名后回落（返回 null）。 */
+    private static Integer parsePortOverride(String raw, String source) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            int value = Integer.parseInt(raw.strip());
+            if (value >= MIN_PORT && value <= MAX_PORT) {
+                return value;
+            }
+        } catch (NumberFormatException ignored) {
+            // 落到底部点名回落
+        }
+        System.out.println("端口覆盖无效，回落下一级: " + source + "=" + raw
+                + "（合法范围 " + MIN_PORT + "-" + MAX_PORT + "，" + MIN_PORT + " 为随机分配）");
+        return null;
     }
 
     /**

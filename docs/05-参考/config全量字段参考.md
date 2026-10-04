@@ -36,7 +36,7 @@ duo-harness 的配置分布在**两个文件 + 两份独立配置**里——先�
 
 | 装配行 | config 关键字段（缺省） | 详注 |
 |---|---|---|
-| `web` | `port`(8080)、`pageSize`(50)、`auth`(token)、`maxIterations`(10)、`maxParallelToolCalls`、`pipelineTimeoutMs`、`governance` 子段 | [插件配置参考](插件配置参考.md) |
+| `web` | `port`(8080；覆盖：sysprop `duo.web.port` > env `DUO_WEB_PORT` > 本值，M37 工单 01)、`pageSize`(50)、`auth`(token)、`maxIterations`(10)、`maxParallelToolCalls`、`pipelineTimeoutMs`、`governance` 子段 | [插件配置参考](插件配置参考.md) |
 | `cli` | `maxIterations`(10)、`maxParallelToolCalls`、`pipelineTimeoutMs`、`governance` 子段 | 同上 |
 | `web`/`cli` 的 `governance` | `spillThresholdChars`、`pruneThresholdChars`、`compactionThresholdRatio`、`contextWindowTokens`、`minRemoteMessages`、`microcompactEnabled`(true)、`microcompactKeepRecent`——段与字段均可省略即内置缺省；microcompact 触发阈值由压缩阈值派生不可独立配 | 同上 §governance |
 | `fs-tools` | `mode`(workspace-write)、`root`(进程 cwd)、`output{inlineTailChars, spillMaxChars, taskOutputTailChars}` | 同上 |
