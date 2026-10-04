@@ -448,7 +448,9 @@ async function confirmAndQuit(): Promise<void> {
       if (!backend) {
         return false;
       }
-      return fetchTurnActive(buildStatusUrl(backend.url));
+      const busy = await fetchTurnActive(buildStatusUrl(backend.url));
+      console.log(`duo:shell quit-probe turnActive=${busy}`); // 退出编排决策留痕（T3 排障教训）
+      return busy;
     },
     confirmBusyQuit: () =>
       Promise.resolve(

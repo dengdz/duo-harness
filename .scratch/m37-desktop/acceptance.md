@@ -2,10 +2,16 @@
 
 > done 判据 = 用户手动运行本验收件确认通过（duo-acceptance 流程）。作者自跑证据在案（见「作者自跑记录」）；标 **[真人]** 的条目为 mac 交互面/LLM 依赖项，程序化不可达，需你亲手走。
 
-## 一、作者自跑证据（已留档，2026-10-04）
+## 一、作者自跑证据（已留档，2026-10-04 首跑 + 2026-10-05 用户代测会话）
 
 - **dev 态全链冒烟**（`npm run smoke`，15s 收口，断言硬失败即非零退出）：拉起 → 窗口加载（截图 [.scratch/m37-desktop/smoke-window.png](smoke-window.png)）→ 关窗拦截隐藏 → 托盘切换复原（复原图 [smoke-window-reopened.png](smoke-window-reopened.png)）→ 通知桥双态 + permission granted + 真通知发射 → 单实例二次启动即退 → `duo://open` 收达聚焦 → **外部 kill 后端 → 自动重启换址 → 原窗重连** → 无 java 孤儿
 - **打包态实证**：`CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac` 出 `out/mac-arm64/duo.app` + zip；`open duo.app` → **后端自包拉起**（`/usr/bin/java -jar .../duo.app/Contents/Resources/backend/duo-harness-1.2.0.jar` 实录，GUI 启动环境 login shell 探测过）；**未运行拉起**：退出后 `open duo://open` → Info.plist 协议拉起 duo.app（5 进程实录）；包内核验（jar/icns/Info.plist CFBundleURLTypes）全过
+- **用户代测会话（2026-10-05，受用户委托「你帮我测试一下」）**：
+  - T1 idle 基线：`turnActive=false` ✓
+  - T2 busy 实测：真 LLM turn（1+1）——密轮询 0.5s 抓到 **`turnActive=true` 在飞**、收口回落 false ✓（首轮 3s 粒度错过快速 turn 窗口属测试方法问题，密轮询解决）
+  - T3 长任务拦截：`sleep 30` bash 任务在飞（`turnActive=true` 4s 处实证）→ osascript Cmd-Q → **决策日志 `quit-probe turnActive=true` + 6s 后 electron/java 双存活**（对话框拦截生效、长任务未被误杀）✓——注：首次尝试用「数到15」流式过快、quit 时已收口判空闲直退（**正确行为**，等同 idle 直退；测试任务改 sleep 30 后成立）
+  - T4 全链冒烟复跑：0 失败、11 条断言/证据、无 java 孤儿 ✓
+  - 附注：T2/T3 测试消息会产生两个真实会话（1+1 / 数数），可在 Web 侧栏删除
 
 ## 二、端到端叙事 [真人]（spec User Story 16）
 
