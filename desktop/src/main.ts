@@ -1,13 +1,14 @@
 /**
- * 桌面壳 Electron 主进程（M37 工单 02/03，ADR-0039）：薄壳——编排逻辑在
- * backend.ts（拉起链）与 window-control.ts（显隐状态机/菜单动作，可测），这里只
- * 接线：JDK 探测 → 端口探测 → 拉起后端 → 开窗加载锚点 URL；托盘常驻 + 应用菜单
- * （工单 03，mac 惯例：关窗=隐藏不退出、dock 点击复原、托盘左键切换右键菜单）。
+ * 桌面壳 Electron 主进程（M37 工单 02-06，ADR-0039）：薄壳——编排逻辑在
+ * backend.ts（拉起链）、window-control.ts（显隐/菜单，可测）、quit-orchestration.ts
+ * （退出决策核）、deep-link.ts（深链判路），这里只做 Electron 接线。
  * 失败走原生指引对话框（--smoke 验收模式退化为 stderr 退出——模态框无人点会挂死
  * 自动化）。--smoke 序列：加载截屏 → 关窗（验证拦截隐藏）→ 托盘切换复原 → 复原
- * 截屏 → 通知桥断言（桥在场/门控双态/真通知）→ 退出。
+ * 截屏 → 通知桥断言（桥在场/门控双态/真通知）→ 单实例二次启动即退 + 深链唤起聚焦
+ * （工单 06）→ 退出。
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron';
+import { execFileSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -22,6 +23,7 @@ import {
   startBackend,
   type BackendHandle,
 } from './backend';
+import { extractUrlFromArgv, parseDeepLink } from './deep-link';
 import { resolveQuit } from './quit-orchestration';
 import {
   createTrayActions,
@@ -40,6 +42,56 @@ let quitConfirming = false; // 探活/征询窗口内的二次退出重入守卫
 
 /** 关窗拦截只在 darwin 生效（mac 惯例关窗驻留）；其他平台关窗即退出（window-all-closed 兜底）。 */
 const interceptHideOnClose = process.platform === 'darwin';
+
+// 单实例锁（工单 06）：二次启动即退（whenReady 守卫不拉起后端），首实例收 second-instance
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  // quit 在 ready 前调用会被 Electron 丢弃（实测二实例带全量启动链驻留——现版有
+  // whenReady 守卫兜底不拉后端，但退出本身仍须 exit 强制）；二实例无可清理对象
+  // （无后端无窗），exit(0) 即安全收口
+  app.exit(0);
+}
+let pendingOpenFocus = false;
+let lastDeepLink: string | null = null;
+
+/** 深链路由（工单 06）：仅 open 唤起聚焦；启动期到达记 pending，窗就绪后补聚焦；未知 path 静默。 */
+function routeDeepLink(raw: string): void {
+  const route = parseDeepLink(raw);
+  lastDeepLink = raw;
+  console.log(
+    `duo:shell deep-link ${raw} → ${route.kind}${route.kind === 'ignored' ? `(${route.reason})` : ''}`,
+  );
+  if (route.kind !== 'open') {
+    return;
+  }
+  if (app.isReady() && window && !window.isDestroyed()) {
+    showMainWindow(controlDeps);
+  } else {
+    pendingOpenFocus = true;
+  }
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault(); // mac：系统派发深链（运行中直达本实例；启动期在 ready 前到达）
+  routeDeepLink(url);
+});
+app.on('second-instance', (_event, argv) => {
+  const url = extractUrlFromArgv(argv);
+  if (url) {
+    routeDeepLink(url); // win/linux 深链与 dev 注册形态的转发路（argv 夹带 URL）
+    return;
+  }
+  if (app.isReady()) {
+    safely(() => showMainWindow(controlDeps))(); // 无深链的二次启动：聚焦即最小响应（safely 兜后端未就绪窗）
+  }
+});
+// 协议注册（工单 06）：dev 形态须带 execPath+appdir（LS 拉起时 URL 经 argv 转发首实例）；
+// 打包形态由 electron-builder protocols 写入 Info.plist 持久注册，此调用幂等无害
+if (process.defaultApp) {
+  app.setAsDefaultProtocolClient('duo', process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient('duo');
+}
 
 /** 数据目录解析（DUO_HOME > ~/.duo——与后端 DuoHome 环境级优先级对齐；JVM 内 sysprop 测试口对壳不可见）。 */
 function dataDir(): string {
@@ -204,9 +256,24 @@ async function smokeSequence(win: BrowserWindow): Promise<void> {
   await delay(500);
   smokeAssert(win.isVisible(), `after-toggle visible=${win.isVisible()}（托盘切换复原）`);
   await captureTo(win, base.replace(/\.png$/, '-reopened.png'));
+  // 单实例（工单 06）：二次启动即退（不重复拉起后端）；首实例收 second-instance
+  const second = spawn(process.execPath, ['.'], { stdio: 'ignore' });
+  let secondExited = false;
+  second.once('exit', () => {
+    secondExited = true;
+  });
+  // 深链运行中唤起：macOS open 命令 → Launch Services → 路由回本实例
+  execFileSync('open', ['duo://open']);
+  await delay(1500);
+  smokeAssert(secondExited, `单实例锁：二次启动即退=${secondExited}（后端不重复拉起）`);
+  smokeAssert(lastDeepLink === 'duo://open', `deep-link received=${lastDeepLink}（运行中唤起）`);
+  smokeAssert(win.isVisible(), `deep-link 后主窗可见=${win.isVisible()}（唤起聚焦）`);
 }
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) {
+    return; // 二次启动（工单 06）：首实例已收 second-instance，本实例不拉起后端不开窗
+  }
   const smoke = process.argv.includes('--smoke');
   try {
     const { javaPath, major } = resolveJava();
@@ -220,6 +287,9 @@ app.whenReady().then(async () => {
     window = createWindow(backend.url);
     setupTray();
     setupAppMenu();
+    if (pendingOpenFocus) {
+      showMainWindow(controlDeps); // 启动期到达的深链：窗就绪后补聚焦（工单 06）
+    }
     // dock 点击复原（mac 惯例：关窗后点 dock 图标回窗）
     app.on('activate', () => safely(() => showMainWindow(controlDeps))());
     if (smoke) {

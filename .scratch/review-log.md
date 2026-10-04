@@ -689,3 +689,12 @@
 - **发现与修复**：①**计划复核通知主路径不可达**（P2 实锤）——exit_plan_mode 卡片去重早退先于通知调用，同会话主路径「计划等待复核」永不可达；修形：去重只约束卡片渲染、通知放行。②构建顺序脆弱（tsc 产物 preload 在 sandbox 必炸、esbuild 承重）——tsconfig 注释声明勿单独 tsc 起壳。③头注释序列漂移、firstLineSnippet 缺注、version 字段冗余、permission 显式断言——四小修。④门控源偏离（visibilityState→主进程 isVisible）+ 兜底开关未启用四处记档落位（代码注释/spec 定稿节/票面/review-log）。⑤CHANGELOG 缺记账裁定不修：浏览器直开零变化、壳能力随 08 打包交付（02/03 口径），08 同 diff 覆盖。
 - **模式化问题（新）**：①**渲染层可见信号不可信**——Electron macOS hide() 后 document.visibilityState 仍 visible（诊断三态实证）；窗体状态类门控一律以主进程 isVisible/isMinimized 为真值源，渲染层信号只作 UX 参照。②**早退守卫吞并排副作用**——去重/守卫类 `return` 会把同分支后续副作用一起吞掉，新增副作用要么置于守卫前、要么守卫改条件化；本例通知被去重早退吞了主路径。③**双描述漂移**——文件头与函数级各写一份序列说明时，改一处必改另一处（03 已犯，05 再犯同型）；能合并的描述合并，不能合并的互为引用不复制。
 - **对后续建议**：真人验收件（03 托盘 + 04 长任务拦截 + 05 三类通知点击）并作一次 mac 手动验收；08 打包后通知在打包形态下的 permission 行为需复验一次（dev 态 granted 不代表打包态，签名/bundle 信息可能影响 TCC 授权）。
+
+### 2026-10-04 · M37 工单 06 审查（1.3.0 分支，工作树 vs HEAD 1fe9cad5：深链 duo://open）
+
+- **范围/基点**：工作树 vs 1fe9cad5（实际 e95294dc，票面基点笔误记档），desktop 三文件（deep-link 新增/main.ts/builder）+ 测试，覆盖率 100%（双轴 Standards/Spec；行级/Java 轴豁免——零 Java diff，沿 03/05 口径）。
+- **双轴**：Standards（阻断 1/P3 4）+ Spec（记档缺口集中：票面零改动、勘误链、LS 残留、越票面聚焦）。
+- **发现与修复**：阻断 1 全修——second-instance 无深链分支缺窗守卫（ready 后窗建前数秒窗口的二次启动 → createWindow throw → 无 safely 崩壳；safely 兜底与菜单/托盘同口径）。建议修 3（头注释序列漂移第 3 犯——头注释重写为模块导览消除复制面；deep-link 导出常量零消费方收窄；exit(0) 注释三层分层如实）。记档 5（dev LS 注册系统级残留、无 URL 聚焦越票面、S3 smoke 替代口径、smokeSequence 拆分临界、票面基点笔误）。
+- **实现期实测逮出（审查前自逮）**：**Electron quit-before-ready 丢弃**——app.quit() 在 ready 前调用不生效，二实例带全量启动链驻留（自己拉起了后端 port 59764）；修复 !gotLock 分支 app.exit(0) + whenReady 守卫双保险。此行为与官方单实例文档示例（app.quit 形态）在含 before-quit preventDefault 编排的壳里冲突，值得记档。
+- **模式化问题（新）**：①**两处「聚焦响应」守卫不对称**——routeDeepLink 有 window 守卫、second-instance 无深链分支没有，同文件姊妹路径守卫必须并排核对（M37-03「命名三重奏」同族：成对出现的路径成对审查）；②**事件回调的 safely 纪律**——凡注册进事件面的回调（菜单/托盘/ipc/second-instance）一律 safely 包裹，漏包一处 = 崩壳面；③**退出类调用的时机语义**——quit/exit 在 ready 前后语义不同，编排壳里二实例/启动期分支一律 exit。
+- **对后续建议**：08 打包态验证清单加「未运行拉起」（Info.plist 注册形态）与「打包态通知 permission 复验」；smokeSequence 08 期按票分段函数化。
