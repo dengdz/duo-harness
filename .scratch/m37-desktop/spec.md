@@ -78,6 +78,7 @@ Status: ready-for-agent
 - **改动面勘误（2026-10-04，工单 02 壳联调）**：后端改动面实为三处非两处——壳联调逮出 `CliPlugin.stop()` 的 `in.close()` 与阻塞 readLine 读者同锁死锁（SIGTERM 40s+ 挂死，终端 Ctrl-C 同病，BUG-20261004-01），修复为不关 reader + 回归锁；ADR-0039 Consequences 已加勘误注。**实现期头号风险两条均按预判落地**：stdin pipe 保活实测成立（REPL 阻塞等待非 EOF 退出）；通知管线待工单 05。
 - **改动面勘误二（2026-10-04，工单 04 探活判据核实）**：本节「探活用既有 `/api/status` 判 agent 活跃」前提不成立——status 载荷无 turn 活跃字段。经用户裁定（grill 逐题，turnActive 方案）加第四处小改：`ToolCallingAgent` 全局在飞 send 计数 + status 新增 `turnActive` 布尔（壳侧缺字段按空闲 fail-open）；ADR-0039 勘误注二在案。
 - **实现期头号风险（首日必验）**：spawn 子进程空 stdin 下 cli 行 REPL 的行为（阻塞等待 vs EOF 退出）——决定 stdin 管道策略的成败，实测留记录；若 EOF 退出则壳必须证明 stdin 恒打开路径。
+- **通知管线定稿（2026-10-04，工单 05 实证）**：主路径保住「前端 Web Notification API」；门控可见态源**偏离本节措辞**——Electron（macOS）实测 `win.hide()` 后 `document.visibilityState` 仍为 visible（渲染层信号失真），门控可见态改取主进程 `win.isVisible() && !isMinimized()`（preload 经 sendSync），语义不变（可见中不扰）；票面预设「壳侧订阅兜底开关」因此**未启用**（实测出入是可见态信号而非通知透传，第三路径为主路径修源）。通知事件点五个：审批等待 + 提问等待（Q10「审批/提问等待」一类）、turn 完成、执行出错、任务已中断（Q10「错误中断」一类）。计划复核通知不受卡片去重约束（去重早退曾致主路径不可达，审查实锤后改形）。真人项：三类通知触发 + 点击聚焦（与 03 托盘手势并作 mac 验收件）。
 - **通知管线备选开关**：前端 Web Notification API 为主路径，Electron 平台行为有出入时壳侧订阅兜底——工单期验证后定稿，不回 ADR。
 - **版本分支**：`1.3.0` 于工单开拆、实施启动时自 main 切出（红线 7；ADR-0039 Consequences 在案）。
 - **验收口径预告**：done = 用户手动运行验收件确认（duo-acceptance 流程）；端到端叙事 = User Story 16 全链路 + S1/S2 回归锁绿 + 托盘/通知/深链/探活/崩溃五场景证据。

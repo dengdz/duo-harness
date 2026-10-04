@@ -63,6 +63,27 @@ window.addEventListener('unhandledrejection', (e) => {
   render.assistant('[未处理异常] ' + errText(e.reason));
 });
 
+// ----- 桌面通知（M37 工单 05，ADR-0039 决策一）：仅桌面桥在场时启用 -----
+// 门控（可见中不扰 + 权限已授）在壳侧桥 duoDesktop.shouldNotify() 内（单一事实源
+// desktop/src/notify-gate.ts，S3 单测锁定）；此处只做桥存在性判断与通知构造——
+// 浏览器直开无桥零影响（不申请通知权限、不弹通知）。
+function desktopNotify(title, body) {
+  const bridge = window.duoDesktop;
+  if (!bridge || !bridge.shouldNotify()) return;
+  try {
+    const n = new Notification(title, { body: body || '', silent: false });
+    n.onclick = () => bridge.focusWindow(); // 点通知回主窗（经壳 IPC 聚焦）
+  } catch (e) {
+    // 通知失败静默：呈现增强不打断对话主流程
+  }
+}
+
+/** 首行摘要（通知正文用）：取首行截断到 limit，空文本返回空串。 */
+function firstLineSnippet(text, limit) {
+  const line = String(text || '').split('\n')[0].trim();
+  return line.length > limit ? line.slice(0, limit) + '…' : line;
+}
+
 // 全局提示（toast）：网络/服务不可用等基础设施错误右下角可见，5s 自动消失；
 // 执行过程错误仍走对话流错误卡——两类错误呈现位分离
 function showToast(text, kind) {
@@ -1565,21 +1586,33 @@ const render = (() => {
       //（askFrozenLine 问+答一行卡，BUG-20261002-04 修复后答案行面可见），不留选择卡
       if (replaying) return;
       questionCard(ev, true); // 实时待答卡走 dock
+      desktopNotify('提问等待', 'agent 有问题需要你回答'); // 工单 05：通知桥在场才生效
     }
     else if (ev.type === 'approval/requested') {
       // 计划复核双留痕去重（BUG-20260917-04 后续）：同会话内 tool/call 已渲染计划卡时，
-      // 审计事件不再重复渲染；跨会话场景（CLI 发起、Web 作答）本会话无 tool/call，照常渲染
-      if (ev.toolName === 'exit_plan_mode' &&
-          t.container.querySelector('.interactive[data-tool-name="exit_plan_mode"]')) return;
-      interactiveCard(ev, !replaying); // 实时待答卡走 dock（回放进消息流冻结）
+      // 审计事件不再重复渲染**卡片**；通知不受去重约束（实时流同会话主路径也要达——
+      // 去重早退在通知之前会致「计划等待复核」永远不响，审查实锤后改此形态）
+      const duplicatePlanCard = ev.toolName === 'exit_plan_mode' &&
+          t.container.querySelector('.interactive[data-tool-name="exit_plan_mode"]');
+      if (!duplicatePlanCard) interactiveCard(ev, !replaying); // 实时待答卡走 dock（回放进消息流冻结）
+      if (!replaying) {
+        desktopNotify('审批等待', ev.toolName === 'exit_plan_mode'
+            ? '计划等待你复核' : '有审批请求等待处理'); // 工单 05
+      }
     }
     else if (ev.type === 'approval/decided') approvalDecided(ev);
     else if (ev.type === 'subagent/spawned') subagentSpawned(ev);
     else if (ev.type === 'subagent/completed') subagentCompleted(ev);
     else if (ev.type === 'command/run') commandLine(ev);
     else if (ev.type === 'command/done') commandResult(ev, replaying);
-    else if (ev.type === 'assistant/interrupted') interruptedMark();
-    else if (ev.type === 'run/error') runError(ev.text);
+    else if (ev.type === 'assistant/interrupted') {
+      interruptedMark();
+      if (!replaying) desktopNotify('任务已中断', '可回窗继续对话'); // 工单 05：错误中断类
+    }
+    else if (ev.type === 'run/error') {
+      runError(ev.text);
+      if (!replaying) desktopNotify('执行出错', firstLineSnippet(ev.text, 80)); // 工单 05
+    }
   }
 
   /**
@@ -1691,6 +1724,9 @@ const sse = (() => {
     render.dispatch(event, replaying);
     if (event.type === 'assistant/message' || event.type === 'run/error'
         || event.type === 'assistant/interrupted') app.clearSendBusy();
+    if (event.type === 'assistant/message' && !replaying) {
+      desktopNotify('任务完成', firstLineSnippet(event.text, 80)); // 工单 05：实时完成才通知
+    }
     if (event.type !== 'assistant/chunk') app.refreshStatus();
   }
 

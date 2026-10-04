@@ -12,5 +12,6 @@
     "forceConsistentCasingInFileNames": true,
     "sourceMap": false
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "_comment": "preload.ts 参与类型检查但其 tsc 产物不可运行（相对 require 在 sandboxed preload 必炸）——构建必须走 npm run build（esbuild 单文件打包覆盖 dist/preload.js），勿单独以 tsc 产物起壳"
 }

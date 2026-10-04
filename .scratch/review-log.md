@@ -681,3 +681,11 @@
 - **发现与修复**：硬违规 3 全修——①CHANGELOG 缺 turnActive Added 记账（红线 6）；②新用例 clearProperty 未保存恢复（M37-01 立的机械核对项本票自己又犯）；③顺带逮出工单 02 残留：S1 用例 oldHome 捕获在 setProperty 之后（恢复形态失真）。P2 修 1（before-quit 探活窗口二次退出重入守卫）。MAJOR 修 2（尾随注释上移；turnActive 在飞/抛穿边界用例补齐——可阻塞假适配器 latch 锁计数三态）。P3 修 2（doSend Javadoc+类注释静态共享态；SIGKILL 宽限 2s→3.5s 对齐死锁回归界）。记档 4（agent.internal 下探有 HEAD 先例/超时参保留/脚手架重复观察/smoke stop 不对称）。
 - **模式化问题（新）**：①**「探活/判据用既有 X」的 spec 断言必须实现面核实后才算数**——spec 写「探活用既有 /api/status」而载荷根本无 turn 字段（M30 fat-jar 资源形态同族：定版文案的产品级承诺物理不成立）；启动 grill 的实现面 smoke 要覆盖「字段级」断言而非仅「端点存在」。②**全局计数器包装法**——进程级「是否有在飞 X」用静态 AtomicLong + send 包装（increment→try/finally decrement）+ 纯读查询口，是接口零改动的最小探活面；配对纪律靠 requireNonNull 前置 + finally 兜全异常。③**回归界的常量要对表**——SIGKILL 兜底 2s 撞上 BUG 回归界「stop ≤3s」，宽限取 3.5s（ZCode 先例同款）；超时类定值必须对照既有回归锁的时间界。
 - **对后续建议**：工单 05 通知点击与 03/04 的真人验收项（托盘手势/长任务拦截）并作一次 mac 手动验收件；`turnActive=true` 端到端（真 turn→真对话框）在验收件里用真实 LLM 走通即全链闭环。
+
+### 2026-10-04 · M37 工单 05 审查（1.3.0 分支，工作树 vs HEAD 04e53c51：系统通知管线）
+
+- **范围/基点**：工作树 vs 04e53c51，desktop 三文件（notify-gate/preload 新增 + main.ts）+ app.js diff + package.json，覆盖率 100%（双轴 Standards/Spec；行级/Java 轴豁免——零 Java diff，沿 03 挂账口径）。
+- **双轴**：Standards（硬 1/P2 1/P3 4）+ Spec（主发现 1/记档 3）。
+- **发现与修复**：①**计划复核通知主路径不可达**（P2 实锤）——exit_plan_mode 卡片去重早退先于通知调用，同会话主路径「计划等待复核」永不可达；修形：去重只约束卡片渲染、通知放行。②构建顺序脆弱（tsc 产物 preload 在 sandbox 必炸、esbuild 承重）——tsconfig 注释声明勿单独 tsc 起壳。③头注释序列漂移、firstLineSnippet 缺注、version 字段冗余、permission 显式断言——四小修。④门控源偏离（visibilityState→主进程 isVisible）+ 兜底开关未启用四处记档落位（代码注释/spec 定稿节/票面/review-log）。⑤CHANGELOG 缺记账裁定不修：浏览器直开零变化、壳能力随 08 打包交付（02/03 口径），08 同 diff 覆盖。
+- **模式化问题（新）**：①**渲染层可见信号不可信**——Electron macOS hide() 后 document.visibilityState 仍 visible（诊断三态实证）；窗体状态类门控一律以主进程 isVisible/isMinimized 为真值源，渲染层信号只作 UX 参照。②**早退守卫吞并排副作用**——去重/守卫类 `return` 会把同分支后续副作用一起吞掉，新增副作用要么置于守卫前、要么守卫改条件化；本例通知被去重早退吞了主路径。③**双描述漂移**——文件头与函数级各写一份序列说明时，改一处必改另一处（03 已犯，05 再犯同型）；能合并的描述合并，不能合并的互为引用不复制。
+- **对后续建议**：真人验收件（03 托盘 + 04 长任务拦截 + 05 三类通知点击）并作一次 mac 手动验收；08 打包后通知在打包形态下的 permission 行为需复验一次（dev 态 granted 不代表打包态，签名/bundle 信息可能影响 TCC 授权）。

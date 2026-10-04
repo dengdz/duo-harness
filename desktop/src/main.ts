@@ -4,10 +4,10 @@
  * 接线：JDK 探测 → 端口探测 → 拉起后端 → 开窗加载锚点 URL；托盘常驻 + 应用菜单
  * （工单 03，mac 惯例：关窗=隐藏不退出、dock 点击复原、托盘左键切换右键菜单）。
  * 失败走原生指引对话框（--smoke 验收模式退化为 stderr 退出——模态框无人点会挂死
- * 自动化）。--smoke 序列：加载截屏 → 关窗（验证拦截隐藏）→ 托盘逻辑复原 → 复原
- * 截屏 → 退出。
+ * 自动化）。--smoke 序列：加载截屏 → 关窗（验证拦截隐藏）→ 托盘切换复原 → 复原
+ * 截屏 → 通知桥断言（桥在场/门控双态/真通知）→ 退出。
  */
-import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -88,6 +88,9 @@ function createWindow(url: string): BrowserWindow {
     height: 800,
     title: 'duo-harness',
     show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'), // 桌面桥（工单 05）：通知门控 + 点击聚焦
+    },
   });
   win.once('ready-to-show', () => win.show());
   // 关窗拦截（工单 03，仅 darwin）：非退出流程一律隐藏不退出（mac 惯例，dock/托盘保持）
@@ -100,6 +103,14 @@ function createWindow(url: string): BrowserWindow {
   void win.loadURL(url);
   return win;
 }
+
+// 通知点击 → 聚焦主窗（preload 桥转发，工单 05）
+ipcMain.on('duo:focus-window', () => safely(() => showMainWindow(controlDeps))());
+// 通知门控的可见态源（工单 05）：渲染层 visibilityState 在 hide() 后不翻转（实测），
+// 主进程 isVisible/isMinimized 为准——preload sendSync 同步取（门控点频次低）
+ipcMain.on('duo:window-visible', (event) => {
+  event.returnValue = !!window && window.isVisible() && !window.isMinimized();
+});
 
 /** 托盘模板图标：运行时生成 16×16 圆点（BGRA 黑 + alpha，macOS 模板图随菜单栏明暗自适应）。 */
 function trayIcon() {
@@ -164,14 +175,31 @@ function smokeAssert(condition: boolean, message: string): void {
   }
 }
 
-/** --smoke 序列：首截屏 → 关窗（验证拦截隐藏）→ 托盘切换复原 → 复原截屏 → 退出。 */
+/** --smoke 序列：首截屏 → 关窗（验证拦截隐藏）→ 托盘切换复原 → 复原截屏 → 通知桥门控双态 → 退出。 */
 async function smokeSequence(win: BrowserWindow): Promise<void> {
   const base = process.env.DUO_DESKTOP_SMOKE_OUT ?? path.join(process.cwd(), 'smoke-window.png');
   await delay(1500);
   await captureTo(win, base);
+  // 通知桥（工单 05）：桥在场 + 门控双态（可见不扰 / 隐藏放行）+ 真通知点击链路
+  const bridgeReady = await win.webContents.executeJavaScript('!!window.duoDesktop');
+  smokeAssert(bridgeReady, 'duoDesktop 桥在场（preload 装载）');
+  const gateVisible = await win.webContents.executeJavaScript('window.duoDesktop.shouldNotify()');
+  smokeAssert(gateVisible === false, `notify-gate visible=${gateVisible}（聚焦中不扰）`);
   win.close();
   await delay(500);
   smokeAssert(!win.isVisible(), `after-close visible=${win.isVisible()}（关窗拦截隐藏）`);
+  const gateHidden = await win.webContents.executeJavaScript('window.duoDesktop.shouldNotify()');
+  smokeAssert(gateHidden === true, `notify-gate hidden=${gateHidden}（后台触发放行）`);
+  // 隐藏态发真通知（落 macOS 通知中心）：点击走 focusWindow IPC——真人验收项，此处只验链路不抛错
+  const permission = await win.webContents.executeJavaScript(
+    `(function () {
+        const n = new Notification('duo 通知管线', { body: '冒烟：隐藏态真通知（点击应回主窗）' });
+        n.onclick = function () { window.duoDesktop.focusWindow(); };
+        return Notification.permission;
+      })()`,
+  );
+  smokeAssert(permission === 'granted', `notification permission=${permission}（门控 hidden 放行已隐式锁定，此处显式钉）`);
+  console.log(`duo:smoke notification permission=${permission}`);
   toggleMainWindow(controlDeps);
   await delay(500);
   smokeAssert(win.isVisible(), `after-toggle visible=${win.isVisible()}（托盘切换复原）`);
@@ -199,6 +227,7 @@ app.whenReady().then(async () => {
         void smokeSequence(window!)
           .catch((err) => {
             console.error(`duo:smoke failed: ${err}`);
+            backend?.stop(); // app.exit 绕过 before-quit：显式停后端（防 java 孤儿占端口）
             app.exit(1);
           })
           .finally(() => app.quit());
