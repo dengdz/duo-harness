@@ -541,3 +541,17 @@ M37 工单 02 壳联调清 Electron 挂死残留时，先 `pkill -f "Electron.ap
 
 **影响范围**：
 所有涉及进程清理的联调/验收场景（壳联调、多进程测试、后台任务收尾）；宿主为 GUI 应用（Electron 系）的 agent 运行环境尤甚。
+
+## [2026-10-05] git add -A 场景的产物入库检查：commit stat 清单必须逐行过目（M37-08 实录）
+
+**问题描述**：
+工单 08 打包收尾用 `git add -A` 全量暂存，beforeBuild 钩子的输出物 `desktop/resources/backend/duo-harness.jar`（22MB 二进制）随行入库——若非提交后逐行过目 stat 清单时逮出并 amend 移除（未推送，本地修正零成本），22MB 二进制将永久进入仓库历史。
+
+**原因分析**：
+`-A` 全量暂存 + .gitignore 未覆盖新产物目录，两者叠加让「构建产物入库」零阻力；产物目录（resources/backend/）是本票新增，没有任何 ignore 规则先行在位。
+
+**解决方案**：
+①新增产物目录的票，.gitignore 规则与目录同 diff 落（创建输出目录的代码合入时同步写 ignore）；②`git add -A` 之后、commit 之前，`git status --short` / stat 清单逐行过目——二进制（.jar/.png 大文件/.icns）出现即问「这是源资产还是构建产物」；③已 commit 未 push 时 amend 移除零成本，推送后即成历史包袱——**二进制入库检查是推送前的最后闸门**。
+
+**影响范围**：
+所有 `git add -A` 场景（打包/构建类工单尤甚）；新增「会写文件到仓库目录」的脚本/钩子的工单。
