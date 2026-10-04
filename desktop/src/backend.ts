@@ -5,7 +5,7 @@
  * main.ts 只做薄壳接线。
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -174,28 +174,43 @@ export function pickNewestJar(paths: string[]): string | null {
   return best?.path ?? null;
 }
 
-/** fat-jar 定位（dev 形态）：env `DUO_DESKTOP_JAR` 显式指定 > 兄弟 example target 目录 glob 取最新。 */
-export function resolveJarPath(env: NodeJS.ProcessEnv = process.env, appRoot: string = __dirname): string {
+/** fat-jar 定位（工单 08 增打包态）：env `DUO_DESKTOP_JAR` 显式指定 > 打包态
+ * Resources/backend/（beforeBuild 钩子拷入的最新版单文件）> dev 形态仓库 target 目录取最新。 */
+export function resolveJarPath(
+  env: NodeJS.ProcessEnv = process.env,
+  appRoot: string = __dirname,
+  resourcesPath: string | undefined = (process as unknown as { resourcesPath?: string }).resourcesPath,
+): string {
   const explicit = env.DUO_DESKTOP_JAR;
   if (explicit) {
     return explicit;
   }
-  // appRoot dev 形态 = <repo>/desktop/dist → 上两级到仓库根
-  const repoRoot = path.resolve(appRoot, '..', '..');
-  const targetDir = path.join(repoRoot, 'duo-harness-example', 'target');
-  try {
-    const jars = readdirSync(targetDir)
-      .filter((f) => /^duo-harness-\d+\.\d+\.\d+\.jar$/.test(f))
-      .map((f) => path.join(targetDir, f));
-    const newest = pickNewestJar(jars);
-    if (newest) {
-      return newest;
+  const dirs: string[] = [];
+  if (resourcesPath) {
+    dirs.push(path.join(resourcesPath, 'backend')); // 打包态（Electron 注入 Contents/Resources）
+  }
+  // dev 形态：appRoot = <repo>/desktop/dist → 上两级到仓库根
+  dirs.push(path.join(path.resolve(appRoot, '..', '..'), 'duo-harness-example', 'target'));
+  for (const dir of dirs) {
+    try {
+      // 钩子拷入的稳定名单文件优先（extraResources 单文件源）
+      const stable = path.join(dir, 'duo-harness.jar');
+      if (existsSync(stable)) {
+        return stable;
+      }
+      const jars = readdirSync(dir)
+        .filter((f) => /^duo-harness-\d+\.\d+\.\d+\.jar$/.test(f))
+        .map((f) => path.join(dir, f));
+      const newest = pickNewestJar(jars);
+      if (newest) {
+        return newest;
+      }
+    } catch {
+      // 目录不存在 → 试下一候选
     }
-  } catch {
-    // 目录不存在 → 落到底部报错
   }
   throw new Error(
-    `找不到 duo-harness fat-jar：${targetDir} 下无 duo-harness-<版本>.jar。请先 mvn package 或以 DUO_DESKTOP_JAR 指定。`,
+    `找不到 duo-harness fat-jar（已试: ${dirs.join('、')}）。请先 mvn package 或以 DUO_DESKTOP_JAR 指定。`,
   );
 }
 

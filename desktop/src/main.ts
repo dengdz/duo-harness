@@ -249,21 +249,13 @@ ipcMain.on('duo:window-visible', (event) => {
   event.returnValue = !!window && window.isVisible() && !window.isMinimized();
 });
 
-/** 托盘模板图标：运行时生成 16×16 圆点（BGRA 黑 + alpha，macOS 模板图随菜单栏明暗自适应）。 */
+/** 托盘模板图标（工单 08）：黑色「哆」模板图（gen-icon 无头渲染产物，macOS 随菜单栏明暗自适应）。 */
 function trayIcon() {
-  const size = 16;
-  const bitmap = Buffer.alloc(size * size * 4);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const inside = Math.hypot(x - 7.5, y - 7.5) <= 6.5;
-      const i = (y * size + x) * 4;
-      bitmap[i] = 0; // B
-      bitmap[i + 1] = 0; // G
-      bitmap[i + 2] = 0; // R
-      bitmap[i + 3] = inside ? 255 : 0; // A
-    }
+  const templatePath = path.resolve(__dirname, '..', 'resources', 'tray-template.png');
+  const image = nativeImage.createFromPath(templatePath);
+  if (image.isEmpty()) {
+    throw new Error(`托盘模板图缺失: ${templatePath}`);
   }
-  const image = nativeImage.createFromBitmap(bitmap, { width: size, height: size });
   image.setTemplateImage(true);
   return image;
 }
@@ -312,9 +304,9 @@ function smokeAssert(condition: boolean, message: string): void {
   }
 }
 
-/** --smoke 序列：首截屏 → 关窗（验证拦截隐藏）→ 托盘切换复原 → 复原截屏 → 通知桥门控双态 → 退出。 */
-async function smokeSequence(win: BrowserWindow): Promise<void> {
-  const base = process.env.DUO_DESKTOP_SMOKE_OUT ?? path.join(process.cwd(), 'smoke-window.png');
+/** 冒烟段一（工单 02/03/05）：加载截屏 → 桥/门控可见态 → 关窗拦截隐藏 → 隐藏态门控
+ * → 真通知 → 托盘复原 → 复原截屏。 */
+async function smokeSegmentLaunchHideNotify(win: BrowserWindow, base: string): Promise<void> {
   await delay(1500);
   await captureTo(win, base);
   // 通知桥（工单 05）：桥在场 + 门控双态（可见不扰 / 隐藏放行）+ 真通知点击链路
@@ -341,7 +333,10 @@ async function smokeSequence(win: BrowserWindow): Promise<void> {
   await delay(500);
   smokeAssert(win.isVisible(), `after-toggle visible=${win.isVisible()}（托盘切换复原）`);
   await captureTo(win, base.replace(/\.png$/, '-reopened.png'));
-  // 单实例（工单 06）：二次启动即退（不重复拉起后端）；首实例收 second-instance
+}
+
+/** 冒烟段二（工单 06）：单实例（二次启动即退/后端不重复拉起）+ 深链运行中唤起聚焦。 */
+async function smokeSegmentSingleInstanceDeepLink(win: BrowserWindow): Promise<void> {
   const second = spawn(process.execPath, ['.'], { stdio: 'ignore' });
   let secondExited = false;
   second.once('exit', () => {
@@ -353,7 +348,10 @@ async function smokeSequence(win: BrowserWindow): Promise<void> {
   smokeAssert(secondExited, `单实例锁：二次启动即退=${secondExited}（后端不重复拉起）`);
   smokeAssert(lastDeepLink === 'duo://open', `deep-link received=${lastDeepLink}（运行中唤起）`);
   smokeAssert(win.isVisible(), `deep-link 后主窗可见=${win.isVisible()}（唤起聚焦）`);
-  // 崩溃恢复（工单 07）：外部 kill 后端（未 stop）→ 意外退出检测 → smoke 自动重启 → 原窗重连新址
+}
+
+/** 冒烟段三（工单 07）：外部 kill 后端（未 stop）→ 意外退出检测 → smoke 自动重启 → 原窗重连新址。 */
+async function smokeSegmentCrashRecovery(win: BrowserWindow): Promise<void> {
   const firstUrl = backend!.url;
   execFileSync('kill', [String(backend!.child.pid)]);
   await delay(4000); // 检测 + 重启编排 + 新后端锚点（JVM 冷启约 2s）
@@ -362,6 +360,14 @@ async function smokeSequence(win: BrowserWindow): Promise<void> {
     win.webContents.getURL().startsWith(new URL(backend!.url).origin),
     `窗口重连新后端=${win.webContents.getURL().slice(0, 33)}…`,
   );
+}
+
+/** --smoke 总序列（工单 08 分段函数化）：按票分段，断言硬失败贯穿，任一段失败非零退出。 */
+async function smokeSequence(win: BrowserWindow): Promise<void> {
+  const base = process.env.DUO_DESKTOP_SMOKE_OUT ?? path.join(process.cwd(), 'smoke-window.png');
+  await smokeSegmentLaunchHideNotify(win, base);
+  await smokeSegmentSingleInstanceDeepLink(win);
+  await smokeSegmentCrashRecovery(win);
 }
 
 app.whenReady().then(async () => {

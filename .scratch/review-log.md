@@ -706,3 +706,12 @@
 - **发现与修复**：硬违规 1 全修——restartBackend 两出口 showErrorBox 无 smoke 门控（重启失败挂死自动化），统一 fail() 出口（smoke stderr+exit(1) / 交互对话框）。P2 修 1——重启 await 期间 Cmd-Q 漏网（新句柄无人 stop 成孤儿占端口）：await 返回后复查 quitting → stop 新句柄。P3 修 4（monitor 回调兜底/smoke 兜底置位对称/对话框诊断 1200 字符 DSH 先例/头注释序列漂移第 4 犯位置）。记档 6（薄壳张力/收口三连/防御不可达/固定 delay/退出分支援引 04 证据/重启分支 smoke 替代口径）。
 - **模式化问题（新）**：①**async 编排的取消检查点**——await 之后的代码运行在世界已可能改变（用户退出/流程转向），长 await 返回后必须复查流程标志再消费结果（本例 spawn 出的新后端险成孤儿）；②**失败出口的分流要成套**——一处失败路径加了 smoke 分流，同函数后续新增出口必须同款（restartBackend 三出口两造一改补齐）；③**诊断信息分层截断**——日志层全量（8KB 滚动）、对话框层 1200 字符（DSH 先例）、日志行 120 字符，各层消费者不同截断点不同。
 - **对后续建议**：08 收口票的 mac 真人验收件再+1 项「崩溃恢复对话框本体」（kill 后端看框、两按钮各走一遍）；smokeSequence 分段函数化在 08 一并做（已三次记档临界）。
+
+### 2026-10-04 · M37 工单 08 审查（1.3.0 分支，工作树 vs HEAD 2ddfa60：打包 + 图标 + 文档 + 验收件收口）
+
+- **范围/基点**：工作树 vs 2ddfa60，desktop 图标两脚本/三资源/main/backend/builder + 文档四处（新页/侧栏/README/limitations）+ CHANGELOG + 验收件，覆盖率 100%（双轴 Standards/Spec 合并轴；行级/Java 轴豁免——零 Java diff，沿 03-07 口径）。
+- **双轴**：Standards（P2 2/P3 3）+ Spec（四件套三达成、承接验证 2/2、记账 ✓、用户裁定三项全落实；缺口 1/偏差记档 1）。
+- **发现与修复**：P2 2 全修——①extraResources 三历史版本 fat-jar 全量入包（67MB 冗余，体积随版本单调累积）：beforeBuild 钩子拷最新版单文件（duo-harness.jar）+ resolveJarPath 稳定名单优先；②resolveJarPath 直读 process.resourcesPath 破模块注入缝：改参数缺省注入 + 打包态候选测试。P3 修 5（gen-icon spawn error 监听/iconset finally 清理/icon-render catch/头注释序列崩溃段/JRE 引注改指工单 08 范围注）。记档 5（交货指南落独立新页/app+zip 非 dmg/对话框双层截断/打包态 permission 转真人/薄壳与 Divergent 临界）。
+- **实现期自逮（审查前）**：①beforeBuild 上下文无 appOutDir（实测 undefined）——钩子用 __dirname 定位；②node -e 诊断用 process.execPath 是 node 非 electron（运行时混淆）；③**pkill -f 模式串自匹配弑主**——pkill -9 -f "duo-harness" 的模式串在自己命令行里，把执行 shell 一起杀了（0 输出假象）；bracket 字符集（[0-9]）或精确 PID 才安全。
+- **模式化问题（新）**：①**打包产物的版本钉扎**——glob 类 extraResources 会把历史版本全量带进包，构建钩子「拷最新版为稳定名单文件」+ 运行时「稳定名单优先、版本 glob 兜底」双态一致；②**钩子上下文字段不可假设**——electron-builder beforeBuild 的 context 字段集与文档/版本相关，钩子内一律用脚本自身位置定位仓库锚点；③**pkill -f 模式串自匹配**——进程清理的模式串永远防自匹配（bracket/精确 PID）。
+- **对后续建议**：1.4.0「双击即用」期三项候选（内置 JRE/更新链/CLI 安装）+ 签名公证；smoke 打包态复用（duo.app --args --smoke）可作 1.4.0 验收基建。

@@ -6,15 +6,13 @@
 
 ### Added
 
+- **桌面端（M37 工单 02-08，ADR-0039）**：`desktop/` Electron 桌面壳承载现有 Web 呈现位（macOS 优先）——拉起 Java 后端、托盘常驻（关窗隐藏、左右键手势、「哆」字标模板图标）、系统通知（审批/提问等待、turn 完成、错误中断；窗口可见中不扰、点击回窗）、应用菜单（macOS 惯例 + 打开数据目录）、`duo://open` 深链唤起（单实例防重复）、退出前探活确认（忙时征询防误杀）、崩溃自动恢复（诊断摘要 + 重启/退出）；会话/装配与 CLI 共用 `~/.duo`。运行前提本机 JDK 21（壳自动探测指引）；mac 轻打包（.app/zip，后端随包内置，unsigned）；`npm run smoke` 一键全链自动化验收；仅 macOS 验证（Win/Linux 未验，见已知限制）
 - **`/api/status` 新增 `turnActive` 字段（M37 工单 04，ADR-0039 决策一退出探活）**：进程级在飞 send 计数（跨 tab、跨 CLI/Web 呈现位，`ToolCallingAgent` 全局 AtomicLong）暴露为布尔——桌面壳退出编排据此判「后端还有 agent 在跑」（忙时弹确认对话框，取消回常驻）；纯新增 1.x 兼容（缺字段=旧版本），壳侧对缺字段按空闲处理（fail-open 可退）
+- **后端桌面契约面（M37 工单 01，ADR-0039 决策六）**：web 行端口新增三级覆盖——系统属性 `duo.web.port`（测试注入口）> 环境变量 `DUO_WEB_PORT`（桌面壳注入口：壳选空闲端口注入，装配文件不动）> 装配 `config.port`（缺省 8080 不变，CLI/Web 直跑行为零变化；覆盖值非法/越界回落下一级并 stdout 点名，不启动失败）；启动打印新增机器锚点行 `duo:web-ready url=<启动 URL，鉴权开启时含 token 查询段>`（人读文案原样保留）——桌面壳（工单 02 起）逐行扫 stdout 认锚点拿启动地址，后端改文案不再碎壳。随案入账 M37 预研产物：两家桌面端研究文档增量补扫（DSH `5badb15009` / ZCode `29628c9`）、立项决策 ADR-0039、术语表「桌面壳」词条
 
 ### Fixed
 
 - **SIGTERM/Ctrl-C 退出挂死修复（M37 工单 02 壳联调逮出，BUG-20261004-01）**：REPL 空闲阻塞在 readLine 时（桌面壳拉起后端的 stdin 保活形态必现；终端 Ctrl-C 经 shutdown 钩子链同病），`CliPlugin.stop()` 的 `in.close()` 与阻塞读者同锁（JDK BufferedReader InternalLock）互等死锁——进程收 SIGTERM 后 40s+ 不退。修复为 stop 不再关闭 reader（树停后 JVM halt 自动回收，打断与闸门 fail-closed 语义不变），附「读者阻塞持锁时 stop 3s 内完成」回归锁；边界记档：存活 JVM 内 cli 行拔除重装不支持（重启换装）
-
-### Added
-
-- **桌面端启动契约面（M37 工单 01，ADR-0039 决策六）**：web 行端口新增三级覆盖——系统属性 `duo.web.port`（测试注入口）> 环境变量 `DUO_WEB_PORT`（桌面壳注入口：壳选空闲端口注入，装配文件不动）> 装配 `config.port`（缺省 8080 不变，CLI/Web 直跑行为零变化；覆盖值非法/越界回落下一级并 stdout 点名，不启动失败）；启动打印新增机器锚点行 `duo:web-ready url=<启动 URL，鉴权开启时含 token 查询段>`（人读文案原样保留）——桌面壳（工单 02 起）逐行扫 stdout 认锚点拿启动地址，后端改文案不再碎壳。随案入账 M37 预研产物：两家桌面端研究文档增量补扫（DSH `5badb15009` / ZCode `29628c9`）、立项决策 ADR-0039、术语表「桌面壳」词条
 
 ## 1.2.0（2026-10-03）
 

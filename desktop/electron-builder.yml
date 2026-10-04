@@ -7,12 +7,19 @@ protocols:
   - name: duo
     schemes:
       - duo
+# 后端 fat-jar 入包（工单 08）：beforeBuild 钩子拷 target 最新版为单文件（防多历史版本冗余入包）
+beforeBuild: scripts/copy-backend-jar.js
+extraResources:
+  - from: "resources/backend/duo-harness.jar"
+    to: "backend/duo-harness.jar"
 directories:
   output: out
 files:
   - dist/**/*
   - package.json
+  - resources/tray-template.png
 mac:
+  icon: resources/icon.icns
   target:
     - dir
     - zip

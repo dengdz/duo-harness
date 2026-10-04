@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import {
   ANCHOR_PREFIX,
@@ -62,6 +63,17 @@ describe('pickNewestJar', () => {
 describe('resolveJarPath', () => {
   it('env 显式指定优先', () => {
     expect(resolveJarPath({ DUO_DESKTOP_JAR: '/opt/duo.jar' }, '/anywhere/dist')).toBe('/opt/duo.jar');
+  });
+
+  it('打包态候选：Resources/backend 稳定名单文件优先（beforeBuild 钩子拷入形态，工单 08）', () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = require('node:fs');
+    const { tmpdir } = require('node:os');
+    const resources = mkdtempSync(path.join(tmpdir(), 'm37-res-'));
+    mkdirSync(path.join(resources, 'backend'), { recursive: true });
+    writeFileSync(path.join(resources, 'backend', 'duo-harness.jar'), '');
+    expect(resolveJarPath({}, '/anywhere/dist', resources)).toBe(
+      path.join(resources, 'backend', 'duo-harness.jar'),
+    );
   });
 
   it('target 目录无产物时报错并带指引', () => {
