@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### Added
+
+- **`/api/status` 新增 `turnActive` 字段（M37 工单 04，ADR-0039 决策一退出探活）**：进程级在飞 send 计数（跨 tab、跨 CLI/Web 呈现位，`ToolCallingAgent` 全局 AtomicLong）暴露为布尔——桌面壳退出编排据此判「后端还有 agent 在跑」（忙时弹确认对话框，取消回常驻）；纯新增 1.x 兼容（缺字段=旧版本），壳侧对缺字段按空闲处理（fail-open 可退）
+
 ### Fixed
 
 - **SIGTERM/Ctrl-C 退出挂死修复（M37 工单 02 壳联调逮出，BUG-20261004-01）**：REPL 空闲阻塞在 readLine 时（桌面壳拉起后端的 stdin 保活形态必现；终端 Ctrl-C 经 shutdown 钩子链同病），`CliPlugin.stop()` 的 `in.close()` 与阻塞读者同锁（JDK BufferedReader InternalLock）互等死锁——进程收 SIGTERM 后 40s+ 不退。修复为 stop 不再关闭 reader（树停后 JVM halt 自动回收，打断与闸门 fail-closed 语义不变），附「读者阻塞持锁时 stop 3s 内完成」回归锁；边界记档：存活 JVM 内 cli 行拔除重装不支持（重启换装）

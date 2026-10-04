@@ -570,6 +570,9 @@ final class WebEndpoints {
             var root = WebHttp.JSON.createObjectNode();
             // 鉴权形态（O17）：前端据此呈现「鉴权已关闭」页面横幅（authToken null = 关闭）
             root.put("auth", face.authToken() == null ? "none" : "token");
+            // turn 活跃（M37 工单 04，ADR-0039 决策一退出探活）：进程级在飞 send 计数
+            // （跨 tab、跨 CLI/Web 呈现位）——桌面壳退出编排据此判「后端还有 agent 在跑」
+            root.put("turnActive", dev.duo.harness.agent.internal.ToolCallingAgent.turnActiveGlobal());
             var plugins = root.putArray("plugins");
             for (var snapshot : face.ctx.snapshots()) {
                 plugins.addObject().put("name", snapshot.name()).put("state", snapshot.state().name());

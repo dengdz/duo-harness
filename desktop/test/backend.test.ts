@@ -213,6 +213,22 @@ describe('startBackend', () => {
     expect(kills).toEqual(['SIGTERM']);
   });
 
+  it('handle.exited 在进程退出即决（退出编排等干净收口的依据）', async () => {
+    const { child } = mockChild();
+    const pending = startBackend({ ...base, spawnFn: () => child });
+    child.stdout!.write(`${ANCHOR_PREFIX}http://127.0.0.1:18969\n`);
+    const handle = await pending;
+    let exited = false;
+    void handle.exited.then(() => {
+      exited = true;
+    });
+    await vi.waitFor(() => {}); // 微任务清空
+    expect(exited).toBe(false); // 未退未决
+    child.emit('exit', 0);
+    await handle.exited;
+    expect(exited).toBe(true);
+  });
+
   it('stderr 尾部超上限被截断（防凭据泄漏扩散）', async () => {
     const { child, stderr } = mockChild();
     const pending = startBackend({ ...base, spawnFn: () => child });

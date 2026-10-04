@@ -39,7 +39,7 @@ class ToolCallingAgentTest {
 
     @BeforeAll
     static void 套件叙述() {
-        System.out.println("\n=== 套件：ToolCallingAgentTest —— 工具循环：Function Calling 闭环、历史投影、usage 落事件、迭代上限（13 用例） ===");
+        System.out.println("\n=== 套件：ToolCallingAgentTest —— 工具循环：Function Calling 闭环、历史投影、usage 落事件、迭代上限、turnActive 计数（15 用例） ===");
     }
 
     @TempDir
@@ -96,6 +96,52 @@ class ToolCallingAgentTest {
                 onChunk.accept(new ChatChunk(replyText));
             }
         };
+    }
+
+    @Test
+    void turnActiveCounterTracksInFlightSendAndRecovers() throws Exception {
+        // M37-04 退出探活契约 B 轴：在飞期间全局计数 >0（turnActiveGlobal true，桌面壳
+        // 退出探活的真值），正常收口归还——increment/finally 拆散即此锁红
+        Session session = newSession();
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        LlmAdapter blocking = new StreamOnlyAdapter() {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                entered.countDown();
+                try {
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(blocking, noTools(), session, "你是助手", 10);
+        assertFalse(ToolCallingAgent.turnActiveGlobal(), "空闲计数为 0");
+        Thread turn = new Thread(() -> agent.send("你好", AgentListener.NONE));
+        turn.start();
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "应已进入 stream（计数已增）");
+        assertTrue(ToolCallingAgent.turnActiveGlobal(), "在飞期间 turnActive=true（桌面壳退出探活真值）");
+        release.countDown();
+        turn.join(5000);
+        assertFalse(turn.isAlive(), "放行后 send 收口");
+        assertFalse(ToolCallingAgent.turnActiveGlobal(), "收口后计数归还");
+    }
+
+    @Test
+    void turnActiveCounterRecoversWhenAdapterThrows() throws Exception {
+        // M37-04 E 轴：适配器抛穿（LLM 网络失败形态）计数必须归还——外层 finally 配对锁
+        Session session = newSession();
+        LlmAdapter throwing = new StreamOnlyAdapter() {
+            @Override
+            public void stream(ChatRequest request, java.util.function.Consumer<ChatChunk> onChunk) {
+                throw new IllegalStateException("llm down");
+            }
+        };
+        ToolCallingAgent agent = new ToolCallingAgent(throwing, noTools(), session, "你是助手", 10);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> agent.send("你好", AgentListener.NONE));
+        assertFalse(ToolCallingAgent.turnActiveGlobal(), "异常穿透后计数归还");
     }
 
     @Test

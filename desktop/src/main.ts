@@ -14,12 +14,15 @@ import * as path from 'node:path';
 import {
   BackendStartError,
   JdkMissingError,
+  buildStatusUrl,
+  fetchTurnActive,
   findFreePort,
   resolveJarPath,
   resolveJava,
   startBackend,
   type BackendHandle,
 } from './backend';
+import { resolveQuit } from './quit-orchestration';
 import {
   createTrayActions,
   shouldInterceptClose,
@@ -33,6 +36,7 @@ let backend: BackendHandle | null = null;
 let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
+let quitConfirming = false; // 探活/征询窗口内的二次退出重入守卫（Cmd-Q 连按、托盘双击）
 
 /** 关窗拦截只在 darwin 生效（mac 惯例关窗驻留）；其他平台关窗即退出（window-all-closed 兜底）。 */
 const interceptHideOnClose = process.platform === 'darwin';
@@ -207,7 +211,9 @@ app.whenReady().then(async () => {
         : String(err);
     console.error(`duo:shell failed: ${detail}`);
     if (smoke) {
-      // 自动化冒烟不弹模态框（无人点会挂死验收）：stderr 明示后非零退出
+      // 自动化冒烟不弹模态框（无人点会挂死验收）：stderr 明示后非零退出；
+      // app.exit 绕过 before-quit，后端须在此显式停（防 java 孤儿占端口）
+      backend?.stop();
       app.exit(1);
       return;
     }
@@ -216,10 +222,60 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('before-quit', () => {
-  quitting = true; // 放行 window close（关窗拦截让位真退出；工单 04 在此前置探活编排）
-  backend?.stop();
+app.on('before-quit', (event) => {
+  if (quitting || quitConfirming) {
+    return; // confirmAndQuit 内重入 app.quit：放行；征询中二次触发：忽略（守卫，防重复弹框/重复 stop）
+  }
+  event.preventDefault(); // 拦一次：探活 + 忙时征询后再真退（工单 04）
+  quitConfirming = true;
+  void confirmAndQuit().finally(() => {
+    quitConfirming = false;
+  });
 });
+
+/**
+ * 退出编排（工单 04）：探活 /api/status 的 turnActive → 忙则征询（取消=回常驻）→
+ * 置位 quitting 放行 close → SIGTERM 后端等真退（2s 兜底 SIGKILL，进程树无残留）
+ * → 重入 app.quit。探活失败按可退处理（resolveQuit 内 fail-open）。
+ */
+async function confirmAndQuit(): Promise<void> {
+  const decision = await resolveQuit({
+    probeBusy: async () => {
+      if (!backend) {
+        return false;
+      }
+      return fetchTurnActive(buildStatusUrl(backend.url));
+    },
+    confirmBusyQuit: () =>
+      Promise.resolve(
+        dialog.showMessageBoxSync({
+          type: 'warning',
+          buttons: ['强制退出', '取消'],
+          defaultId: 1,
+          cancelId: 1,
+          message: '后端还有 agent 在跑',
+          detail: '现在退出会打断运行中的任务。确定退出吗？',
+        }) === 0,
+      ),
+  });
+  if (decision === 'cancel') {
+    return; // 回常驻：不退出，托盘/窗体照旧
+  }
+  quitting = true;
+  if (backend) {
+    backend.stop();
+    // SIGKILL 兜底宽限 3.5s：CliPlugin 死锁回归界为 stop 3s 内完成（BUG-20261004-01），
+    // 2s 会截断合法最慢收口（ZCode host 强杀兜底同款 ≥3.5s 先例）
+    const outcome = await Promise.race([
+      backend.exited.then(() => 'exited' as const),
+      delay(3500).then(() => 'timeout' as const),
+    ]);
+    if (outcome === 'timeout') {
+      backend.child.kill('SIGKILL'); // 兜底：SIGTERM 未收敛的强杀（防 java 孤儿占端口）
+    }
+  }
+  app.quit();
+}
 
 // 关窗在 darwin 被拦截为隐藏，此事件只剩窗体真销毁的罕见态：mac 驻留（托盘可重建窗），其他平台关窗即走此退出
 app.on('window-all-closed', () => {

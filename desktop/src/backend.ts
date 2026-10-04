@@ -32,6 +32,31 @@ export function parseAnchorLine(line: string): string | null {
   return url.length > 0 ? url : null;
 }
 
+/** 锚点 URL → 状态端点 URL（同源同 token 查询段，路径换 /api/status）——退出探活用。 */
+export function buildStatusUrl(anchorUrl: string): string {
+  const url = new URL(anchorUrl);
+  url.pathname = '/api/status';
+  return url.toString();
+}
+
+/**
+ * 状态载荷忙碌解析（工单 04 契约：turnActive 布尔，M37-04 后端新增）：缺失/非布尔
+ * 一律按空闲（老后端兼容——旧版本无此字段，退出编排 fail-open 可退）。
+ */
+export function parseBusyStatus(jsonText: string): boolean {
+  try {
+    return JSON.parse(jsonText)?.turnActive === true;
+  } catch {
+    return false;
+  }
+}
+
+/** 拉取状态并判忙（超时/网络错误抛出——由退出编排按可退处理）。 */
+export async function fetchTurnActive(statusUrl: string, timeoutMs = 2_000): Promise<boolean> {
+  const response = await fetch(statusUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  return parseBusyStatus(await response.text());
+}
+
 /** 从 `java -version` 输出解析大版本（输出形如 `openjdk version "21.0.5"`）。 */
 export function parseJavaMajor(versionOutput: string): number | null {
   const match = /version "(\d+)/.exec(versionOutput);
@@ -188,8 +213,10 @@ export interface StartBackendOptions {
 export interface BackendHandle {
   url: string;
   child: ChildProcess;
-  /** SIGTERM 后端（正常退出编排由工单 04 扩展；本票最小停机）。 */
+  /** SIGTERM 后端（退出编排的发动点；等真退用 {@link exited}）。 */
   stop(): void;
+  /** 进程退出即决（无论何时退）——退出编排等干净收口 / SIGKILL 兜底用。 */
+  exited: Promise<void>;
 }
 
 export class BackendStartError extends Error {
@@ -227,6 +254,9 @@ export function startBackend(options: StartBackendOptions): Promise<BackendHandl
     });
     let stderrTail = '';
     let settled = false;
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+    });
     const settle = (fn: () => void) => {
       if (!settled) {
         settled = true;
@@ -257,7 +287,7 @@ export function startBackend(options: StartBackendOptions): Promise<BackendHandl
       }
       settle(() => {
         lines.close();
-        resolve({ url, child, stop: () => child.kill('SIGTERM') });
+        resolve({ url, child, stop: () => child.kill('SIGTERM'), exited });
       });
     });
     child.once('error', (err) => {

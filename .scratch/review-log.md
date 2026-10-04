@@ -673,3 +673,11 @@
 - **发现与修复**：P2/阻断 4 全修——①createWindow 工厂不回写全局 window（销毁重建后窗体累积，唯一硬性缺陷）；②「点击显隐」被 context menu 吞左键 + tray 局部变量 GC 风险——改双手势（click→toggle/right-click→popUp）+ tray 全局持有；③dock 恢复缺失补 app.on('activate')；④smoke 静默打印改断言不符 exit(1)。建议修 4（非 darwin 拦截平台门、openPath 吞错显式化 + showItemInFolder 定位语义、菜单/托盘动作路由合一、safely 回调兜底）+ 记档 2（smoke 固定 delay 观察、createWindow 防御抛错）。
 - **模式化问题（新）**：①**Electron Tray 双坑同源**——局部变量 GC 致托盘消失 + setContextMenu 吞左键 click 事件；「点击显隐 + 右键菜单」要手动 popUpContextMenu，这两个坑写在一起因为都源于「托盘不是普通组件，是常驻单例」。②**验收脚本断言必须硬失败**——「应为 X」的 console.log 在 CI 上是假通过（本票 smoke 初版形态），断言不符必须 exit 非 0；与「陈旧产物家族」同族：验证输出存在 ≠ 验证通过。③**GUI 交互的自动化边界要如实记档**——托盘左右键/dock 点击无法脚本化，程序化等价物（toggle 函数断言）+ 留人手项双轨，票面写明哪些是程序化证据哪些待真人。
 - **对后续建议**：工单 04 退出编排复用 quitting 置位 + before-quit 时机（Electron before-quit 先于窗口 close 的语义已在本票核证）；托盘手势的真人验收与 05 通知点击验收可并作一次 mac 手动验收件。
+
+### 2026-10-04 · M37 工单 04 审查（1.3.0 分支，工作树 vs HEAD 9de9a79c：退出编排与探活确认）
+
+- **范围/基点**：工作树 vs 9de9a79c，Java 3 文件（ToolCallingAgent send 拆分+计数/WebEndpoints turnActive/契约测试）+ desktop 4 文件（exited/探活工具/决策核/before-quit 编排），覆盖率 100%（四轴全开——本票含 Java diff）。
+- **四轴**：Standards（硬 2/P2 1/P3 4）+ Spec（缺口 2/越票面 3/偏差 4）+ 行级（PASS 0 缺陷，4 边界核查全过，1 越界观察移交）+ Java 规范（MAJOR 2/BLOCKER 0）。
+- **发现与修复**：硬违规 3 全修——①CHANGELOG 缺 turnActive Added 记账（红线 6）；②新用例 clearProperty 未保存恢复（M37-01 立的机械核对项本票自己又犯）；③顺带逮出工单 02 残留：S1 用例 oldHome 捕获在 setProperty 之后（恢复形态失真）。P2 修 1（before-quit 探活窗口二次退出重入守卫）。MAJOR 修 2（尾随注释上移；turnActive 在飞/抛穿边界用例补齐——可阻塞假适配器 latch 锁计数三态）。P3 修 2（doSend Javadoc+类注释静态共享态；SIGKILL 宽限 2s→3.5s 对齐死锁回归界）。记档 4（agent.internal 下探有 HEAD 先例/超时参保留/脚手架重复观察/smoke stop 不对称）。
+- **模式化问题（新）**：①**「探活/判据用既有 X」的 spec 断言必须实现面核实后才算数**——spec 写「探活用既有 /api/status」而载荷根本无 turn 字段（M30 fat-jar 资源形态同族：定版文案的产品级承诺物理不成立）；启动 grill 的实现面 smoke 要覆盖「字段级」断言而非仅「端点存在」。②**全局计数器包装法**——进程级「是否有在飞 X」用静态 AtomicLong + send 包装（increment→try/finally decrement）+ 纯读查询口，是接口零改动的最小探活面；配对纪律靠 requireNonNull 前置 + finally 兜全异常。③**回归界的常量要对表**——SIGKILL 兜底 2s 撞上 BUG 回归界「stop ≤3s」，宽限取 3.5s（ZCode 先例同款）；超时类定值必须对照既有回归锁的时间界。
+- **对后续建议**：工单 05 通知点击与 03/04 的真人验收项（托盘手势/长任务拦截）并作一次 mac 手动验收件；`turnActive=true` 端到端（真 turn→真对话框）在验收件里用真实 LLM 走通即全链闭环。

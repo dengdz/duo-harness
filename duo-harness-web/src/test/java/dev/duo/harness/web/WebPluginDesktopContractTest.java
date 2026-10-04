@@ -16,6 +16,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -106,10 +107,10 @@ class WebPluginDesktopContractTest {
                   apiKey: test-key
                   model: test-model
                 """);
+        String oldHome = System.getProperty(DuoHome.PROP_OVERRIDE);
         System.setProperty(DuoHome.PROP_OVERRIDE, home.toString());
         java.io.PrintStream originalOut = System.out;
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
-        String oldHome = System.getProperty(DuoHome.PROP_OVERRIDE);
         try {
             System.setOut(new java.io.PrintStream(captured, true, StandardCharsets.UTF_8));
             Context root = Context.root();
@@ -151,6 +152,55 @@ class WebPluginDesktopContractTest {
                 "auth none 无查询参数");
         assertEquals("http://127.0.0.1:8080/?token=abc", WebPlugin.webReadyUrl(8080, "abc"),
                 "auth token 带 token 查询参数");
+    }
+
+    @Test
+    void statusExposesTurnActiveForDesktopQuitProbe(@TempDir Path tempDir) throws Exception {
+        // 工单 04 退出探活契约：/api/status 载荷含 turnActive 布尔（进程级在飞 send
+        // 计数）——桌面壳 before-quit 据此判「后端还有 agent 在跑」；idle 装配为 false
+        Path home = tempDir.resolve("duo-home");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("config.yml"), """
+                llm:
+                  baseUrl: https://placeholder.local
+                  apiKey: test-key
+                  model: test-model
+                """);
+        String oldHome = System.getProperty(DuoHome.PROP_OVERRIDE);
+        System.setProperty(DuoHome.PROP_OVERRIDE, home.toString());
+        try {
+            Context root = Context.root();
+            JsonNodeFactory factory = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+            root.plugin(new dev.duo.harness.tools.ToolsPlugin(), null).awaitStartup();
+            root.plugin(new dev.duo.harness.agent.prompt.PromptPlugin(), factory.objectNode()).awaitStartup();
+            root.plugin(new dev.duo.harness.tools.InteractionPlugin(), null).awaitStartup();
+            root.plugin(new dev.duo.harness.agent.commands.CommandsPlugin(), factory.objectNode()).awaitStartup();
+            WebPlugin web = new WebPlugin();
+            root.plugin(web, factory.objectNode().put("port", 0)).awaitStartup();
+            try {
+                java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(
+                        java.net.URI.create("http://127.0.0.1:" + web.face().port()
+                                + "/api/status?token=" + web.face().authToken()))
+                        .GET().build();
+                java.net.http.HttpResponse<String> res =
+                        client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, res.statusCode(), "状态端点 200");
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.JsonNode json = mapper.readTree(res.body());
+                assertTrue(json.has("turnActive") && json.path("turnActive").isBoolean(),
+                        "turnActive 布尔字段在载荷（桌面壳退出探活契约）: " + res.body());
+                assertFalse(json.path("turnActive").asBoolean(), "idle 装配 turnActive=false");
+            } finally {
+                root.dispose();
+            }
+        } finally {
+            if (oldHome == null) {
+                System.clearProperty(DuoHome.PROP_OVERRIDE);
+            } else {
+                System.setProperty(DuoHome.PROP_OVERRIDE, oldHome);
+            }
+        }
     }
 
     private static ObjectNode cfg(int port) {

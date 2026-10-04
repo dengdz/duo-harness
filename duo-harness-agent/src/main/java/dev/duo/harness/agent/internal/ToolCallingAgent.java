@@ -51,13 +51,24 @@ import java.util.concurrent.Semaphore;
  *
  * <p>线程约定：实例非线程安全——单会话内串行使用。{@code send} 仍是单线程入口；
  * 并发只发生在安全组的工具执行段（虚拟线程 fan-out），事件日志写入收敛回
- * {@code send} 线程单点提交（model 序成对提交，会话单写者约定不变）。</p>
+ * {@code send} 线程单点提交（model 序成对提交，会话单写者约定不变）。唯一跨实例
+ * 共享态为静态在飞计数 {@code ACTIVE_TURNS}（进程级 agent 活跃真值，AtomicLong）。</p>
  */
 public final class ToolCallingAgent implements ChatAgent {
 
     /** 参数解析共享实例：ObjectMapper 创建重量级，热路径（每次工具调用）复用。 */
     private static final com.fasterxml.jackson.databind.ObjectMapper TOOLS_ARGS_MAPPER =
             new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** 全局在飞 send 计数（M37 工单 04，ADR-0039 决策一退出探活）：跨实例跨呈现位
+     * 的进程级「agent 活跃」真值——桌面壳经 /api/status 的 turnActive 字段消费。 */
+    private static final java.util.concurrent.atomic.AtomicLong ACTIVE_TURNS =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** 进程级 agent 活跃查询（纯读，无副作用——与 requestInterrupt 的打断语义区分）。 */
+    public static boolean turnActiveGlobal() {
+        return ACTIVE_TURNS.get() > 0;
+    }
 
     /** 最大迭代轮数（每轮 = 一次 LLM 调用往返；防异常任务无限循环烧 token）。 */
     public static final int MAX_ITERATIONS = 10;
@@ -202,6 +213,17 @@ public final class ToolCallingAgent implements ChatAgent {
     @Override
     public AgentReply send(String userText, AgentListener listener) {
         Objects.requireNonNull(listener, "listener");
+        // 全局在飞计数（turnActiveGlobal 消费，M37-04）
+        ACTIVE_TURNS.incrementAndGet();
+        try {
+            return doSend(userText, listener);
+        } finally {
+            ACTIVE_TURNS.decrementAndGet();
+        }
+    }
+
+    /** send 的计数包装内体（循环本体原样搬移，契约见 {@link #send}）。 */
+    private AgentReply doSend(String userText, AgentListener listener) {
         session.append(SessionEvent.userMessage(userText));
         // 复位先于线程登记（OCR 修复）：复位与 requestInterrupt 的「置标志后登记检查」
         // 保持同序——两行之间到达的中断请求按「无 send 在飞」拒绝，不落空为新轮误吞
