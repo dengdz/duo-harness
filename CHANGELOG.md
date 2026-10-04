@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### Fixed
+
+- **SIGTERM/Ctrl-C 退出挂死修复（M37 工单 02 壳联调逮出，BUG-20261004-01）**：REPL 空闲阻塞在 readLine 时（桌面壳拉起后端的 stdin 保活形态必现；终端 Ctrl-C 经 shutdown 钩子链同病），`CliPlugin.stop()` 的 `in.close()` 与阻塞读者同锁（JDK BufferedReader InternalLock）互等死锁——进程收 SIGTERM 后 40s+ 不退。修复为 stop 不再关闭 reader（树停后 JVM halt 自动回收，打断与闸门 fail-closed 语义不变），附「读者阻塞持锁时 stop 3s 内完成」回归锁；边界记档：存活 JVM 内 cli 行拔除重装不支持（重启换装）
+
 ### Added
 
 - **桌面端启动契约面（M37 工单 01，ADR-0039 决策六）**：web 行端口新增三级覆盖——系统属性 `duo.web.port`（测试注入口）> 环境变量 `DUO_WEB_PORT`（桌面壳注入口：壳选空闲端口注入，装配文件不动）> 装配 `config.port`（缺省 8080 不变，CLI/Web 直跑行为零变化；覆盖值非法/越界回落下一级并 stdout 点名，不启动失败）；启动打印新增机器锚点行 `duo:web-ready url=<启动 URL，鉴权开启时含 token 查询段>`（人读文案原样保留）——桌面壳（工单 02 起）逐行扫 stdout 认锚点拿启动地址，后端改文案不再碎壳。随案入账 M37 预研产物：两家桌面端研究文档增量补扫（DSH `5badb15009` / ZCode `29628c9`）、立项决策 ADR-0039、术语表「桌面壳」词条

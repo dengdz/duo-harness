@@ -657,3 +657,11 @@
 - **发现与修复**：阻断 3 全修——①[Java C-01] 端口边界魔法值提取 MIN_PORT/MAX_PORT（判断与点名文案同源）；②[Java UT-05] S1 用例 finally 无条件 clearProperty(duo.home) 改保存/恢复对称（本 `-Dduo.home` 启动形态不被清）；③[Standards·红线 3] 端口覆盖新配置语义同步插件配置参考/config 全量字段参考两表。建议修 2（点名文案「回落装配值」→「回落下一级」多轴共识、CHANGELOG「完整含 token URL」→「鉴权开启时含 token 查询段」）+ 记档 4（resolvePort/DuoHome 同形 duplication 两实例容忍、env 接线不可锁归工单 02 兜底、auth:none 人读行豁免记档、port 0 透传超范围记账）。
 - **模式化问题（新）**：①**新增配置覆盖口的三处同步面**——常量/点名文案/参考文档加 CHANGELOG 共四处，文案里的范围数字与判断逻辑若不同源必漂移（本次 Java 轴逮住的正是自己 Javadoc 写的「防两处漂移」防了 URL 没防端口边界）；**新增配置项同 diff 的同步清单应含「点名文案中的动态值」**。②**测试全局态清理的对称性核对**——同文件内 set/clear 配对形态不统一（一处保存恢复、一处无条件 clear），UT-05 的本 `-D` 启动场景才暴露；**set 系统属性的测试一律保存旧值按旧值形态恢复**，作为机械核对项。
 - **对后续建议**：工单 02 起壳工程落地时，S1 残余盲区（子进程管道 flush、env 接线）在真机冒烟一次补齐；resolvePort/DuoHome 第三处三级覆盖出现时抽共享解析器（挂账观察）。
+
+### 2026-10-04 · M37 工单 02 审查（1.3.0 分支，工作树 vs HEAD f5510601：壳工程骨架 + CliPlugin 死锁修复）
+
+- **范围/基点**：工作树 vs f5510601，desktop/ 壳工程 7 文件 + CliPlugin stop() 修复 + 回归锁 + 票据，覆盖率 100%（四轴分工互补：行级轴 OCR 仅覆盖 Java 主代码）。
+- **四轴**：Standards（硬 2/P3 4）+ Spec（缺口 4/越票面 1/偏差 3）+ 行级（F1 Medium/Low 2）+ Java 规范（CRITICAL 1/ BLOCKER 0）。
+- **发现与修复**：阻断 2 全修——①多轴共识的 CliPlugin 两处陈旧注释（类 Javadoc :75-76 与 replLoop catch :785 仍写「stop 关输入流」）改写现在时；②CHANGELOG Fixed 记账（BUG-20261004-01）。建议修 3（工单票滞后全量补齐 / javaPathCandidates 同名去重 + 无消费方 source 字段删除 / CoT 泄漏「jstack 坐实」轻剪）+ 记档 5（存活 JVM 内 cli dispose 边界、CliPlugin 修复四处升格记档、smoke 失败退化、回归锁 sleep 竞态、BackendHandle.child 声明消费方）。
+- **模式化问题（新）**：①**子进程 stderr/stdout 的双流假设**——`java -version` 退出 0 走 stderr，execFileSync 成功路径只回 stdout 直接把版本探测打瞎（首跑冒烟实锤）；**凡是「执行外部命令解析其输出」的代码先问「输出口在哪条流」**，聚合双流用 spawnSync。②**阻塞 IO 的跨线程关闭直觉**——JDK BufferedReader close 与阻塞 readLine 同锁（InternalLock），「关流打断读者」是死锁不是打断；跨线程终止阻塞 IO 只有两法：对端 EOF（pipe 写端关闭）或进程收尾。③**模态对话框在自动化流程里是挂死点**——验收型运行路径的失败出口必须走 stderr/退出码，dialog 只留交互模式。
+- **对后续建议**：工单 04 退出编排直接复用本票 stop 语义（SIGTERM→0.5s 干净退已实证）；行级轴 F1 的「存活 JVM 内 cli dispose」边界在 pluginRows 场景若有真实需求再立项，当前记档即可。

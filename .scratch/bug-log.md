@@ -8,6 +8,14 @@
 
 ---
 
+## BUG-20261004-01 · REPL 空闲阻塞时 SIGTERM/Ctrl-C 退出挂死——CliPlugin.stop() 与阻塞读者同锁死锁
+
+- **日期**：2026-10-04（M37 工单 02 壳联调首日实测逮出）
+- **症状**：Java 后端收到 SIGTERM 后 40s+ 不退（kill 返回 true、无任何 shutdown 日志，SIGKILL 才收）；终端 Ctrl-C 走 exit → shutdown 钩子链同病。桌面壳 spawn 后端（stdin pipe 保活形态，REPL 空闲阻塞在 readLine 等输入）下必现。
+- **根因**：`CliPlugin.stop()` 调 `in.close()` 意图解除读者阻塞——但 JDK `BufferedReader` 的 close() 与阻塞在 `readLine()` 的读者线程**持同一把内部锁（InternalLock）**：读者阻塞期间锁不释放，close 同锁互等=死锁（jstack 坐实 duo-shutdown 线程 park 在 `BufferedReader.close ← CliPlugin.stop`）。close 前提「解除读者阻塞」在 JDK 实现上不成立。
+- **修复**：stop() 不再关闭 reader——树停后 JVM halt 自动回收 fd 与线程，打断与应答闸门 fail-closed 语义不变；回归锁 `CliPluginStopDeadlockTest`（读者阻塞持锁时 stop 3s 内完成）；修复后 SIGTERM 0.5s 干净退（code=143 实测复验）。
+- **防复发**：①「close 可解除阻塞读」直觉对 JDK BufferedReader 不成立——凡「从另一线程关共享流以打断读者」的写法先查锁归属；②边界记档：存活 JVM 内 cli 行拔除重装不支持（REPL 停留 readLine 持会话锁，重启换装），注释与工单双侧在案；③壳侧退出编排（工单 04）无需 stdin 关闭配合。
+
 ## BUG-20261002-07 · 会话坏行导致加载抛异常 + 锁泄漏不可再入 + 导出静默零事件
 
 - **日期**：2026-10-02（M33 批 5 执行发现，TOLER-05/06）

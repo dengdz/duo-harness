@@ -1,0 +1,20 @@
+# 桌面壳打包骨架（M37 工单 02 立骨架，工单 08 出包）：macOS 优先（ADR-0039 决策三），
+# 本机跑与轻打包优先——安装器/签名/公证不在本期（Q1 未选「双击即用」）
+appId: dev.duo.harness.desktop
+productName: duo
+directories:
+  output: out
+files:
+  - dist/**/*
+  - package.json
+mac:
+  target:
+    - dir
+    - zip
+  category: public.app-category.developer-tools
+win:
+  target:
+    - dir
+linux:
+  target:
+    - dir

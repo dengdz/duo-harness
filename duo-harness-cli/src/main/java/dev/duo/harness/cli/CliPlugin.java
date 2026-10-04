@@ -72,7 +72,7 @@ import org.slf4j.LoggerFactory;
  * 被静默当新输入消费。</p>
  *
  * <p>线程约定：读者线程独占虚拟线程（cli-repl）；执行期 turn 跑在独立虚拟线程
- * （cli-agent）；{@link #stop} 可从树 dispose 线程并发调用（关输入流打断阻塞读 +
+ * （cli-agent）；{@link #stop} 可从树 dispose 线程并发调用（不碰阻塞读的 reader，
  * 打断两个线程 + 应答闸门 fail-closed）；会话与回答者的清理在 idle 收尾点单线程
  * 执行（读者线程 join turn 线程后统一收尾），stop 只负责打断。busy 期 busySafe
  * 命令在读者线程落会话事件，与 turn 线程的对话事件并发——同 Web 面 busySafe
@@ -782,7 +782,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
                         agentBusy, interruptArmed);
             }
         } catch (IOException e) {
-            // stop() 关闭输入流打断阻塞读——按 /exit 同语义收尾（idle）
+            // 流读错误（含外部关 System.in 的罕见态）——按 /exit 同语义收尾（idle）；
+            // stop() 不关流（见 stop 内注释），正常停止经 interrupt + 进程收尾
         }
         goIdle(holder, plan);
     }
@@ -1144,18 +1145,21 @@ public final class CliPlugin implements Plugin<JsonNode> {
         }
     }
 
-    /** 插件停止（树 dispose / shutdown hook 调用）：打断阻塞读与执行中的 turn，按 idle 收尾。 */
-    private void stop() {
+    /**
+     * 插件停止（树 dispose / shutdown hook 调用）：打断执行中的 turn，按 idle 收尾。
+     * 包私有为测试缝（M37-02 死锁回归锁直调，WebPlugin.face() 先例）。
+     */
+    void stop() {
         if (!stopped.compareAndSet(false, true)) {
             return;
         }
         boardDetachers.forEach(Runnable::run); // 摘状态板监听（C2 工单 16：随树销毁，防累积泄漏）
         boardDetachers.clear();
-        try {
-            in.close(); // 解除读者线程 readLine 阻塞（System.in 的关闭无害——进程正在退出）
-        } catch (IOException ignored) {
-            // 已关
-        }
+        // 不关 in（BufferedReader）：读者线程阻塞在 readLine() 时握有其内部锁（JDK
+        // InternalLock），此处 close() 与之同锁互等=死锁（桌面壳 SIGTERM 实测 40s+ 挂死）；
+        // 树停后 JVM halt 自动回收 fd 与线程，无需也不应在此关闭；interrupt 对阻塞读
+        // 无效，REPL 线程随进程收尾。边界：存活 JVM 内的 cli 行 dispose（行级拔除重装）
+        // 不被本修复覆盖——REPL 停留 readLine 持会话锁，该路径不支持（重启进程换装）。
         if (replThread != null) {
             replThread.interrupt();
         }
