@@ -55,8 +55,8 @@
 | ZCode | Web 呈现 | [ZCode/呈现与UI/Web呈现.md](ZCode/呈现与UI/Web呈现.md) | 872ad96 | 当前（2026-09-21 M22 工单 16；五段模板） |
 | DSH | 终端呈现 | [DSH/呈现与UI/终端呈现.md](DSH/呈现与UI/终端呈现.md) | ddefc45f | 当前（2026-09-21 M22 工单 17；五段模板） |
 | ZCode | 终端呈现 | [ZCode/呈现与UI/终端呈现.md](ZCode/呈现与UI/终端呈现.md) | 872ad96 | 当前（2026-09-21 M22 工单 17；五段模板） |
-| DSH | 桌面端 | [DSH/呈现与UI/桌面端.md](DSH/呈现与UI/桌面端.md) | ddefc45f | 当前（2026-09-21 M22 工单 18；五段模板） |
-| ZCode | 桌面端 | [ZCode/呈现与UI/桌面端.md](ZCode/呈现与UI/桌面端.md) | 872ad96 | 当前（2026-09-21 M22 工单 18；五段模板） |
+| DSH | 桌面端 | [DSH/呈现与UI/桌面端.md](DSH/呈现与UI/桌面端.md) | 5badb15009 | 当前（2026-10-04 M37 预研增量补扫：基线 ddefc45f→5badb15009 桌面路径 385 文件 +22371 行；端口改 OS 分配、host 协议扩展 platform-session/quit-inspection、新增 CLI 命令管理/登录重做/login shell 探测/NSIS 品牌安装器；directory-picker 三形态未变） |
+| ZCode | 桌面端 | [ZCode/呈现与UI/桌面端.md](ZCode/呈现与UI/桌面端.md) | 29628c9 | 当前（2026-10-04 M37 预研增量补扫：v3.14.3 桌面 13 文件——cron 结果 Bot 回推、Bot 驱动远程 workspace 重连、打包三处契约；五进程/端口对 RPC/IAB/scheduler 等既有机制全部未变，仅行号漂移） |
 | ZCode | UI 交互组件形态（思考折叠/分工具卡/子代理页/确认卡） | [ZCode/呈现与UI/交互组件形态.md](ZCode/呈现与UI/交互组件形态.md) | 872ad96 | 当前（2026-09-29 M29 工单 05；形态篇——机制篇 Web呈现.md 的姊妹篇，duo 落地清单经前端现状核实） |
 | ZCode | 消息渲染与界面面板形态（markdown 栈/loading 全景/计划面/会话列表/composer/toast/空态） | [ZCode/呈现与UI/消息渲染与面板形态.md](ZCode/呈现与UI/消息渲染与面板形态.md) | 872ad96 | 当前（2026-09-29 M29 工单 05 扩展篇，用户指示全景盘点；三代理 173 次工具调用源码实读，落地清单经前端现状核实） |
 | DSH | 网络与远程工具族 | [DSH/网络与数据/网络与远程工具族.md](DSH/网络与数据/网络与远程工具族.md) | ddefc45f | 当前（2026-09-21 M22 工单 19；五段模板） |
