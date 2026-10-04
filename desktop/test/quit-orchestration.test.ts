@@ -4,7 +4,7 @@ import {
   parseAnchorLine,
   parseBusyStatus,
 } from '../src/backend';
-import { resolveQuit } from '../src/quit-orchestration';
+import { isUnexpectedExit, resolveQuit } from '../src/quit-orchestration';
 
 /** 探活 URL 构造（工单 04）：锚点 URL → 同源同 token 的 /api/status */
 describe('buildStatusUrl', () => {
@@ -67,5 +67,21 @@ describe('parseAnchorLine 回归', () => {
       'http://127.0.0.1:1/?token=x',
     );
     expect(parseAnchorLine('Web 面已启动: http://x')).toBeNull();
+  });
+});
+
+/** 崩溃判定互斥位（工单 07）：退出流程/主动 stop 之外的 exit 才是崩溃 */
+describe('isUnexpectedExit', () => {
+  it('退出流程在途 → 预期（不弹恢复框）', () => {
+    expect(isUnexpectedExit({ quitting: true, stopRequested: false })).toBe(false);
+    expect(isUnexpectedExit({ quitting: true, stopRequested: true })).toBe(false);
+  });
+
+  it('已主动 stop（SIGTERM 在途）→ 预期', () => {
+    expect(isUnexpectedExit({ quitting: false, stopRequested: true })).toBe(false);
+  });
+
+  it('两者皆否 → 意外退出（恢复对话框路径）', () => {
+    expect(isUnexpectedExit({ quitting: false, stopRequested: false })).toBe(true);
   });
 });

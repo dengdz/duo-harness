@@ -217,6 +217,8 @@ export interface BackendHandle {
   stop(): void;
   /** 进程退出即决（无论何时退）——退出编排等干净收口 / SIGKILL 兜底用。 */
   exited: Promise<void>;
+  /** stderr 尾部快照（持续滚动、上限截断）——崩溃恢复对话框的诊断源（工单 07）。 */
+  stderrTail(): string;
 }
 
 export class BackendStartError extends Error {
@@ -287,7 +289,13 @@ export function startBackend(options: StartBackendOptions): Promise<BackendHandl
       }
       settle(() => {
         lines.close();
-        resolve({ url, child, stop: () => child.kill('SIGTERM'), exited });
+        resolve({
+          url,
+          child,
+          stop: () => child.kill('SIGTERM'),
+          exited,
+          stderrTail: () => tailOf(stderrTail),
+        });
       });
     });
     child.once('error', (err) => {

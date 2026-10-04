@@ -28,3 +28,19 @@ export async function resolveQuit(deps: QuitDecisionDeps): Promise<QuitDecision>
   }
   return 'quit';
 }
+
+/** 崩溃判定上下文（工单 07）：退出流程标志与后端停止请求标志。 */
+export interface ExitContext {
+  /** 真退出流程在途（before-quit 已放行，exit 属预期收口）。 */
+  quitting: boolean;
+  /** 已对后端发起过 stop（SIGTERM 在途/已收口，exit 属预期）。 */
+  stopRequested: boolean;
+}
+
+/**
+ * 意外退出判定（工单 07 崩溃恢复的互斥位）：退出流程在途或已主动 stop → 预期收口；
+ * 两者皆否的 exit = 崩溃 → 恢复对话框。restart 后由调用方复位上下文。
+ */
+export function isUnexpectedExit(ctx: ExitContext): boolean {
+  return !ctx.quitting && !ctx.stopRequested;
+}

@@ -149,6 +149,7 @@ describe('startBackend', () => {
     const spawnFn = vi.fn(() => child);
     const pending = startBackend({ ...base, port: 18973, spawnFn });
     child.stdout!.write('boot log\n');
+    child.stderr!.write('warn line\n'); // stderr 尾部持续滚动（handle.stderrTail 诊断源）
     child.stdout!.write(`${ANCHOR_PREFIX}http://127.0.0.1:18973/?token=ff\n`);
     const handle = await pending;
     expect(spawnFn).toHaveBeenCalledWith(
@@ -160,6 +161,7 @@ describe('startBackend', () => {
       }),
     );
     expect(handle.url).toBe('http://127.0.0.1:18973/?token=ff');
+    expect(handle.stderrTail()).toContain('warn line'); // 崩溃诊断源（工单 07）：句柄上可取 stderr 尾部
   });
 
   it('锚点前的所有人读行被忽略（壳认锚点不认文案）', async () => {

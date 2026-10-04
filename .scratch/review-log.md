@@ -698,3 +698,11 @@
 - **实现期实测逮出（审查前自逮）**：**Electron quit-before-ready 丢弃**——app.quit() 在 ready 前调用不生效，二实例带全量启动链驻留（自己拉起了后端 port 59764）；修复 !gotLock 分支 app.exit(0) + whenReady 守卫双保险。此行为与官方单实例文档示例（app.quit 形态）在含 before-quit preventDefault 编排的壳里冲突，值得记档。
 - **模式化问题（新）**：①**两处「聚焦响应」守卫不对称**——routeDeepLink 有 window 守卫、second-instance 无深链分支没有，同文件姊妹路径守卫必须并排核对（M37-03「命名三重奏」同族：成对出现的路径成对审查）；②**事件回调的 safely 纪律**——凡注册进事件面的回调（菜单/托盘/ipc/second-instance）一律 safely 包裹，漏包一处 = 崩壳面；③**退出类调用的时机语义**——quit/exit 在 ready 前后语义不同，编排壳里二实例/启动期分支一律 exit。
 - **对后续建议**：08 打包态验证清单加「未运行拉起」（Info.plist 注册形态）与「打包态通知 permission 复验」；smokeSequence 08 期按票分段函数化。
+
+### 2026-10-04 · M37 工单 07 审查（1.3.0 分支，工作树 vs HEAD a0c1cee8：崩溃恢复对话框）
+
+- **范围/基点**：工作树 vs a0c1cee8，desktop 三文件（backend stderrTail/quit-orchestration isUnexpectedExit/main.ts 三函数）+ 两测试，覆盖率 100%（双轴 Standards/Spec；行级/Java 轴豁免——零 Java diff，沿 03/05/06 口径）。
+- **双轴**：Standards（硬 1/P2 1/P3 4）+ Spec（符合 3/记档缺口 3/偏差 5）。
+- **发现与修复**：硬违规 1 全修——restartBackend 两出口 showErrorBox 无 smoke 门控（重启失败挂死自动化），统一 fail() 出口（smoke stderr+exit(1) / 交互对话框）。P2 修 1——重启 await 期间 Cmd-Q 漏网（新句柄无人 stop 成孤儿占端口）：await 返回后复查 quitting → stop 新句柄。P3 修 4（monitor 回调兜底/smoke 兜底置位对称/对话框诊断 1200 字符 DSH 先例/头注释序列漂移第 4 犯位置）。记档 6（薄壳张力/收口三连/防御不可达/固定 delay/退出分支援引 04 证据/重启分支 smoke 替代口径）。
+- **模式化问题（新）**：①**async 编排的取消检查点**——await 之后的代码运行在世界已可能改变（用户退出/流程转向），长 await 返回后必须复查流程标志再消费结果（本例 spawn 出的新后端险成孤儿）；②**失败出口的分流要成套**——一处失败路径加了 smoke 分流，同函数后续新增出口必须同款（restartBackend 三出口两造一改补齐）；③**诊断信息分层截断**——日志层全量（8KB 滚动）、对话框层 1200 字符（DSH 先例）、日志行 120 字符，各层消费者不同截断点不同。
+- **对后续建议**：08 收口票的 mac 真人验收件再+1 项「崩溃恢复对话框本体」（kill 后端看框、两按钮各走一遍）；smokeSequence 分段函数化在 08 一并做（已三次记档临界）。

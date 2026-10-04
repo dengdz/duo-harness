@@ -5,7 +5,7 @@
  * 失败走原生指引对话框（--smoke 验收模式退化为 stderr 退出——模态框无人点会挂死
  * 自动化）。--smoke 序列：加载截屏 → 关窗（验证拦截隐藏）→ 托盘切换复原 → 复原
  * 截屏 → 通知桥断言（桥在场/门控双态/真通知）→ 单实例二次启动即退 + 深链唤起聚焦
- * （工单 06）→ 退出。
+ * （工单 06）→ kill 后端崩溃恢复（检测/自动重启/原窗重连，工单 07）→ 退出。
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron';
 import { execFileSync, spawn } from 'node:child_process';
@@ -24,7 +24,7 @@ import {
   type BackendHandle,
 } from './backend';
 import { extractUrlFromArgv, parseDeepLink } from './deep-link';
-import { resolveQuit } from './quit-orchestration';
+import { isUnexpectedExit, resolveQuit } from './quit-orchestration';
 import {
   createTrayActions,
   shouldInterceptClose,
@@ -39,6 +39,8 @@ let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let quitConfirming = false; // 探活/征询窗口内的二次退出重入守卫（Cmd-Q 连按、托盘双击）
+let backendStopRequested = false; // 已对后端发起 stop（崩溃判定的互斥位，工单 07）
+let launchParams: { javaPath: string; jarPath: string } | null = null; // 重启复用的拉起参数（工单 07）
 
 /** 关窗拦截只在 darwin 生效（mac 惯例关窗驻留）；其他平台关窗即退出（window-all-closed 兜底）。 */
 const interceptHideOnClose = process.platform === 'darwin';
@@ -129,6 +131,89 @@ const controlDeps: WindowControlDeps = {
   revealItemInFolder: (item) => shell.showItemInFolder(item),
   dataDir,
 };
+
+/** 崩溃恢复入口（工单 07，DSH 恢复对话框范式）：意外退出 → 诊断摘要 + 重启/退出两动作。
+ * --smoke 自动化模式跳过对话框自动重启（对话框本体留真人验收——03/05 同口径）。 */
+function handleBackendExitUnexpected(stderrTail: string): void {
+  console.error('duo:shell backend exited unexpectedly');
+  if (process.argv.includes('--smoke')) {
+    console.log(`duo:smoke crash-detected stderrTail=${JSON.stringify(stderrTail.slice(-120))}`);
+    void restartBackend();
+    return;
+  }
+  const choice = dialog.showMessageBoxSync({
+    type: 'error',
+    buttons: ['重启后端', '退出应用'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'duo 后端意外退出',
+    // 对话框诊断截断 1200 字符（DSH 恢复对话框先例；句柄上全量尾 8KB 供日志）
+    detail: stderrTail ? `—— stderr 尾部 ——\n${stderrTail.slice(-1200)}` : '（无诊断输出）',
+  });
+  if (choice === 0) {
+    void restartBackend();
+  } else {
+    quitting = true;
+    app.quit();
+  }
+}
+
+/** 重启路径（工单 07）：复用首启拉起参数走完整编排链（探测→spawn→锚点），原窗重连新址。 */
+async function restartBackend(): Promise<void> {
+  const smoke = process.argv.includes('--smoke');
+  const fail = (message: string, detail: string): void => {
+    console.error(`duo:shell restart failed: ${message}\n${detail}`);
+    if (smoke) {
+      // 自动化冒烟不弹模态框（M37-02 模式③：挂死点）——stderr 明示后非零退出
+      app.exit(1);
+      return;
+    }
+    dialog.showErrorBox('duo 后端重启失败', `${message}\n${detail}`);
+    quitting = true;
+    app.quit();
+  };
+  if (!launchParams) {
+    fail('后端启动参数缺失，无法重启', '');
+    return;
+  }
+  try {
+    const port = await findFreePort();
+    backendStopRequested = false; // 新句柄新周期（崩溃判定互斥位复位）
+    const handle = await startBackend({ ...launchParams, port });
+    if (quitting) {
+      // 重启 await 期间用户已真退（审查实锤漏网）：新句柄必须 stop，防孤儿 java 占端口
+      handle.stop();
+      return;
+    }
+    backend = handle;
+    monitorBackend(handle);
+    if (window && !window.isDestroyed()) {
+      void window.loadURL(backend.url); // 原窗重连（不重建）
+    } else {
+      window = createWindow(backend.url);
+    }
+    console.log(`duo:shell restarted url=${backend.url}`);
+  } catch (err) {
+    const detail =
+      err instanceof BackendStartError
+        ? `${err.message}${err.stderrTail ? `\n\n—— stderr 尾部 ——\n${err.stderrTail}` : ''}`
+        : String(err);
+    fail('重启失败', detail);
+  }
+}
+
+/** 后端退出监视（工单 07）：意外退出（非退出流程、未主动 stop）→ 恢复对话框。 */
+function monitorBackend(handle: BackendHandle): void {
+  void handle.exited.then(() => {
+    try {
+      if (isUnexpectedExit({ quitting, stopRequested: backendStopRequested })) {
+        handleBackendExitUnexpected(handle.stderrTail());
+      }
+    } catch (err) {
+      console.error('duo:shell crash-monitor failed:', err); // 事件回调兜底（自动化下不弹框）
+    }
+  });
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -268,6 +353,15 @@ async function smokeSequence(win: BrowserWindow): Promise<void> {
   smokeAssert(secondExited, `单实例锁：二次启动即退=${secondExited}（后端不重复拉起）`);
   smokeAssert(lastDeepLink === 'duo://open', `deep-link received=${lastDeepLink}（运行中唤起）`);
   smokeAssert(win.isVisible(), `deep-link 后主窗可见=${win.isVisible()}（唤起聚焦）`);
+  // 崩溃恢复（工单 07）：外部 kill 后端（未 stop）→ 意外退出检测 → smoke 自动重启 → 原窗重连新址
+  const firstUrl = backend!.url;
+  execFileSync('kill', [String(backend!.child.pid)]);
+  await delay(4000); // 检测 + 重启编排 + 新后端锚点（JVM 冷启约 2s）
+  smokeAssert(!!backend && backend.url !== firstUrl, `崩溃后重启换址=${backend ? backend.url.slice(0, 33) : 'no'}…（检测→重启链路）`);
+  smokeAssert(
+    win.webContents.getURL().startsWith(new URL(backend!.url).origin),
+    `窗口重连新后端=${win.webContents.getURL().slice(0, 33)}…`,
+  );
 }
 
 app.whenReady().then(async () => {
@@ -280,9 +374,12 @@ app.whenReady().then(async () => {
     console.log(`duo:shell java=${javaPath} major=${major}`);
     const jarPath = resolveJarPath();
     console.log(`duo:shell jar=${jarPath}`);
+    launchParams = { javaPath, jarPath }; // 重启复用（工单 07）
     const port = await findFreePort();
     console.log(`duo:shell port=${port}`);
     backend = await startBackend({ jarPath, javaPath, port });
+    backendStopRequested = false;
+    monitorBackend(backend);
     console.log(`duo:shell ready url=${backend.url}`);
     window = createWindow(backend.url);
     setupTray();
@@ -297,6 +394,7 @@ app.whenReady().then(async () => {
         void smokeSequence(window!)
           .catch((err) => {
             console.error(`duo:smoke failed: ${err}`);
+            backendStopRequested = true; // 与启动失败路径对称（成对路径并排核对）
             backend?.stop(); // app.exit 绕过 before-quit：显式停后端（防 java 孤儿占端口）
             app.exit(1);
           })
@@ -312,6 +410,7 @@ app.whenReady().then(async () => {
     if (smoke) {
       // 自动化冒烟不弹模态框（无人点会挂死验收）：stderr 明示后非零退出；
       // app.exit 绕过 before-quit，后端须在此显式停（防 java 孤儿占端口）
+      backendStopRequested = true;
       backend?.stop();
       app.exit(1);
       return;
@@ -362,6 +461,7 @@ async function confirmAndQuit(): Promise<void> {
   }
   quitting = true;
   if (backend) {
+    backendStopRequested = true; // 预期收口（崩溃监视互斥位，工单 07）
     backend.stop();
     // SIGKILL 兜底宽限 3.5s：CliPlugin 死锁回归界为 stop 3s 内完成（BUG-20261004-01），
     // 2s 会截断合法最慢收口（ZCode host 强杀兜底同款 ≥3.5s 先例）
