@@ -74,7 +74,8 @@ function desktopNotify(title, body) {
     const n = new Notification(title, { body: body || '', silent: false });
     n.onclick = () => bridge.focusWindow(); // 点通知回主窗（经壳 IPC 聚焦）
   } catch (e) {
-    // 通知失败静默：呈现增强不打断对话主流程
+    // 通知失败不打断对话主流程，但必须留诊断（BUG-20261005-01：静默吞=诊断盲区）
+    console.warn('[桌面通知] 发送失败:', e);
   }
 }
 

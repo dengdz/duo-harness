@@ -243,10 +243,11 @@ function createWindow(url: string): BrowserWindow {
 
 // 通知点击 → 聚焦主窗（preload 桥转发，工单 05）
 ipcMain.on('duo:focus-window', () => safely(() => showMainWindow(controlDeps))());
-// 通知门控的可见态源（工单 05）：渲染层 visibilityState 在 hide() 后不翻转（实测），
-// 主进程 isVisible/isMinimized 为准——preload sendSync 同步取（门控点频次低）
-ipcMain.on('duo:window-visible', (event) => {
-  event.returnValue = !!window && window.isVisible() && !window.isMinimized();
+// 通知门控的聚焦态源（工单 05→07 勘误 BUG-20261005-01）：切应用后窗口仍在屏上
+// （isVisible=true 会误判「可见中不扰」致通知永不触发），聚焦判据以 isFocused 为准——
+// preload sendSync 同步取（门控点频次低）
+ipcMain.on('duo:window-focused', (event) => {
+  event.returnValue = !!window && window.isFocused();
 });
 
 /** 托盘模板图标（工单 08）：黑色「哆」模板图（gen-icon 无头渲染产物，macOS 随菜单栏明暗自适应）。 */
@@ -312,13 +313,21 @@ async function smokeSegmentLaunchHideNotify(win: BrowserWindow, base: string): P
   // 通知桥（工单 05）：桥在场 + 门控双态（可见不扰 / 隐藏放行）+ 真通知点击链路
   const bridgeReady = await win.webContents.executeJavaScript('!!window.duoDesktop');
   smokeAssert(bridgeReady, 'duoDesktop 桥在场（preload 装载）');
-  const gateVisible = await win.webContents.executeJavaScript('window.duoDesktop.shouldNotify()');
-  smokeAssert(gateVisible === false, `notify-gate visible=${gateVisible}（聚焦中不扰）`);
+  const gateFocused = await win.webContents.executeJavaScript('window.duoDesktop.shouldNotify()');
+  smokeAssert(gateFocused === false, `notify-gate focused=${gateFocused}（聚焦中不扰）`);
+  // BUG-20261005-01 回归锁：切应用形态（窗口在屏但不聚焦）必须放行通知
+  win.blur();
+  await delay(300);
+  const gateBlurred = await win.webContents.executeJavaScript('window.duoDesktop.shouldNotify()');
+  smokeAssert(gateBlurred === true, `notify-gate blurred=${gateBlurred}（可见但不聚焦→发）`);
+  win.focus();
+  await delay(200);
   win.close();
   await delay(500);
   smokeAssert(!win.isVisible(), `after-close visible=${win.isVisible()}（关窗拦截隐藏）`);
   const gateHidden = await win.webContents.executeJavaScript('window.duoDesktop.shouldNotify()');
   smokeAssert(gateHidden === true, `notify-gate hidden=${gateHidden}（后台触发放行）`);
+  win.focus(); // 隐藏态诊断后复原聚焦，托盘复原段语义不变
   // 隐藏态发真通知（落 macOS 通知中心）：点击走 focusWindow IPC——真人验收项，此处只验链路不抛错
   const permission = await win.webContents.executeJavaScript(
     `(function () {

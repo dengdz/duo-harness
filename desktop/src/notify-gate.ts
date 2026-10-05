@@ -6,15 +6,17 @@
  */
 
 /**
- * 是否应发桌面通知。
+ * 是否应发桌面通知（BUG-20261005-01 修正语义：判「聚焦」不判「可见」——切应用后
+ * duo 窗口多半仍在屏上（isVisible=true），按可见判会永远不发；「人在看 duo」的
+ * 信号是窗口聚焦）。
  *
- * @param visibility 页面可见态（document.visibilityState：visible/hidden/…）
+ * @param focused 主窗是否聚焦（main 经 win.isFocused() 注入）
  * @param permission 通知权限（Notification.permission：granted/default/denied）
- * @return true = 发通知（后台触发且权限已授）
+ * @return true = 发通知（用户不在看 duo 且权限已授）
  */
-export function shouldNotify(visibility: string, permission: string): boolean {
-  if (visibility !== 'hidden') {
-    return false; // 聚焦/可见中不扰——通知是「人不在场」的到达通道
+export function shouldNotify(focused: boolean, permission: string): boolean {
+  if (focused) {
+    return false; // 聚焦中不扰——用户正看着 duo
   }
   return permission === 'granted';
 }

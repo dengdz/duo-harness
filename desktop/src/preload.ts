@@ -8,12 +8,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { shouldNotify } from './notify-gate';
 
 contextBridge.exposeInMainWorld('duoDesktop', {
-  /** 通知门控：页面可见中不扰 / 权限未授不发。可见态取自主进程 win.isVisible()——
-   * 本版 Electron 在 macOS 上 hide() 后 document.visibilityState 仍为 visible
-   * （首跑冒烟实测），渲染层可见信号不可靠；权限在渲染层读（Notification 归属页）。 */
+  /** 通知门控：主窗聚焦中不扰 / 权限未授不发。聚焦态取自主进程 win.isFocused()——
+   * 渲染层 visibilityState 在 hide() 后不翻转（首跑冒烟实测）、且切应用后窗口仍在
+   * 屏上（isVisible=true）会被误判「可见中不扰」致通知永不触发（BUG-20261005-01）；
+   * 权限在渲染层读（Notification 归属页）。 */
   shouldNotify: (): boolean =>
     shouldNotify(
-      ipcRenderer.sendSync('duo:window-visible') ? 'visible' : 'hidden',
+      ipcRenderer.sendSync('duo:window-focused') === true,
       typeof Notification !== 'undefined' ? Notification.permission : 'denied',
     ),
   /** 通知点击回主窗：经主进程聚焦（渲染层无窗体控制权）。 */

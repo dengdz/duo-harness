@@ -392,3 +392,11 @@
 - **根因**：`app.js` §3 SSE `handle()` 调 `render.dispatch(event)` 未传 `replaying` 标志（缺省 false）——replay/start 与 done 之间的**历史** command/done(export) 事件被当实时命令再次触发下载副作用。对照：分页路径（replayInto `dispatch(ev, true)`）与子会话抽屉均正确传标志，唯独主会话回放漏传。app.js 本期（M28）零改动——git diff 实证为既有缺陷，非重构引入。
 - **修复**：`render.dispatch(event, replaying)` 一行——回放标志随帧传递，与另两条回放路径同口径；replay/done 后的实时事件仍带 false 正常触发下载。
 - **防复发**：「实时副作用挂回放标志」的判定已有两处正确先例，第三处（主回放）漏网——前端新增实时副作用时须自问「这条渲染路径的 replaying 从哪来」；验收走查「刷新/切换」组合是抓此类缺陷的固定动作。
+
+## BUG-20261005-01 · 通知门控判「可见」判「聚焦」——切应用后通知永不触发
+
+- **日期**：2026-10-05（M37 工单 05 用户真人验收第 2 组逮出）
+- **症状**：用户按验收步骤发任务后切到别的应用，审批等待/任务完成均无系统通知——通知管线对「窗口在屏上但不聚焦」这一最常见形态完全不触发。
+- **根因**：门控可见态源取 `win.isVisible()`（工单 05 因「渲染层 visibilityState 失真」从渲染层改主进程时选错了替身信号）——切应用后 duo 窗口多半仍在屏上（isVisible=true）→ 门控判「可见中不扰」→ 永不发。smoke 只断言「关窗隐藏」态（isVisible=false）故全绿——测试形态没覆盖用户真实场景。
+- **修复**：门控判据改「聚焦中不扰」（`win.isFocused()`，preload 通道同步改名 duo:window-focused，notify-gate 参数语义 focused:boolean）——人在看 duo 才静默，切走/最小化/隐藏都通知；smoke 断言补「可见但不聚焦 → 发」用例；渲染层 desktopNotify 失败静默 catch 补 console.warn（消诊断盲区）。
+- **防复发**：①「不扰」类判据的信号选型对表用户场景（切应用 ≠ 关窗——macOS 主流形态是前者），门控信号三态实测（聚焦/失焦/隐藏）而非双态；②渲染层 Notification 构造失败不得静默吞（console.warn 落诊断）。
