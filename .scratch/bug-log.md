@@ -400,3 +400,4 @@
 - **根因**：门控可见态源取 `win.isVisible()`（工单 05 因「渲染层 visibilityState 失真」从渲染层改主进程时选错了替身信号）——切应用后 duo 窗口多半仍在屏上（isVisible=true）→ 门控判「可见中不扰」→ 永不发。smoke 只断言「关窗隐藏」态（isVisible=false）故全绿——测试形态没覆盖用户真实场景。
 - **修复**：门控判据改「聚焦中不扰」（`win.isFocused()`，preload 通道同步改名 duo:window-focused，notify-gate 参数语义 focused:boolean）——人在看 duo 才静默，切走/最小化/隐藏都通知；smoke 断言补「可见但不聚焦 → 发」用例；渲染层 desktopNotify 失败静默 catch 补 console.warn（消诊断盲区）。
 - **防复发**：①「不扰」类判据的信号选型对表用户场景（切应用 ≠ 关窗——macOS 主流形态是前者），门控信号三态实测（聚焦/失焦/隐藏）而非双态；②渲染层 Notification 构造失败不得静默吞（console.warn 落诊断）。
+- **处置更新（2026-10-05 当日）**：聚焦门控修复后用户重验**仍无通知**——投递层问题（疑似未签名应用 macOS TCC 授权链路）未及深挖；用户裁定**砍除通知功能**（渲染层五事件点/门控/preload 桥全量移除，渲染层回退 e95294dc 形态），本 bug 以「功能移除」终结而非修复闭环；重启条件 = 1.4.0「双击即用」期与签名/TCC 授权一并做透。

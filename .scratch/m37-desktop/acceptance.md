@@ -4,7 +4,7 @@
 
 ## 一、作者自跑证据（已留档，2026-10-04 首跑 + 2026-10-05 用户代测会话）
 
-- **dev 态全链冒烟**（`npm run smoke`，15s 收口，断言硬失败即非零退出）：拉起 → 窗口加载（截图 [.scratch/m37-desktop/smoke-window.png](smoke-window.png)）→ 关窗拦截隐藏 → 托盘切换复原（复原图 [smoke-window-reopened.png](smoke-window-reopened.png)）→ 通知桥双态 + permission granted + 真通知发射 → 单实例二次启动即退 → `duo://open` 收达聚焦 → **外部 kill 后端 → 自动重启换址 → 原窗重连** → 无 java 孤儿
+- **dev 态全链冒烟**（`npm run smoke`，15s 收口，断言硬失败即非零退出）：拉起 → 窗口加载（截图 [.scratch/m37-desktop/smoke-window.png](smoke-window.png)）→ 关窗拦截隐藏 → 托盘切换复原（复原图 [smoke-window-reopened.png](smoke-window-reopened.png)）→ 单实例二次启动即退 → `duo://open` 收达聚焦 → **外部 kill 后端 → 自动重启换址 → 原窗重连** → 无 java 孤儿
 - **打包态实证**：`CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac` 出 `out/mac-arm64/duo.app` + zip；`open duo.app` → **后端自包拉起**（`/usr/bin/java -jar .../duo.app/Contents/Resources/backend/duo-harness-1.2.0.jar` 实录，GUI 启动环境 login shell 探测过）；**未运行拉起**：退出后 `open duo://open` → Info.plist 协议拉起 duo.app（5 进程实录）；包内核验（jar/icns/Info.plist CFBundleURLTypes）全过
 - **用户代测会话（2026-10-05，受用户委托「你帮我测试一下」）**：
   - T1 idle 基线：`turnActive=false` ✓
@@ -20,8 +20,8 @@
 1. 双击 duo.app（或点 dock 图标）→ 窗口出现、Web UI 可用
 2. 发一个会长跑的任务（如「看看这个仓库的结构」）
 3. 切到别的应用（窗口隐藏或被遮挡）
-4. agent 卡在审批/提问时 → **系统通知出现**；点通知 → 主窗聚焦、审批卡在眼前
-5. 作答放行 → 任务跑完 → **「任务完成」通知出现**
+4. （通知功能已砍除——此步跳过）
+5. 等任务跑完，窗口切回时看到结果
 6. 任务在跑时 **Cmd-Q** → 「后端还有 agent 在跑」确认框 → 点「取消」→ 应用常驻、任务继续
 7. 任务跑完后再 Cmd-Q → 干净退出 → 终端 `ps aux | grep duo-harness` 无残留
 

@@ -12,7 +12,7 @@
 
 ## Status
 
-in-progress（2026-10-04 实现完成、双轴审查修复毕、门控双态与真通知链路真机实证；**三类真人触发 + 点击聚焦待用户手动验收**——与 03 托盘手势并作 mac 验收件）
+removed（2026-10-05 用户裁定砍除：全量实现并修复聚焦门控后，真人验收仍未见到系统通知——投递层问题疑似未签名应用的 macOS 通知授权链路，未及深挖；功能全量移除，重启条件 = 「双击即用」期与签名/TCC 授权一并做透，1.4.0 候选。移除 diff 见 BUG-20261005-01 关联提交）
 
 ## Checklist
 
@@ -20,9 +20,11 @@ in-progress（2026-10-04 实现完成、双轴审查修复毕、门控双态与�
 - [x] 壳侧通知点击 → 聚焦主窗承接（preload 桥 → IPC → showMainWindow）
 - [x] Electron 通知平台行为验证（permission granted 实测；**发现 visibilityState 失真缺陷**——门控源改主进程 isVisible，兜底开关未启用原因记档）
 - [x] S3 缝扩展：通知门控单测（notify-gate 4 例三态矩阵：可见不扰/hidden+granted 发/未授不发/未知态 fail-closed）
-- [x] 真机验证：门控双态 + 真通知发射（smoke 断言 + permission 钉死）；**三类真人触发 + 点击聚焦待真人**（见 Comments）
+- [x] 真机验证：门控双态 + 真通知发射（smoke 断言 + permission 钉死）；三类真人触发始终未在用户侧复现——**功能经用户裁定移除（2026-10-05）**，重启条件见 Status
 
 ## Comments
+
+- **移除裁定（2026-10-05）**：聚焦门控修复（BUG-20261005-01）后用户重验仍无通知——投递层（疑似未签名应用 macOS TCC 授权）未及深挖，用户裁定砍除。移除面：渲染层五事件点与助手函数（app.js 回退至 e95294dc 形态）、notify-gate/preload/测试三文件删除、main.ts 桥接线与 smoke 通知断言移除、esbuild preload 打包步移除。保留面：无（桥零方法，preload 整文件退役）。重启设计要点（1.4.0）：签名/公证与 TCC 授权先行、门控判聚焦（isFocused）、诊断不再静默吞。
 
 - **门控可见态源偏离记档（票面明写 visibilityState 门控）**：Electron（macOS）实测 `win.hide()` 后渲染层 `document.visibilityState` 仍为 visible（诊断脚本三态实证，首跑冒烟断言失败逮出）——渲染层可见信号不可靠。处置：门控**语义**不变（notify-gate.ts 纯函数保留 visibilityState 形参，S3 4 例锁定），**可见态源**改主进程 `win.isVisible() && !isMinimized()`（preload 经 sendSync 取）。spec 通知管线定稿节已记档；票面预设「壳侧订阅兜底开关」未启用——实测出入是可见态信号而非通知透传，第三路径为主路径修源，无需兜底。
 - **事件点五而非三（Q10 映射）**：审批等待（approval/requested）+ 提问等待（question/requested）= Q10「审批/提问等待」一类；turn 完成（assistant/message 实时帧）=「turn 完成」；执行出错（run/error）+ 任务已中断（assistant/interrupted）=「错误中断」一类。全部 `!replaying` 门控（历史重放不扰）。

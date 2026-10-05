@@ -5,7 +5,7 @@
   "description": "duo-harness 桌面壳（ADR-0039）：Electron 壳承载 Web 呈现位——拉起 Java 后端、托盘/通知/菜单/深链（后两票落地）",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && esbuild src/preload.ts --bundle --platform=node --external:electron --outfile=dist/preload.js",
+    "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dev": "npm run build && electron .",
     "smoke": "npm run build && electron . --smoke"
