@@ -2881,6 +2881,23 @@ function anchorMenuToButton(menu, btn) {
   menu.style.visibility = '';
 }
 
+/** 选择器菜单外点收起（ZCode 同款交互，用户裁定 2026-10-05；@补全下拉同款先例）：
+ *  mousedown 落在任一菜单外且不在触发按钮上即收起全部——点触发按钮本身交给按钮
+ *  自己的 toggle（避免「关了又开」闪烁），菜单内点击交给菜单项选中收起。 */
+function closeAllSelectorMenus() {
+  for (const id of ['modeMenu', 'llmMenu', 'effortMenu']) {
+    const m = document.getElementById(id);
+    if (m) m.hidden = true;
+  }
+}
+document.addEventListener('mousedown', (e) => {
+  const t = e.target;
+  if (t.closest && (t.closest('.mode-menu') || t.closest('.mode-selector'))) {
+    return; // 菜单内（选中收起）/ 触发按钮（toggle 收起）不抢
+  }
+  closeAllSelectorMenus();
+});
+
 /* ===== §4.5 四态档位选择器（M38 工单 03，ADR-0040 决策一）：composer 左下角
    四态切换（计划模式/变更前确认/自动编辑/完全访问）——点选经斜杠分发触发 /plan
    或 /permission <档>（既有 ANY busySafe 双面命令），permission/mode 与计划态事件
