@@ -1691,6 +1691,10 @@ const sse = (() => {
     render.dispatch(event, replaying);
     if (event.type === 'assistant/message' || event.type === 'run/error'
         || event.type === 'assistant/interrupted') app.clearSendBusy();
+    // 档位/计划跟随（M38 工单 03）：permission/mode 与 plan 态事件更新选择器高亮
+    if (!replaying && event.type === 'permission/mode') {
+      app.setModeSelectorState(event.text); // text = 档位 configName
+    }
     if (event.type !== 'assistant/chunk') app.refreshStatus();
   }
 
@@ -2798,6 +2802,59 @@ sse.connect();
   });
 })();
 
+/* ===== §4.5 四态档位选择器（M38 工单 03，ADR-0040 决策一）：composer 左下角
+   四态切换（计划模式/变更前确认/自动编辑/完全访问）——点选经斜杠分发触发 /plan
+   或 /permission <档>（既有 ANY busySafe 双面命令），permission/mode 与计划态事件
+   跟随高亮（sse.handle 调 window.setModeSelectorState）。顶层段零 IIFE 依赖 ===== */
+(() => {
+  const MODE_LABELS = {
+    plan: '计划模式',
+    'read-only': '变更前确认',
+    'workspace-write': '自动编辑',
+    'danger-full-access': '完全访问'
+  };
+  let currentMode = null;
+
+  function label(mode) {
+    return MODE_LABELS[mode] || mode;
+  }
+
+  function setSelectorState(mode) {
+    if (mode === currentMode) return;
+    currentMode = mode;
+    const labelEl = document.getElementById('modeSelectorLabel');
+    if (labelEl) labelEl.textContent = label(mode);
+  }
+  window.setModeSelectorState = setModeSelectorState; // sse.handle 跟随钩子（M29 边界纪律：顶层暴露）
+
+  function pickMode(mode) {
+    if (mode === currentMode) return;
+    // 斜杠分发既有路径：/permission <档>（ANY busySafe 双面）；plan → /plan
+    const line = mode === 'plan' ? '/plan' : '/permission ' + mode;
+    const input = document.getElementById('input');
+    if (input) {
+      input.value = line;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      input.value = '';
+    } else {
+      console.warn('[档位选择] 输入框未就绪，未发送:', line);
+    }
+  }
+
+  window.bootstrapModeSelector = function bootstrapModeSelector() {
+    const btn = document.getElementById('modeSelector');
+    const menu = document.getElementById('modeMenu');
+    if (!btn || !menu) return;
+    btn.addEventListener('click', () => { menu.hidden = !menu.hidden; });
+    menu.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-mode]');
+      if (!b) return;
+      menu.hidden = true;
+      pickMode(b.dataset.mode);
+    });
+  };
+})();
+
 /* ===== §5 主题机制（M36 工单 04，ADR-0038 决策二；缺省主题 2026-10-05 用户裁定
    改亮色——注册表在册 light 则缺省应用，无 light 回落内置暗色）：呈现贡献口聚合
    端点 → 主题选择器 → token 值集套根元素；选择经 localStorage 持久化（跨标签一致
@@ -2906,4 +2963,5 @@ sse.connect();
 
   refreshThemes();
   setInterval(refreshThemes, 5000); // 与状态轮询同拍：主题停/卸后 5s 内自动回落
+  bootstrapModeSelector(); // 四态档位选择器接线（§4.5，M38 工单 03）
 })();

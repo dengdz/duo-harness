@@ -37,6 +37,17 @@
     <div id="interactionDock" hidden></div>
     <div class="composer">
       <div id="atDropdown" hidden></div>
+      <button id="modeSelector" type="button" class="mode-selector" title="安全等级：点击切换">
+        <span id="modeSelectorIcon">🛡</span>
+        <span id="modeSelectorLabel">完全访问</span>
+        <span class="mode-caret">▾</span>
+      </button>
+      <div id="modeMenu" class="mode-menu" hidden>
+        <button type="button" data-mode="plan">计划模式<span class="mode-desc">编辑前先出计划。</span></button>
+        <button type="button" data-mode="read-only">变更前确认<span class="mode-desc">改文件前先问我。</span></button>
+        <button type="button" data-mode="workspace-write">自动编辑<span class="mode-desc">区内自动编辑文件。</span></button>
+        <button type="button" data-mode="danger-full-access">完全访问<span class="mode-desc">减少确认次数。</span></button>
+      </div>
       <input id="input" placeholder="输入消息，回车发送…（/技能名 直调）">
       <button id="send">发送</button>
     </div>
