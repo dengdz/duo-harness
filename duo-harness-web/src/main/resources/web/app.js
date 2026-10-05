@@ -1695,6 +1695,14 @@ const sse = (() => {
     if (!replaying && event.type === 'permission/mode') {
       app.setModeSelectorState(event.text); // text = 档位 configName
     }
+    // 模型/思考跟随（M38 工单 04）：model/intent、model/effort 事件更新选择器标签
+    // （含回放——重放尾态即会话当前模型/思考，选择器标签跨会话切换跟随）
+    if (event.type === 'model/intent') {
+      window.setLlmSelectorState && window.setLlmSelectorState(event.text, null);
+    }
+    if (event.type === 'model/effort') {
+      window.setLlmSelectorState && window.setLlmSelectorState(null, event.text);
+    }
     if (event.type !== 'assistant/chunk') app.refreshStatus();
   }
 
@@ -2855,6 +2863,100 @@ sse.connect();
   };
 })();
 
+/* ===== §4.6 模型/思考选择器（M38 工单 04，ADR-0040 决策二/三）：composer 左下角
+   第二枚选择器——模型清单（llm.models 白名单，GET /api/llm-config）与四档思考，
+   点选经斜杠分发触发换链（ANY busySafe 双面命令，busy 中不打断）；当前值跟随
+   model/intent、model/effort 事件（单源：SSE 事件驱动标签与高亮）。顶层段零 IIFE
+   依赖 ===== */
+(() => {
+  const EFFORTS = ['off', 'low', 'medium', 'high'];
+  let llmModels = [];
+  let currentModel = null;
+  let currentEffort = 'medium';
+
+  async function refreshLlmModels() {
+    try {
+      const res = await fetch('/api/llm-config');
+      if (!res.ok) return;
+      const cfg = await res.json();
+      llmModels = Array.isArray(cfg.models) ? cfg.models : [];
+      renderLlmMenu();
+    } catch (e) {
+      // 端点缺席/瞬时失败：菜单打开时重试（静默不打断对话）
+    }
+  }
+
+  function renderLlmMenu() {
+    const modelList = document.getElementById('llmModelList');
+    const effortList = document.getElementById('llmEffortList');
+    if (!modelList || !effortList) return;
+    modelList.innerHTML = '';
+    effortList.innerHTML = '';
+    for (const m of llmModels) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'llm-item' + (m === currentModel ? ' current' : '');
+      b.textContent = m;
+      b.addEventListener('click', () => pickSlash('/model ' + m));
+      modelList.appendChild(b);
+    }
+    for (const level of EFFORTS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'llm-item' + (level === currentEffort ? ' current' : '');
+      b.textContent = '思考: ' + level;
+      b.addEventListener('click', () => pickSlash('/effort ' + level));
+      efforts.appendChild(b);
+    }
+  }
+
+  function pickSlash(line) {
+    const input = document.getElementById('input');
+    if (input) {
+      input.value = line;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      input.value = '';
+    } else {
+      console.warn('[模型切换] 输入框未就绪，未发送:', line);
+    }
+  }
+
+  window.setLlmSelectorState = function setLlmSelectorState(model, effort) {
+    let dirty = false;
+    if (model && model !== currentModel) { currentModel = model; dirty = true; }
+    if (effort && effort !== currentEffort) { currentEffort = effort; dirty = true; }
+    if (dirty) updateLabel();
+  };
+
+  function updateLabel() {
+    const labelEl = document.getElementById('llmSelectorLabel');
+    if (labelEl) {
+      labelEl.textContent = (currentModel || '模型') + ' · ' + (currentEffort || '思考');
+    }
+    renderLlmMenu();
+  }
+
+  window.initLlmSelector = function initLlmSelector() {
+    const btn = document.getElementById('llmSelector');
+    const menu = document.getElementById('llmMenu');
+    if (!btn || !menu) return;
+    btn.addEventListener('click', () => {
+      if (menu.hidden) {
+        menu.hidden = false;
+        refreshLlmModels().then(renderLlmMenu);
+      } else {
+        menu.hidden = true;
+      }
+    });
+    menu.addEventListener('click', (e) => {
+      if (e.target.closest('button') || e.target.closest('.llm-item')) {
+        menu.hidden = true; // 选中即收起（反馈走 toast/标签，事件驱动）
+      }
+    });
+    renderLlmMenu();
+  };
+})();
+
 /* ===== §5 主题机制（M36 工单 04，ADR-0038 决策二；缺省主题 2026-10-05 用户裁定
    改亮色——注册表在册 light 则缺省应用，无 light 回落内置暗色）：呈现贡献口聚合
    端点 → 主题选择器 → token 值集套根元素；选择经 localStorage 持久化（跨标签一致
@@ -2964,4 +3066,5 @@ sse.connect();
   refreshThemes();
   setInterval(refreshThemes, 5000); // 与状态轮询同拍：主题停/卸后 5s 内自动回落
   bootstrapModeSelector(); // 四态档位选择器接线（§4.5，M38 工单 03）
+  initLlmSelector(); // 模型/思考选择器接线（§4.6，M38 工单 04）
 })();

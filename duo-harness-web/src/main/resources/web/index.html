@@ -48,6 +48,16 @@
         <button type="button" data-mode="workspace-write">自动编辑<span class="mode-desc">区内自动编辑文件。</span></button>
         <button type="button" data-mode="danger-full-access">完全访问<span class="mode-desc">减少确认次数。</span></button>
       </div>
+      <button id="llmSelector" type="button" class="mode-selector" title="模型与思考等级：点击切换">
+        <span id="llmSelectorLabel">模型 · 思考</span>
+        <span class="mode-caret">▾</span>
+      </button>
+      <div id="llmMenu" class="mode-menu llm-menu" hidden>
+        <div class="llm-group-title">模型</div>
+        <div id="llmModelList"></div>
+        <div class="llm-group-title">思考等级</div>
+        <div id="llmEffortList"></div>
+      </div>
       <input id="input" placeholder="输入消息，回车发送…（/技能名 直调）">
       <button id="send">发送</button>
     </div>
