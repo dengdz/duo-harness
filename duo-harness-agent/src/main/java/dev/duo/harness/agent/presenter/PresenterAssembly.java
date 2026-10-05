@@ -57,6 +57,130 @@ public final class PresenterAssembly {
         return LlmAdapters.withRetry(config);
     }
 
+    /** 模型/思考切换结果（M38 工单 01）：换链后的新配置 + 用户面消息。 */
+    public record ConfigSwitch(LlmConfig next, String message) {}
+
+    /**
+     * 切换模型（M38 工单 01，ADR-0040 决策三）：白名单校验 → swap 换链（下一轮生效）
+     * → model/intent 事件落会话；同值不换、清单缺席不可切（模型名决定成本面）。
+     * CLI/Web 共享单点——本呈现位独立，各呈现位传入自己的 activeConfig 与 Swappable。
+     */
+    public static ConfigSwitch switchModel(LlmConfig active, dev.duo.harness.llm.SwappableLlmAdapter swappable,
+                                           String target, Session session) {
+        var models = active.models();
+        if (models.isEmpty()) {
+            return new ConfigSwitch(active, "/model 不可切：config.yml 的 llm 段未声明 models 白名单。");
+        }
+        if (!active.modelAllowed(target)) {
+            return new ConfigSwitch(active, "模型不在白名单: " + target
+                    + "（可切: " + String.join(", ", models) + "）");
+        }
+        if (target.equals(active.model())) {
+            return new ConfigSwitch(active, "已是当前模型: " + target);
+        }
+        LlmConfig next = active.withModel(target);
+        swappable.swap(llmAdapter(next));
+        session.append(dev.duo.harness.session.SessionEvent.modelIntent(target));
+        return new ConfigSwitch(next, "已切换: " + target + "（下一轮对话生效）");
+    }
+
+    /**
+     * 切换思考等级（M38 工单 01）：四档校验 → swap 换链（下一轮生效）→ model/effort
+     * 事件落会话；provider 映射说明随消息（不支持不静默——M24 既有语义）。
+     */
+    public static ConfigSwitch switchEffort(LlmConfig active, dev.duo.harness.llm.SwappableLlmAdapter swappable,
+                                            String target, Session session) {
+        String normalized = target.toLowerCase(java.util.Locale.ROOT);
+        if (!LlmConfig.effortAllowed(normalized)) {
+            return new ConfigSwitch(active, "非法档位: " + target + "（可切: "
+                    + String.join(", ", LlmConfig.EFFORT_LEVELS) + "）");
+        }
+        if (normalized.equals(active.effort())) {
+            return new ConfigSwitch(active, "已是当前档位: " + target);
+        }
+        LlmConfig next = active.withEffort(normalized);
+        swappable.swap(llmAdapter(next));
+        session.append(dev.duo.harness.session.SessionEvent.modelEffort(normalized));
+        return new ConfigSwitch(next, "已切换: " + normalized + "（下一轮对话生效）\n"
+                + LlmConfig.effortNote(next.provider()));
+    }
+
+    /**
+     * /model、/effort 注册（M38 工单 01；查重先到先得——/compact 同款）：升 ANY
+     * 双面，handler 按发起呈现位从登记表取控制器换链——「本呈现位独立」（Web 切只
+     * 影响 Web 链）。web 行先于 cli 行装载：命令由 WebPlugin 先注册、CliPlugin 查重
+     * 跳过；纯 CLI 部署（无 web 行）由 CliPlugin 注册。
+     */
+    public static void registerModelSwitchCommands(Context ctx, CommandsRegistry commands,
+                                                   dev.duo.harness.agent.commands.ModelSwitchRegistry registry) {
+        if (commands.find("model") != null) {
+            return;
+        }
+        commands.register(ctx, new CommandDefinition("model",
+                "查看或切换模型：/model [模型名]（可切清单 = config.yml llm.models 白名单；仅影响当前呈现位执行链）",
+                CommandScope.ANY, true,
+                context -> withSwitchController(context, registry,
+                        (controller, session) -> {
+                            String target = context.args().strip();
+                            return target.isEmpty() ? controller.describeModels()
+                                    : controller.switchModel(target, session);
+                        })));
+        commands.register(ctx, new CommandDefinition("effort",
+                "查看或切换思考等级：/effort [off|low|medium|high]（缺省 medium，下一轮对话生效；仅影响当前呈现位执行链）",
+                CommandScope.ANY, true,
+                context -> withSwitchController(context, registry,
+                        (controller, session) -> {
+                            String target = context.args().strip();
+                            return target.isEmpty() ? controller.describeEfforts()
+                                    : controller.switchEffort(target, session);
+                        })));
+    }
+
+    /** 查看文本（/model 无参，CLI/Web 共享）：active null = mock 注入形态；白名单缺席 = 不可切（CLI 既有 UX 逐字保留）。 */
+    public static String describeModels(LlmConfig active) {
+        if (active == null) {
+            return "当前装配不支持运行时切模型（LLM 执行链为注入 mock）。";
+        }
+        var models = active.models();
+        if (models.isEmpty()) {
+            return "/model 不可切：config.yml 的 llm 段未声明 models 白名单。";
+        }
+        StringBuilder sb = new StringBuilder("当前模型: ").append(active.model()).append("\n可切清单:");
+        for (String m : models) {
+            sb.append("\n  - ").append(m).append(m.equals(active.model()) ? "（当前）" : "");
+        }
+        return sb.toString();
+    }
+
+    /** 查看文本（/effort 无参，CLI/Web 共享）：active null = mock 注入形态。 */
+    public static String describeEfforts(LlmConfig active) {
+        if (active == null) {
+            return "当前装配不支持运行时切思考等级（LLM 执行链为注入 mock）。";
+        }
+        StringBuilder sb = new StringBuilder("当前思考等级: ").append(active.effort())
+                .append("\n可切档位:");
+        for (String level : LlmConfig.EFFORT_LEVELS) {
+            sb.append("\n  - ").append(level).append(level.equals(active.effort()) ? "（当前）" : "");
+        }
+        sb.append("\n映射: ").append(LlmConfig.effortNote(active.provider()));
+        return sb.toString();
+    }
+
+    /** 按发起呈现位取切换控制器；未登记给「不支持」文案（mock 注入形态对齐既有 UX）。
+     * 归并约定：非 WEB 一律按 CLI 取（分发面只有 CLI/WEB 两值，新呈现位接入时在此扩）。 */
+    private static String withSwitchController(
+            dev.duo.harness.agent.commands.CommandContext context,
+            dev.duo.harness.agent.commands.ModelSwitchRegistry registry,
+            java.util.function.BiFunction<dev.duo.harness.agent.commands.ModelSwitchController,
+                    Session, String> action) {
+        dev.duo.harness.agent.commands.ModelSwitchController controller = registry.controller(
+                context.presenter() == CommandScope.WEB ? CommandScope.WEB : CommandScope.CLI);
+        if (controller == null) {
+            return "当前呈现位未装配可切换执行链。";
+        }
+        return action.apply(controller, context.session());
+    }
+
     /** 上下文治理（M9 四件套）：summary 生成复用同一 adapter 的直答形态（缺省阈值）。 */
     public static ContextGovernance governance(LlmAdapter llm) {
         return governance(llm, null);

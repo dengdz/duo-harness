@@ -150,7 +150,8 @@ public final class CliPlugin implements Plugin<JsonNode> {
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
                 InteractionService.SERVICE_NAME, SkillRegistry.SERVICE_NAME,
-                CommandsRegistry.SERVICE_NAME);
+                CommandsRegistry.SERVICE_NAME,
+                dev.duo.harness.agent.commands.ModelSwitchRegistry.SERVICE_NAME);
     }
 
     /**
@@ -606,77 +607,15 @@ public final class CliPlugin implements Plugin<JsonNode> {
                 disposeGuidance(state.plan());
                 return "新会话 " + state.holder().session.id() + "。";
             }));
-        // /model（M24 工单 09，ADR-0026 决策六）：白名单内运行时切模型——切换落
-        // model/intent 会话事件（保存意图）、swap 换链下一 turn 生效；清单外拒切
-        // （模型名决定成本面）；清单缺席 = 不可切
-        commands.register(ctx, new CommandDefinition("model",
-                "查看或切换模型：/model [模型名]（可切清单 = config.yml llm.models 白名单）",
-                CommandScope.CLI, true, context -> {
-                if (activeConfig == null || swappableLlm == null) {
-                    return "当前装配不支持运行时切模型（LLM 执行链为注入 mock）。";
-                }
-                var models = activeConfig.models();
-                if (models.isEmpty()) {
-                    return "/model 不可切：config.yml 的 llm 段未声明 models 白名单。";
-                }
-                String target = context.args().strip();
-                if (target.isEmpty()) {
-                    StringBuilder sb = new StringBuilder("当前模型: ").append(activeConfig.model())
-                            .append("\n可切清单:");
-                    for (String m : models) {
-                        sb.append("\n  - ").append(m)
-                                .append(m.equals(activeConfig.model()) ? "（当前）" : "");
-                    }
-                    return sb.toString();
-                }
-                if (!activeConfig.modelAllowed(target)) {
-                    return "模型不在白名单: " + target + "（可切: " + String.join(", ", models) + "）";
-                }
-                if (target.equals(activeConfig.model())) {
-                    return "已是当前模型: " + target;
-                }
-                dev.duo.harness.llm.LlmConfig next = activeConfig.withModel(target);
-                swappableLlm.swap(PresenterAssembly.llmAdapter(next));
-                activeConfig = next;
-                context.session().append(dev.duo.harness.session.SessionEvent.modelIntent(target));
-                return "已切换: " + target + "（下一轮对话生效）";
-            }));
-        // /effort（M24 工单 10，ADR-0026 决策六）：思考等级四档归一——切换落
-        // model/effort 会话事件、swap 换链下一 turn 生效；映射按 provider 四行走
-        // （anthropic thinking+budget / openai-compat reasoning_effort / glm 开关 /
-        // deepseek 显式降级标注），不支持不静默；无参显示当前档
-        commands.register(ctx, new CommandDefinition("effort",
-                "查看或切换思考等级：/effort [off|low|medium|high]（缺省 medium，下一轮对话生效）",
-                CommandScope.CLI, true, context -> {
-                if (activeConfig == null || swappableLlm == null) {
-                    return "当前装配不支持运行时切思考等级（LLM 执行链为注入 mock）。";
-                }
-                String target = context.args().strip().toLowerCase(java.util.Locale.ROOT);
-                if (target.isEmpty()) {
-                    StringBuilder sb = new StringBuilder("当前思考等级: ").append(activeConfig.effort())
-                            .append("\n可切档位:");
-                    for (String level : dev.duo.harness.llm.LlmConfig.EFFORT_LEVELS) {
-                        sb.append("\n  - ").append(level)
-                                .append(level.equals(activeConfig.effort()) ? "（当前）" : "");
-                    }
-                    sb.append("\n映射: ").append(dev.duo.harness.llm.LlmConfig
-                            .effortNote(activeConfig.provider()));
-                    return sb.toString();
-                }
-                if (!dev.duo.harness.llm.LlmConfig.effortAllowed(target)) {
-                    return "非法档位: " + target + "（可切: "
-                            + String.join(", ", dev.duo.harness.llm.LlmConfig.EFFORT_LEVELS) + "）";
-                }
-                if (target.equals(activeConfig.effort())) {
-                    return "已是当前档位: " + target;
-                }
-                dev.duo.harness.llm.LlmConfig next = activeConfig.withEffort(target);
-                swappableLlm.swap(PresenterAssembly.llmAdapter(next));
-                activeConfig = next;
-                context.session().append(dev.duo.harness.session.SessionEvent.modelEffort(target));
-                return "已切换: " + target + "（下一轮对话生效）\n"
-                        + dev.duo.harness.llm.LlmConfig.effortNote(next.provider());
-            }));
+        // /model、/effort（M38 工单 01，ADR-0040 决策三）：升 ANY 双面——登记 CLI 控制器
+        // 后经共享注册函数注册（查重先到先得：web 行在场时 WebPlugin 已注册、此处跳过；
+        // 纯 CLI 部署由本类注册）。handler 按发起呈现位取控制器——本呈现位独立换链
+        // （Web 切只影响 Web 链，CLI 切只影响 CLI 链），切换落 model/intent、
+        // model/effort 会话事件、swap 换链下一 turn 生效的既有语义不变
+        dev.duo.harness.agent.commands.ModelSwitchRegistry modelSwitch =
+                ctx.as(CliModelSwitchView.class).modelSwitch();
+        modelSwitch.register(CommandScope.CLI, new CliModelSwitchController());
+        PresenterAssembly.registerModelSwitchCommands(ctx, commands, modelSwitch);
         // /permission 双面可用（ANY）：handler 只依赖 fs 插件的全局 workspace 服务
         // （无呈现位归属，切档即全局生效）——M19 用户故事 1（浏览器直接切档）；
         // 其余三命令闭包本呈现位状态（holder/plan/agent），维持 CLI 面。
@@ -1285,6 +1224,50 @@ public final class CliPlugin implements Plugin<JsonNode> {
     interface CliCommandsView {
 
         CommandsRegistry commands();
+    }
+
+    /** 模型/思考切换登记表的视图接口（方法名即服务名 "modelSwitch"，M38 工单 01）。 */
+    interface CliModelSwitchView {
+
+        dev.duo.harness.agent.commands.ModelSwitchRegistry modelSwitch();
+    }
+
+    /**
+     * CLI 面切换控制器（M38 工单 01）：本类 activeConfig/swappableLlm 字段的呈现位
+     * 封装——/model、/effort 升 ANY 后经登记表按发起面取用（本呈现位独立，Web 面控
+     * 制器在 WebPlugin）；切换逻辑单点在 PresenterAssembly（CLI/Web 共享）。
+     */
+    private final class CliModelSwitchController implements dev.duo.harness.agent.commands.ModelSwitchController {
+
+        @Override
+        public synchronized String describeModels() {
+            return PresenterAssembly.describeModels(activeConfig);
+        }
+
+        @Override
+        public synchronized String switchModel(String target, dev.duo.harness.session.Session session) {
+            if (activeConfig == null || swappableLlm == null) {
+                return "当前装配不支持运行时切模型（LLM 执行链为注入 mock）。";
+            }
+            var result = PresenterAssembly.switchModel(activeConfig, swappableLlm, target, session);
+            activeConfig = result.next();
+            return result.message();
+        }
+
+        @Override
+        public synchronized String describeEfforts() {
+            return PresenterAssembly.describeEfforts(activeConfig);
+        }
+
+        @Override
+        public synchronized String switchEffort(String target, dev.duo.harness.session.Session session) {
+            if (activeConfig == null || swappableLlm == null) {
+                return "当前装配不支持运行时切思考等级（LLM 执行链为注入 mock）。";
+            }
+            var result = PresenterAssembly.switchEffort(activeConfig, swappableLlm, target, session);
+            activeConfig = result.next();
+            return result.message();
+        }
     }
 
     /** attachments 服务的视图接口（方法名即服务名 "attachments"）。 */

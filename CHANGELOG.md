@@ -2,6 +2,12 @@
 
 本文件记录 duo-harness 的用户可见变更。版本号规则见 `.agents/skills/duo-workflow/references/版本号.md`。
 
+## 未发布
+
+### Added
+
+- **模型/思考实时切换升双面（M38 工单 01，ADR-0040 决策三）**：`/model`、`/effort` 从 CLI 专属升为任意呈现位（ANY）——Web 面斜杠即可切模型（llm.models 白名单）与思考等级（off/low/medium/high），换链「下一轮对话生效」语义与 CLI 一致，`model/intent`、`model/effort` 事件照发；**本呈现位独立**（Web 切只影响 Web 执行链、CLI 切只影响 CLI 链——新增 `modelSwitch` 登记表服务按发起呈现位取控制器，跨呈现位互不波及）；纯 CLI 部署行为零变化
+
 ## 1.3.0（2026-10-05）
 
 ### Added

@@ -9,6 +9,7 @@ import dev.duo.harness.core.api.Context;
 import dev.duo.harness.core.api.Disposable;
 import dev.duo.harness.core.api.Plugin;
 import dev.duo.harness.core.api.PluginException;
+import dev.duo.harness.agent.commands.CommandScope;
 import dev.duo.harness.core.api.boot.Cwd;
 import dev.duo.harness.core.api.boot.DuoHome;
 import dev.duo.harness.llm.LlmConfig;
@@ -74,6 +75,12 @@ public final class WebPlugin implements Plugin<JsonNode> {
 
     private WebFace face;
 
+    /** Web 面当前 LLM 配置（/model、/effort 切换的状态源，M38 工单 01）。 */
+    private volatile LlmConfig activeConfig;
+
+    /** Web 面可换执行链（/model 切换的 swap 入口；治理与 agent 共享同一装饰器）。 */
+    private volatile dev.duo.harness.llm.SwappableLlmAdapter swappableLlm;
+
     /** 测试缝（包私有）：装配测试取实际绑定端口与 token——port 0 随机端口不可预知。 */
     WebFace face() {
         return face;
@@ -82,6 +89,7 @@ public final class WebPlugin implements Plugin<JsonNode> {
     @Override
     public Set<String> inject() {
         return Set.of(ToolsService.SERVICE_NAME, PromptRegistry.SERVICE_NAME,
+                dev.duo.harness.agent.commands.ModelSwitchRegistry.SERVICE_NAME,
                 InteractionService.SERVICE_NAME, CommandsRegistry.SERVICE_NAME);
     }
 
@@ -138,10 +146,20 @@ public final class WebPlugin implements Plugin<JsonNode> {
         }
         CommandsRegistry commands = ctx.as(WebCommandsView.class).commands();
 
-        // 执行链装配（呈现位共享单点，ADR-0011）：LLM 配置 → 重试 adapter；
-        // LLM 未配置 → 插件 FAILED 点名
+        // 执行链装配（呈现位共享单点，ADR-0011）：LLM 配置 → 可换装饰器包装重试
+        // adapter（M38 工单 01，ADR-0040 决策三：/model、/effort 升 ANY 双面后 Web 面
+        // 的换链绑定——本呈现位独立，Web 切只影响 Web 链）；LLM 未配置 → 插件 FAILED 点名
         LlmConfig llm = LlmConfig.load();
-        var adapter = PresenterAssembly.llmAdapter(llm);
+        var adapter = new dev.duo.harness.llm.SwappableLlmAdapter(PresenterAssembly.llmAdapter(llm));
+        this.activeConfig = llm;
+        this.swappableLlm = adapter;
+        // 模型/思考切换登记（M38 工单 01）：登记 WEB 控制器 + 注册双面命令（查重先到
+        // 先得——web 行先于 cli 行，本注册生效、CliPlugin 查重跳过）；handler 按发起
+        // 呈现位取控制器，本呈现位独立换链
+        dev.duo.harness.agent.commands.ModelSwitchRegistry modelSwitch =
+                ctx.as(WebModelSwitchView.class).modelSwitch();
+        modelSwitch.register(CommandScope.WEB, new WebModelSwitchController());
+        PresenterAssembly.registerModelSwitchCommands(ctx, commands, modelSwitch);
         // 附件库（M21，可选依赖）：纯对话 Web 装配缺席时端点 503、带图消息 409；
         // vision=true 时构建请求变体解析器（附件引用 → base64 图片部件）
         dev.duo.harness.attachment.AttachmentStore attachments =
@@ -474,6 +492,47 @@ public final class WebPlugin implements Plugin<JsonNode> {
     interface WebCommandsView {
 
         CommandsRegistry commands();
+    }
+
+    /** 模型/思考切换登记表的视图接口（方法名即服务名 "modelSwitch"，M38 工单 01）。 */
+    interface WebModelSwitchView {
+
+        dev.duo.harness.agent.commands.ModelSwitchRegistry modelSwitch();
+    }
+
+    /**
+     * Web 面切换控制器（M38 工单 01）：本类 activeConfig/swappableLlm 字段的呈现位
+     * 封装——/model、/effort 升 ANY 后经登记表按发起面取用（本呈现位独立，CLI 面控
+     * 制器在 CliPlugin）；切换逻辑单点在 PresenterAssembly（CLI/Web 共享）。
+     */
+    private final class WebModelSwitchController implements dev.duo.harness.agent.commands.ModelSwitchController {
+
+        // synchronized：busySafe 命令不经 Web 单飞互斥，多标签并发切模型必须串行化
+        // （swap 与 activeConfig 回写的读-改-写收敛，审查轴三 1）
+
+        @Override
+        public synchronized String describeModels() {
+            return PresenterAssembly.describeModels(activeConfig);
+        }
+
+        @Override
+        public synchronized String switchModel(String target, dev.duo.harness.session.Session session) {
+            var result = PresenterAssembly.switchModel(activeConfig, swappableLlm, target, session);
+            activeConfig = result.next();
+            return result.message();
+        }
+
+        @Override
+        public synchronized String describeEfforts() {
+            return PresenterAssembly.describeEfforts(activeConfig);
+        }
+
+        @Override
+        public synchronized String switchEffort(String target, dev.duo.harness.session.Session session) {
+            var result = PresenterAssembly.switchEffort(activeConfig, swappableLlm, target, session);
+            activeConfig = result.next();
+            return result.message();
+        }
     }
 
     /** attachments 服务的视图接口（方法名即服务名）。 */
