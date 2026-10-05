@@ -238,15 +238,18 @@ function createWindow(url: string): BrowserWindow {
   return win;
 }
 
-/** 托盘模板图标（工单 08）：黑色「哆」模板图（gen-icon 无头渲染产物，macOS 随菜单栏明暗自适应）。 */
+/** 托盘模板图标（工单 08）：黑色「哆」模板图（gen-icon 无头渲染产物，macOS 随菜单栏明暗自适应）。
+ * 渲染源为 96×96 高清图——菜单栏按图像点数绘制（~22pt 高），不 resize 会爆栏
+ * （BUG-20261005-02 用户验收实测）：统一缩到 18pt 标准托盘尺寸。 */
 function trayIcon() {
   const templatePath = path.resolve(__dirname, '..', 'resources', 'tray-template.png');
   const image = nativeImage.createFromPath(templatePath);
   if (image.isEmpty()) {
     throw new Error(`托盘模板图缺失: ${templatePath}`);
   }
-  image.setTemplateImage(true);
-  return image;
+  const sized = image.resize({ width: 18, height: 18 });
+  sized.setTemplateImage(true);
+  return sized;
 }
 
 function setupTray(): void {
