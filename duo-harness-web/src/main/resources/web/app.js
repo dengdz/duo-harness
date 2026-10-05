@@ -2798,9 +2798,10 @@ sse.connect();
   });
 })();
 
-/* ===== §5 主题机制（M36 工单 04，ADR-0038 决策二）：呈现贡献口聚合端点 → 主题
-   选择器 → token 值集套根元素；选择经 localStorage 持久化（跨标签一致——鉴权令牌
-   先例）；所选主题消失（停/卸，5s 节拍跟随状态轮询检测）自动回落内置暗色。
+/* ===== §5 主题机制（M36 工单 04，ADR-0038 决策二；缺省主题 2026-10-05 用户裁定
+   改亮色——注册表在册 light 则缺省应用，无 light 回落内置暗色）：呈现贡献口聚合
+   端点 → 主题选择器 → token 值集套根元素；选择经 localStorage 持久化（跨标签一致
+   ——鉴权令牌先例）；所选主题消失（停/卸，5s 节拍跟随状态轮询检测）回落缺省序。
    顶层段零 render/sse IIFE 依赖（M29 边界纪律：只触 DOM 与顶层符号） ===== */
 (() => {
   const STORAGE_KEY = 'duo-theme';
@@ -2866,7 +2867,19 @@ sse.connect();
       }
       return;
     }
-    // 无有效选择：回落内置暗色（所选主题刚停/卸 → 顺带清持久化）
+    // 无有效选择：缺省主题 = 注册表在册的 light 亮色（用户裁定 2026-10-05，ADR-0038
+    // 决策三勘误：内置暗色保留为「无 light 在册」回落）——缺省选择不写 localStorage，
+    // 保持「清存储回缺省」语义；手动切换后仍持久化
+    const defaultLight = themes.find((t) => t.id === 'light');
+    if (defaultLight) {
+      select.value = defaultLight.id;
+      if (appliedThemeId !== defaultLight.id) {
+        applyTokens(defaultLight.tokens);
+        appliedThemeId = defaultLight.id;
+      }
+      return;
+    }
+    // 无 light 在册：回落内置暗色（所选主题刚停/卸 → 顺带清持久化）
     select.value = '';
     if (appliedThemeId !== null) {
       applyTokens(null);
