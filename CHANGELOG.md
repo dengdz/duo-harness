@@ -6,8 +6,15 @@
 
 ### Added
 
+- **状态面板「模型配置」管理区（M38 工单 05，ADR-0040 决策四）**：状态面板新增模型配置折页——provider（四值下拉）/baseUrl/apiKey/缺省模型/可切模型白名单（逗号分隔）五行内表单，保存经 `PUT /api/llm-config` 写回 config.yml（空 apiKey = 保留原值、密钥零回显只显占位状态）；写回成功展示「重启 duo 后生效」横幅（热重建不做是既定裁定，进行中会话不受影响）、端点点名错误原文透出表单（原文件不动）；保存走 armed 二次确认（对齐插件中心先例，3s 无操作回弹）；折页首开懒加载配置
+- **composer 模型/思考选择器（M38 工单 04，ADR-0040 决策二/Q5）**：composer 左下角第二枚选择器——模型清单（config.yml `llm.models` 白名单，GET /api/llm-config 实时拉取）与四档思考（off/low/medium/high）同菜单分区，点选经斜杠分发触发 `/model`、`/effort`（busy 中不打断）；当前值跟随 `model/intent`、`model/effort` 事件（含回放——重放尾态即会话当前模型/思考）
+- **composer 四态档位选择器（M38 工单 03，ADR-0040 决策一/Q2）**：composer 左下角新增计划模式/变更前确认/自动编辑/完全访问四态选择器（ZCode 同位同文案）——点选经斜杠分发触发 `/plan`、`/permission <档>`（ANY busySafe 双面，busy 中切档即时生效）；当前态高亮跟随 `permission/mode` 事件（回放不跟随）
 - **LLM 配置查看与写回（M38 工单 02，ADR-0040 决策四）**：`GET/PUT /api/llm-config`——GET 返回文件面配置（provider/baseUrl/model/模型白名单；**apiKey 只回已配置布尔，键值本体零回显**）；PUT 结构化写回 `~/.duo/config.yml` 的 llm 段（可写面 = baseUrl/apiKey/model/provider/models 五字段；白名单外字段点名 400 拒收——永不静默；apiKey 空 = 保留原值），**非 llm 段字节级保留**（llm 段文本手术）、写回前经临时文件 load 全规则校验（boot 怎么读就怎么验）后原子改名不半写；**重启生效**（响应 restartRequired=true，执行链热重建不做）。思考等级不在写回面（yml 不解析 effort——运行时 `/effort` 切换，既有语义）
 - **模型/思考实时切换升双面（M38 工单 01，ADR-0040 决策三）**：`/model`、`/effort` 从 CLI 专属升为任意呈现位（ANY）——Web 面斜杠即可切模型（llm.models 白名单）与思考等级（off/low/medium/high），换链「下一轮对话生效」语义与 CLI 一致，`model/intent`、`model/effort` 事件照发；**本呈现位独立**（Web 切只影响 Web 执行链、CLI 切只影响 CLI 链——新增 `modelSwitch` 登记表服务按发起呈现位取控制器，跨呈现位互不波及）；纯 CLI 部署行为零变化
+
+### Fixed
+
+- **composer 选择器两处运行时缺陷（M38 工单 05 浏览器手验逮出，BUG-20261005-03/04）**：①模型/思考菜单打开即抛 `ReferenceError`（渲染函数内变量名手误 `efforts`/`effortList`），思考四档按钮全部缺席；②四态档位选择器整段初始化从未执行——§4.5 模块内钩子赋值裸引用了未定义函数名（本 IIFE 内实名为 `setSelectorState`），脚本求值期即中止、其后全部前端功能（菜单/主题/初始化序列）哑火，另 SSE 跟随调用点取错挂载对象（`app.` 应为 `window.`）——两处修复后档位切换标签真实跟随（真机端到端验证：点「自动编辑」→ `/permission` 执行 → 事件回 → 标签变）。附防复发：跨 IIFE 钩子守卫式调用范式 + 前端改动必须真实首载页面并先读页面错误窗
 
 ## 1.3.0（2026-10-05）
 

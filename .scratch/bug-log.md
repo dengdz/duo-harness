@@ -409,3 +409,19 @@
 - **根因**：（待定位——theme.css 非 token 文字色 grep 零漏网〔仅 transparent/inherit〕，疑点集中在无显式 color 的 UA 默认控件或第三方渲染路径）
 - **修复**：（待定位后修——token 收编补漏或显式 color）
 - **防复发**：（定位后随案——候选：视觉 pass 二轮用全组件清单逐个对照；缺省亮色已绕开日常触发面）
+
+## BUG-20261005-03 · composer 模型菜单渲染 ReferenceError——effortList 误写 efforts
+
+- **日期**：2026-10-05（M38 工单 05 动手前走查 §4.6 既有代码逮出）
+- **症状**：composer 模型/思考菜单打开时 `renderLlmMenu()` 思考档循环抛 `ReferenceError: efforts is not defined`——模型按钮已 append、思考档按钮全部缺席且菜单渲染中断。`node --check` 查不出（标识符运行期才解析）。
+- **根因**：M38 工单 04 提交（9c3ead76）手误——循环内容器变量声明为 `effortList`，`appendChild` 行写成 `efforts`。
+- **修复**：`efforts.appendChild(b)` → `effortList.appendChild(b)`（一行）。
+- **防复发**：DOM 装配类改动 node --check 之外须真开菜单点一遍（渲染路径冒烟）；提交流程里「纯前端工单浏览器手验」判据不得以语法检查替代。
+
+## BUG-20261005-04 · §4.5 钩子赋值裸引用未定义名——app.js 尾部整段求值中止（两处叠加）
+
+- **日期**：2026-10-05（M38 工单 05 浏览器手验首页逮出，页面错误窗直接点名）
+- **症状**：页面加载即 `Uncaught ReferenceError: setModeSelectorState is not defined`——§4.5 之后的整个 app.js 尾部（§4.6 模型/思考选择器、§4.7 模型配置区、§5 主题机制、init 序列）全部未执行：选择器按钮是静态 HTML 仍在，点击无监听全哑。
+- **根因**（两处叠加，同出 M38 工单 03 b74e7db8）：①引爆点 §4.5 `window.setModeSelectorState = setModeSelectorState;`——本 IIFE 内声明的函数名是 `setSelectorState`，右侧裸引用未定义标识符，求值期即抛且中止其后整段脚本（**比事件期错误重一个量级**：不止跟随失效，是尾部功能全哑）；②调用点 §3 sse.handle 写 `app.setModeSelectorState(event.text)`——钩子挂在 window 非 app 对象，即使①修了调用也是 undefined。
+- **修复**：①`= setModeSelectorState` → `= setSelectorState`；②调用点改守卫式 `window.setModeSelectorState && window.setModeSelectorState(event.text)`（与相邻 model/intent、model/effort 两行同款）。
+- **防复发**：①跨 IIFE 钩子赋值/调用统一核对「右侧标识符在词法作用域真实存在 + 消费点取的是同一挂载对象」，守卫式 `window.xxx && window.xxx(...)` 为范式；②`node --check` 查不出裸引用（求值期才炸），前端改动**必须真实首载页面并清页面错误窗**（经验册「验证以真实页面首载为准」的又一实证）；③页面错误窗是首验第一眼——本 bug 在快照树里以 `[页面错误]` 节点直接可见，先读它再点功能。

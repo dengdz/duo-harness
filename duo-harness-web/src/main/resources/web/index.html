@@ -73,6 +73,27 @@
     </select>
     <!-- 鉴权关闭警示行（M34-05；M36 工单 02 用户裁定归位状态区——常驻不糊脸） -->
     <div id="authStateLine" class="auth-state-line" hidden>⚠ 鉴权已关闭（web.auth: none）——本机任何进程可直接访问此会话</div>
+    <!-- 模型配置管理区（M38 工单 05，ADR-0040 决策四）：查看/编辑/新增预设，写回 config.yml 重启生效 -->
+    <details class="status-fold" id="llmConfigFold">
+      <summary class="status-group">模型配置</summary>
+      <div id="llmConfigBody">
+        <div class="llm-cfg-hint">编辑后点「保存并重启生效」（写回 config.yml，重启 duo 后新配置生效）。</div>
+        <label>provider
+          <select id="llmCfgProvider">
+            <option value="openai-compat">openai-compat</option>
+            <option value="anthropic">anthropic</option>
+            <option value="deepseek">deepseek</option>
+            <option value="glm">glm</option>
+          </select>
+        </label>
+        <label>baseUrl <input id="llmCfgBaseUrl" placeholder="https://api.deepseek.com"></label>
+        <label>apiKey <input id="llmCfgApiKey" type="password" placeholder="不填 = 保留原值"></label>
+        <label>缺省模型 <input id="llmCfgModel" placeholder="deepseek-chat"></label>
+        <label>可切模型白名单 <input id="llmCfgModels" placeholder="逗号分隔：model-a, model-b"></label>
+        <button id="llmCfgSave" type="button" class="llm-cfg-save">保存并重启生效</button>
+        <div id="llmCfgMsg" class="llm-cfg-msg" hidden></div>
+      </div>
+    </details>
     <div id="statusBody">
       <details class="status-fold" open>
         <summary class="status-group">上下文</summary>

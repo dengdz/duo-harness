@@ -1692,8 +1692,9 @@ const sse = (() => {
     if (event.type === 'assistant/message' || event.type === 'run/error'
         || event.type === 'assistant/interrupted') app.clearSendBusy();
     // 档位/计划跟随（M38 工单 03）：permission/mode 与 plan 态事件更新选择器高亮
+    // （钩子挂 window 非 app 对象——曾在 app 上取值 undefined，事件即抛，BUG-20261005-04）
     if (!replaying && event.type === 'permission/mode') {
-      app.setModeSelectorState(event.text); // text = 档位 configName
+      window.setModeSelectorState && window.setModeSelectorState(event.text); // text = 档位 configName
     }
     // 模型/思考跟随（M38 工单 04）：model/intent、model/effort 事件更新选择器标签
     // （含回放——重放尾态即会话当前模型/思考，选择器标签跨会话切换跟随）
@@ -2833,7 +2834,7 @@ sse.connect();
     const labelEl = document.getElementById('modeSelectorLabel');
     if (labelEl) labelEl.textContent = label(mode);
   }
-  window.setModeSelectorState = setModeSelectorState; // sse.handle 跟随钩子（M29 边界纪律：顶层暴露）
+  window.setModeSelectorState = setSelectorState; // sse.handle 跟随钩子（M29 边界纪律：顶层暴露）
 
   function pickMode(mode) {
     if (mode === currentMode) return;
@@ -2906,7 +2907,7 @@ sse.connect();
       b.className = 'llm-item' + (level === currentEffort ? ' current' : '');
       b.textContent = '思考: ' + level;
       b.addEventListener('click', () => pickSlash('/effort ' + level));
-      efforts.appendChild(b);
+      effortList.appendChild(b);
     }
   }
 
@@ -2954,6 +2955,106 @@ sse.connect();
       }
     });
     renderLlmMenu();
+  };
+})();
+
+/* ===== §4.7 状态面板模型配置管理区（M38 工单 05，ADR-0040 决策四）：llm 段五字段
+   查看/编辑（provider/baseUrl/apiKey/model/models 白名单），保存经 PUT /api/llm-config
+   写回 config.yml——空 apiKey = 保留原值（端点契约），非法值由端点点名 400 原文透出
+   表单；写回成功展示「重启生效」提示（热重建不做是既定裁定，进行中会话不受影响）。
+   apiKey 不回显（GET 只回 apiKeySet 布尔）。armed 二次确认对齐插件中心先例
+   （改配置影响下轮对话）。顶层段零 IIFE 依赖 ===== */
+(() => {
+  let loaded = false;
+
+  function showMsg(text, isError) {
+    const el = document.getElementById('llmCfgMsg');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('llm-cfg-msg-err', !!isError);
+    el.hidden = false;
+  }
+
+  async function loadLlmCfg() {
+    try {
+      const res = await fetch('/api/llm-config');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const cfg = await res.json();
+      document.getElementById('llmCfgProvider').value = cfg.provider || 'openai-compat';
+      document.getElementById('llmCfgBaseUrl').value = cfg.baseUrl || '';
+      document.getElementById('llmCfgModel').value = cfg.model || '';
+      document.getElementById('llmCfgModels').value =
+        Array.isArray(cfg.models) ? cfg.models.join(', ') : '';
+      const keyInput = document.getElementById('llmCfgApiKey');
+      keyInput.value = ''; // 密钥永不回显；空白提交 = 保留原值
+      keyInput.placeholder = cfg.apiKeySet ? '已配置（不填 = 保留原值）' : '尚未配置';
+    } catch (e) {
+      showMsg('配置读取失败：' + e.message, true);
+    }
+  }
+
+  function parseModels(raw) {
+    return raw.split(/[,，]/).map(s => s.trim()).filter(s => s !== '');
+  }
+
+  async function saveCfg() {
+    const patch = {
+      provider: document.getElementById('llmCfgProvider').value,
+      baseUrl: document.getElementById('llmCfgBaseUrl').value.trim(),
+      model: document.getElementById('llmCfgModel').value.trim(),
+      models: parseModels(document.getElementById('llmCfgModels').value),
+    };
+    const apiKey = document.getElementById('llmCfgApiKey').value;
+    if (apiKey.trim() !== '') patch.apiKey = apiKey.trim(); // 不填 = 保留原值
+    try {
+      const res = await fetch('/api/llm-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 端点点名原文透出（provider 越界 / 白名单外字段 / 校验不过——原文件未动）
+        showMsg('保存被拒：' + ((data && data.error) || 'HTTP ' + res.status), true);
+        return;
+      }
+      showMsg('已写回 config.yml —— 重启 duo 后新配置生效（进行中会话不受影响）', false);
+      loadLlmCfg(); // 重读（apiKeySet 遮蔽态翻转）
+    } catch (e) {
+      showMsg('保存失败：' + e.message, true);
+    }
+  }
+
+  /** 行内二次确认（插件中心 armConfirm 同语义，本段自持——M29 顶层段零 IIFE 依赖）：
+     首点进 armed 态（变「确认写回？」语义色实底），3s 无操作回弹，再点执行。 */
+  function armConfirm(button, armedLabel, fn) {
+    if (button.dataset.armed === '1') {
+      clearTimeout(Number(button.dataset.timer));
+      delete button.dataset.armed;
+      button.textContent = button.dataset.restore;
+      button.classList.remove('pc-btn-armed');
+      fn();
+      return;
+    }
+    button.dataset.armed = '1';
+    button.dataset.restore = button.textContent;
+    button.textContent = armedLabel;
+    button.classList.add('pc-btn-armed');
+    button.dataset.timer = String(setTimeout(() => {
+      delete button.dataset.armed;
+      button.textContent = button.dataset.restore;
+      button.classList.remove('pc-btn-armed');
+    }, 3000));
+  }
+
+  window.initLlmConfigPanel = function initLlmConfigPanel() {
+    const fold = document.getElementById('llmConfigFold');
+    const save = document.getElementById('llmCfgSave');
+    if (!fold || !save) return;
+    fold.addEventListener('toggle', () => {
+      if (fold.open && !loaded) { loaded = true; loadLlmCfg(); } // 首开懒加载
+    });
+    save.addEventListener('click', () => armConfirm(save, '确认写回？', saveCfg));
   };
 })();
 
@@ -3067,4 +3168,5 @@ sse.connect();
   setInterval(refreshThemes, 5000); // 与状态轮询同拍：主题停/卸后 5s 内自动回落
   bootstrapModeSelector(); // 四态档位选择器接线（§4.5，M38 工单 03）
   initLlmSelector(); // 模型/思考选择器接线（§4.6，M38 工单 04）
+  initLlmConfigPanel(); // 状态面板模型配置管理区接线（§4.7，M38 工单 05）
 })();
