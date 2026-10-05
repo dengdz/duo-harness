@@ -12,7 +12,7 @@ None (can start immediately)
 
 ## Status
 
-in-progress（2026-10-04 实现完成、回归锁全绿待提交；done 判据 = 用户手动验收或授权代验）
+done（2026-10-05 用户验收通过——端口三级覆盖 + duo:web-ready 锚点契约面，回归锁 S1/S2 在案）
 
 ## Checklist
 

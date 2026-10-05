@@ -12,7 +12,7 @@ M37 收口四件套。其一打包：electron-builder 出 macOS 包（app/dmg；
 
 ## Status
 
-in-progress（2026-10-04 实现；**2026-10-05 用户裁定「双击即用」打包路线取消——electron-builder 链退役、npm start 为唯一使用形态，打包项转 removed**；图标/文档/验收件部分有效，done 判据 = 用户按 [acceptance.md](../acceptance.md) 手动验收通过）
+done（2026-10-05 用户验收通过——图标「哆」/文档三处/验收件；打包链随「npm start 唯一形态」裁定退役）
 
 ## Checklist
 

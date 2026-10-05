@@ -12,7 +12,7 @@
 
 ## Status
 
-in-progress（2026-10-04 实现完成、双面测试绿、真机冒烟过；done 判据 = 用户手动验收或授权代验）
+done（2026-10-05 用户验收通过——npm start 起壳全能力，stdin pipe 策略与首日实测在案）
 
 ## Checklist
 
