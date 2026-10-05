@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dev": "npm run build && electron .",
-    "smoke": "npm run build && electron . --smoke"
+    "smoke": "npm run build && electron . --smoke",
+    "start": "npm run build && electron ."
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
