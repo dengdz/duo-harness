@@ -1899,8 +1899,11 @@ const app = (() => {
     const btn = $('#send');
     btn.disabled = mode === 'thinking';
     btn.classList.toggle('stop', mode === 'stop');
-    btn.textContent = mode === 'thinking' ? '思考中…' : (mode === 'stop' ? '停止' : '发送');
-    btn.title = mode === 'stop' ? '协作式中断当前任务（已流出内容保留，再发消息即续接）' : '';
+    // ZCode 同构方块钮（↑ 发送）：三态图标化，长文案迁移到 title 悬停说明
+    btn.textContent = mode === 'stop' ? '■' : '↑';
+    btn.title = mode === 'thinking' ? '任务执行中…'
+      : (mode === 'stop' ? '协作式中断当前任务（已流出内容保留，再发消息即续接）'
+        : '发送（运行中点击 = 中断）');
   }
 
   function clearSendBusy() {
@@ -1913,7 +1916,8 @@ const app = (() => {
   const pendingAttachments = [];
   const attChips = document.createElement('div');
   attChips.className = 'att-chips';
-  document.querySelector('.composer').appendChild(attChips);
+  const attDock = document.getElementById('attDock');
+  (attDock || document.querySelector('.composer')).appendChild(attChips); // 卡片化后挂输入区上方专用坞（缺 dock 回落 composer 尾）
 
   function addPendingAttachment(meta) {
     if (pendingAttachments.some(a => a.attachmentId === meta.attachmentId)) return; // 同图不重列入列
@@ -2864,13 +2868,19 @@ sse.connect();
   };
 })();
 
-/* ===== §4.6 模型/思考选择器（M38 工单 04，ADR-0040 决策二/三）：composer 左下角
-   第二枚选择器——模型清单（llm.models 白名单，GET /api/llm-config）与四档思考，
-   点选经斜杠分发触发换链（ANY busySafe 双面命令，busy 中不打断）；当前值跟随
-   model/intent、model/effort 事件（单源：SSE 事件驱动标签与高亮）。顶层段零 IIFE
-   依赖 ===== */
+/* ===== §4.6 模型/思考选择器（M38 工单 04，ADR-0040 决策二/三；ZCode 同构拆两枚
+   独立下拉 2026-10-05 用户裁定）：composer 工具行右侧两枚——模型清单（llm.models
+   白名单，GET /api/llm-config）与四档思考，点选经斜杠分发触发换链（ANY busySafe
+   双面命令，busy 中不打断）；当前值跟随 model/intent、model/effort 事件（单源：
+   SSE 事件驱动标签与高亮）。顶层段零 IIFE 依赖 ===== */
 (() => {
   const EFFORTS = ['off', 'low', 'medium', 'high'];
+  const EFFORT_LABELS = {
+    'off': '关闭',
+    'low': '低',
+    'medium': '中',
+    'high': '最高',
+  };
   let llmModels = [];
   let currentModel = null;
   let currentEffort = 'medium';
@@ -2905,7 +2915,7 @@ sse.connect();
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'llm-item' + (level === currentEffort ? ' current' : '');
-      b.textContent = '思考: ' + level;
+      b.textContent = EFFORT_LABELS[level] || level;
       b.addEventListener('click', () => pickSlash('/effort ' + level));
       effortList.appendChild(b);
     }
@@ -2930,21 +2940,24 @@ sse.connect();
   };
 
   function updateLabel() {
-    const labelEl = document.getElementById('llmSelectorLabel');
-    if (labelEl) {
-      labelEl.textContent = (currentModel || '模型') + ' · ' + (currentEffort || '思考');
-    }
+    const modelEl = document.getElementById('llmSelectorLabel');
+    const effortEl = document.getElementById('effortSelectorLabel');
+    if (modelEl) modelEl.textContent = currentModel || '模型';
+    if (effortEl) effortEl.textContent = EFFORT_LABELS[currentEffort] || currentEffort || '思考';
     renderLlmMenu();
   }
 
-  window.initLlmSelector = function initLlmSelector() {
-    const btn = document.getElementById('llmSelector');
-    const menu = document.getElementById('llmMenu');
+  /** 单枚选择器接线（开菜单时互斥收起另一枚，ZCode 同款单开语义）。 */
+  function wireSelector(btnId, menuId, otherMenuId, onOpen) {
+    const btn = document.getElementById(btnId);
+    const menu = document.getElementById(menuId);
     if (!btn || !menu) return;
     btn.addEventListener('click', () => {
       if (menu.hidden) {
+        const other = document.getElementById(otherMenuId);
+        if (other) other.hidden = true;
         menu.hidden = false;
-        refreshLlmModels().then(renderLlmMenu);
+        if (onOpen) onOpen();
       } else {
         menu.hidden = true;
       }
@@ -2954,6 +2967,23 @@ sse.connect();
         menu.hidden = true; // 选中即收起（反馈走 toast/标签，事件驱动）
       }
     });
+  }
+
+  window.initLlmSelector = function initLlmSelector() {
+    wireSelector('llmSelector', 'llmMenu', 'effortMenu', () => refreshLlmModels().then(renderLlmMenu));
+    wireSelector('effortSelector', 'effortMenu', 'llmMenu', null);
+    // 档位菜单与模型/思考菜单互斥（跨段收起——§4.5 菜单 id 固定）
+    const modeBtn = document.getElementById('modeSelector');
+    const modeMenu = document.getElementById('modeMenu');
+    if (modeBtn && modeMenu) {
+      modeBtn.addEventListener('click', () => {
+        if (!modeMenu.hidden) return; // §4.5 自己管开关
+        const llm = document.getElementById('llmMenu');
+        const effort = document.getElementById('effortMenu');
+        if (llm) llm.hidden = true;
+        if (effort) effort.hidden = true;
+      }, true); // capture：先于 §4.5 toggle 收起其它两枚
+    }
     renderLlmMenu();
   };
 })();
