@@ -19,12 +19,12 @@ llm:
 **2. 启动**（从 [GitHub Releases](https://github.com/dengdz/duo-harness/releases) 下载 fat-jar，或 `mvn -pl duo-harness-example -am package` 自建）：
 
 ```bash
-java -jar duo-harness-1.2.0.jar
+java -jar duo-harness-1.3.0.jar
 ```
 
 **3. 双面即起**：终端进入 REPL（`/help` 看命令）；浏览器打开启动日志打印的带令牌地址（形如 `http://127.0.0.1:18080/?token=...`，缺省随机令牌鉴权）——两面共享同一会话与审批路由。
 
-无人值守形态：`java -jar duo-harness-1.2.0.jar --json "任务文本"` 按一次性任务驱动，stdout 输出 NDJSON 事件流，进程退出码即成败契约。
+无人值守形态：`java -jar duo-harness-1.3.0.jar --json "任务文本"` 按一次性任务驱动，stdout 输出 NDJSON 事件流，进程退出码即成败契约。
 
 **桌面端（macOS，1.3.0 起）**：Electron 桌面壳承载 Web 呈现位——`cd desktop && npm install && npm start` 一条命令起壳（托盘常驻、关窗隐藏、「哆」字标图标、退出探活、崩溃自动恢复）；会话与配置和 CLI 共用 `~/.duo`。构建/打包细节见[桌面壳构建与打包](docs/03-高级/桌面壳构建与打包.md)；运行前提同上（本机 JDK 21，壳自动探测）。
 
