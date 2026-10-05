@@ -366,12 +366,80 @@ async function smokeSegmentCrashRecovery(win: BrowserWindow): Promise<void> {
   );
 }
 
+/** 冒烟段四（M38-06）：选择器程序化断言——composer 档位/模型/思考菜单经菜单项
+ *  click 触发 → 命令执行（busySafe ANY，无需 LLM 调用）→ 会话事件回 → 标签跟随。
+ *  菜单项在 hidden 菜单容器内 click() 直达 handler，不开菜单也可触发（定位链路
+ *  真机手验已锁，此处只锁「触发→事件→跟随」语义）。 */
+async function smokeSegmentSelectors(win: BrowserWindow): Promise<void> {
+  const MODE_LABELS: Record<string, string> = {
+    'read-only': '变更前确认',
+    'workspace-write': '自动编辑',
+    'danger-full-access': '完全访问',
+  };
+  // 档位遍历（permission 三档；plan 入口在册断言——plan/mode 事件无档名语义，标签
+  // 跟随不适用，进计划态需退出流程故不程序化触发）
+  const planRow = await win.webContents.executeJavaScript(
+    `!!document.querySelector('#modeMenu button[data-mode="plan"]')`,
+  );
+  smokeAssert(planRow, '档位菜单计划模式入口在册');
+  for (const mode of Object.keys(MODE_LABELS)) {
+    const label = await win.webContents.executeJavaScript(`(async () => {
+      const item = document.querySelector('#modeMenu button[data-mode="${mode}"]');
+      if (!item) return null;
+      item.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      return document.getElementById('modeSelectorLabel').textContent;
+    })()`);
+    smokeAssert(label === MODE_LABELS[mode], `档位切换跟随 mode=${mode} label=${label}`);
+  }
+  // 模型/思考切换：开菜单拉白名单 → 点项 → model/intent、model/effort 事件回 → 标签跟随
+  const modelProbe = await win.webContents.executeJavaScript(`(async () => {
+    document.getElementById('llmSelector').click(); // 开菜单触发白名单拉取
+    await new Promise((r) => setTimeout(r, 800));
+    // 选与 config 当前模型异值的项（同值切换后端不发事件——「已是当前模型」，标签不跟随）
+    const cfg = await (await fetch('/api/llm-config')).json();
+    const item = [...document.querySelectorAll('#llmModelList .llm-item')]
+      .find((x) => x.textContent !== cfg.model);
+    if (!item) {
+      return { fail: 'NO-ITEMS', items: document.querySelectorAll('#llmModelList .llm-item').length };
+    }
+    item.click();
+    await new Promise((r) => setTimeout(r, 1500));
+    return {
+      picked: item.textContent,
+      label: document.getElementById('llmSelectorLabel').textContent,
+      toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent),
+      inputValue: document.getElementById('input').value,
+    };
+  })()`);
+  const modelLabel = typeof modelProbe === 'string' ? modelProbe : modelProbe.label;
+  smokeAssert(
+    modelLabel !== 'NO-ITEMS' && modelLabel !== '模型',
+    `模型切换跟随 label=${modelLabel} 现场=${JSON.stringify(modelProbe)}`,
+  );
+  const effortLabel = await win.webContents.executeJavaScript(`(async () => {
+    const item = [...document.querySelectorAll('#llmEffortList .llm-item')]
+      .find((x) => x.textContent === '最高');
+    if (!item) return 'NO-ITEM';
+    item.click();
+    await new Promise((r) => setTimeout(r, 1500));
+    return document.getElementById('effortSelectorLabel').textContent;
+  })()`);
+  smokeAssert(effortLabel === '最高', `思考切换跟随 label=${effortLabel}`);
+  // 收尾回档位（workspace-write 缺省态），减少对真实环境的残留
+  await win.webContents.executeJavaScript(
+    `document.querySelector('#modeMenu button[data-mode="workspace-write"]').click()`,
+  );
+  await delay(1500);
+}
+
 /** --smoke 总序列（工单 08 分段函数化）：按票分段，断言硬失败贯穿，任一段失败非零退出。 */
 async function smokeSequence(win: BrowserWindow): Promise<void> {
   const base = process.env.DUO_DESKTOP_SMOKE_OUT ?? path.join(process.cwd(), 'smoke-window.png');
   await smokeSegmentLaunchHideNotify(win, base);
   await smokeSegmentSingleInstance(win);
   await smokeSegmentCrashRecovery(win);
+  await smokeSegmentSelectors(win);
 }
 
 app.whenReady().then(async () => {

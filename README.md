@@ -37,6 +37,7 @@ java -jar duo-harness-1.3.0.jar
 - **上下文治理**：真实 usage 计量、阈值可配、自动压缩、压缩点事件化
 - **agent 编排**：Function Calling 工具循环（并发调度 + 顺序屏障）、prompt 注册表、技能系统（发现/热加载）、计划模式、AGENTS.md 注入、todo 分解、子代理（spawn/fork）
 - **人机协同**：审批 / 提问 / 计划确认卡片，谁发起谁作答的路由；Web 面工具卡分型、思考折叠卡、产物预览卡、代码高亮
+- **会话内切换与配置管理（1.4.0）**：Web composer 四态档位 / 模型 / 思考选择器（点选即切、事件跟随、本呈现位独立），状态面板模型配置区写回 config.yml（重启生效），创建会话可选工作区目录（桌面壳目录框 / Web 输入条）
 - **hooks**：复用 Claude Code/Codex 配置格式的外部命令钩子（PreToolUse/PostToolUse）
 
 ## 版本与发布
