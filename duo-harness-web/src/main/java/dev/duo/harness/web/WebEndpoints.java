@@ -1,6 +1,7 @@
 package dev.duo.harness.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dev.duo.harness.agent.ChatAgent;
@@ -16,6 +17,7 @@ import dev.duo.harness.session.Session;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -63,6 +65,7 @@ final class WebEndpoints {
         route(server, "/api/subagent/events", session::handleSubagentEvents);
         route(server, "/api/events", this::handleEvents);
         route(server, "/api/presentation", this::handlePresentation);
+        route(server, "/api/llm-config", this::handleLlmConfig);
     }
 
     /** 挂载单个端点：统一前置入口栅栏（Host/Origin 校验），通过才交端点处理器。 */
@@ -135,6 +138,131 @@ final class WebEndpoints {
         if (json != null) {
             WebHttp.respondJson(exchange, 200, json);
         }
+    }
+
+    /**
+     * LLM 配置查看与写回（M38 工单 02，ADR-0040 决策四）：GET 返回文件面配置
+     * （apiKey 只回「已配置」布尔，永不回键值本体）；PUT 结构化写回 llm 段
+     * （absent/null 字段 = 保留文件现值；apiKey 空 = 保留原值——GET 不回显即无
+     * 回显污染面），校验不过 400 点名（原文件不动），成功 restartRequired=true
+     * （重启生效是既定裁定，热重建不做）。
+     */
+    private void handleLlmConfig(HttpExchange exchange) throws IOException {
+        String method = exchange.getRequestMethod().toUpperCase(java.util.Locale.ROOT);
+        if ("GET".equals(method)) {
+            WebHttp.respondJson(exchange, 200, llmConfigJson());
+            return;
+        }
+        if (!"PUT".equals(method)) {
+            WebHttp.respondEmpty(exchange, 405);
+            return;
+        }
+        byte[] raw = WebHttp.readBodyLimited(exchange);
+        if (raw == null) {
+            WebHttp.respondEmpty(exchange, 413);
+            return;
+        }
+        Path configFile = dev.duo.harness.llm.LlmConfigFile.path();
+        try {
+            JsonNode patch = WebHttp.JSON.readTree(new String(raw, StandardCharsets.UTF_8));
+            if (patch == null || !patch.isObject()) {
+                WebHttp.respondJson(exchange, 400, errorJson("请求体应为 JSON 对象"));
+                return;
+            }
+            dev.duo.harness.llm.LlmConfigFile.writeLlmSection(configFile,
+                    patchedLlmNode(configFile, patch));
+            WebHttp.respondJson(exchange, 200, "{\"ok\":true,\"restartRequired\":true}");
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // 畸形 JSON 就近 400（客户端错误不进 500 日志，审查轴三）
+            WebHttp.respondJson(exchange, 400, errorJson("请求体不是合法 JSON: " + e.getOriginalMessage()));
+        } catch (dev.duo.harness.core.api.PluginException e) {
+            // 写回校验/白名单外字段点名（400，原文件不动）
+            WebHttp.respondJson(exchange, 400, errorJson(e.getMessage()));
+        }
+        // 其余 IOException（磁盘等）沿 routeHandler 兜底 500 + 日志
+    }
+
+    /** 统一错误载荷形态（error 字段单键）。 */
+    private String errorJson(String message) {
+        try {
+            return WebHttp.JSON.writeValueAsString(
+                    WebHttp.JSON.createObjectNode().put("error", message));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException impossible) {
+            throw new IllegalStateException("单键对象序列化不可失败", impossible);
+        }
+    }
+
+    /**
+     * PUT 写回节点合成：以文件现 llm 段为基线，patch 在场字段覆盖（absent/null 保留；
+     * apiKey 空串保留原值）。models 整组替换（须为非空字符串数组——坏条目由写回
+     * 校验点名）。
+     */
+    private JsonNode patchedLlmNode(Path configFile, JsonNode patch) {
+        // 永不静默（审查轴二）：写回面白名单外字段（effort/systemPrompt/vision/retry 等）
+        // 拒收点名 400——静默丢弃会让调用方误以为已写入
+        var managed = java.util.Set.of("baseUrl", "apiKey", "model", "provider", "models");
+        var unknown = new java.util.ArrayList<String>();
+        patch.fieldNames().forEachRemaining(f -> {
+            if (!managed.contains(f)) {
+                unknown.add(f);
+            }
+        });
+        if (!unknown.isEmpty()) {
+            throw new dev.duo.harness.core.api.PluginException("不支持写回的字段: "
+                    + String.join(", ", unknown) + "（可写: baseUrl/apiKey/model/provider/models）");
+        }
+        JsonNode base = dev.duo.harness.llm.LlmConfigFile.readLlmNode(configFile);
+        ObjectNode node = base != null && base.isObject()
+                ? ((ObjectNode) base).deepCopy()
+                : WebHttp.JSON.createObjectNode();
+        copyIfPresent(node, patch, "baseUrl");
+        JsonNode key = patch.get("apiKey");
+        if (key != null && key.isTextual() && !key.asText().isBlank()) {
+            node.put("apiKey", key.asText().strip());
+        }
+        copyIfPresent(node, patch, "model");
+        copyIfPresent(node, patch, "provider");
+        JsonNode models = patch.get("models");
+        if (models != null && !models.isNull()) {
+            if (!models.isArray()) {
+                throw new dev.duo.harness.core.api.PluginException("llm.models 非法: 应为模型名字符串数组");
+            }
+            node.set("models", models.deepCopy());
+        }
+        return node;
+    }
+
+    /** absent/null 字段保留现值；空白文本视同保留（与 apiKey 空=保留同口径）。 */
+    private void copyIfPresent(ObjectNode node, JsonNode patch, String field) {
+        JsonNode value = patch.get(field);
+        if (value == null || value.isNull()) {
+            return;
+        }
+        if (value.isTextual() && value.asText().isBlank()) {
+            return;
+        }
+        node.set(field, value.deepCopy());
+    }
+
+    /** GET 载荷：文件面配置（apiKey 只回已配置布尔；provider/models/model + effort 映射说明）。 */
+    private String llmConfigJson() {
+        Path configFile = dev.duo.harness.llm.LlmConfigFile.path();
+        JsonNode llm = dev.duo.harness.llm.LlmConfigFile.readLlmNode(configFile);
+        ObjectNode out = WebHttp.JSON.createObjectNode();
+        String provider = llm != null && llm.hasNonNull("provider")
+                ? llm.get("provider").asText() : "openai-compat";
+        out.put("provider", provider);
+        out.put("baseUrl", llm != null && llm.hasNonNull("baseUrl") ? llm.get("baseUrl").asText() : "");
+        out.put("apiKeySet", llm != null && llm.hasNonNull("apiKey")
+                && !llm.get("apiKey").asText().isBlank());
+        out.put("model", llm != null && llm.hasNonNull("model") ? llm.get("model").asText() : "");
+        var models = out.putArray("models");
+        if (llm != null && llm.hasNonNull("models") && llm.get("models").isArray()) {
+            llm.get("models").forEach(m -> models.add(m.asText()));
+        }
+        out.put("effortNote", dev.duo.harness.llm.LlmConfig.effortNote(provider));
+        out.put("effortLevels", String.join(",", dev.duo.harness.llm.LlmConfig.EFFORT_LEVELS));
+        return out.toString();
     }
 
     /**

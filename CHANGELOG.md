@@ -6,6 +6,7 @@
 
 ### Added
 
+- **LLM 配置查看与写回（M38 工单 02，ADR-0040 决策四）**：`GET/PUT /api/llm-config`——GET 返回文件面配置（provider/baseUrl/model/模型白名单；**apiKey 只回已配置布尔，键值本体零回显**）；PUT 结构化写回 `~/.duo/config.yml` 的 llm 段（可写面 = baseUrl/apiKey/model/provider/models 五字段；白名单外字段点名 400 拒收——永不静默；apiKey 空 = 保留原值），**非 llm 段字节级保留**（llm 段文本手术）、写回前经临时文件 load 全规则校验（boot 怎么读就怎么验）后原子改名不半写；**重启生效**（响应 restartRequired=true，执行链热重建不做）。思考等级不在写回面（yml 不解析 effort——运行时 `/effort` 切换，既有语义）
 - **模型/思考实时切换升双面（M38 工单 01，ADR-0040 决策三）**：`/model`、`/effort` 从 CLI 专属升为任意呈现位（ANY）——Web 面斜杠即可切模型（llm.models 白名单）与思考等级（off/low/medium/high），换链「下一轮对话生效」语义与 CLI 一致，`model/intent`、`model/effort` 事件照发；**本呈现位独立**（Web 切只影响 Web 执行链、CLI 切只影响 CLI 链——新增 `modelSwitch` 登记表服务按发起呈现位取控制器，跨呈现位互不波及）；纯 CLI 部署行为零变化
 
 ## 1.3.0（2026-10-05）
