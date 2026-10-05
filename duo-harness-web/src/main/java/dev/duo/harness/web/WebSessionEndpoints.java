@@ -40,13 +40,38 @@ final class WebSessionEndpoints {
      * 供给者未装配/创建失败 → 500，不断连接。该标签 turn 执行中 409——换绑会关闭
      * 正在写入的会话（换绑与重建 agent 是同一动作两面，BUG-20260914-01 教训）。 */
     void handleSessionNew(HttpExchange exchange) throws IOException {
-        byte[] discarded = WebHttp.readBodyLimited(exchange); // 请求体必须清空（keep-alive 连接复用正确性）
-        if (discarded == null) {
+        byte[] raw = WebHttp.readBodyLimited(exchange); // 请求体必须读尽（keep-alive 连接复用正确性）
+        if (raw == null) {
             WebHttp.respondEmpty(exchange, 413);
             return;
         }
         if (!WebHttp.requirePost(exchange)) {
             return;
+        }
+        // 可选 workspace 参数（M38 工单 07，ADR-0040 决策六）：创建会话时绑定工作区目录——
+        // 通用工具标准形态（ZCode/Cursor 同款）。安全口径：目录由用户本机显式选择/输入，
+        // 档位治理（只读/区内写）随所选目录走——与 CLI `cd` 到任意目录等价，不做白名单。
+        // 未带/空白 = 回落进程 cwd（CLI 直跑兼容、既有调用零变化）。
+        java.nio.file.Path workspace = null;
+        if (raw.length > 0) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode body =
+                        WebHttp.JSON.readTree(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
+                com.fasterxml.jackson.databind.JsonNode ws = body == null ? null : body.get("workspace");
+                if (ws != null && ws.isTextual() && !ws.asText().isBlank()) {
+                    workspace = java.nio.file.Path.of(ws.asText().strip())
+                            .toAbsolutePath().normalize();
+                    if (!java.nio.file.Files.isDirectory(workspace)) {
+                        WebHttp.respondJson(exchange, 400, "{\"error\":\"工作区目录不存在: "
+                                + workspace + "\"}");
+                        return;
+                    }
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                WebHttp.respondJson(exchange, 400, "{\"error\":\"请求体不是合法 JSON: "
+                        + e.getOriginalMessage() + "\"}");
+                return;
+            }
         }
         TabContext tab = face.tabs.resolveTab(exchange);
         if (tab == null) {
@@ -59,7 +84,7 @@ final class WebSessionEndpoints {
             return;
         }
         try {
-            face.tabs.newSessionFor(tab);
+            face.tabs.newSessionFor(tab, workspace);
         } catch (Exception e) {
             // 异常细节仅服务端日志留痕——错误响应不回显内部消息（M10-02 脱敏）
             log.warn("新会话创建失败", e);
@@ -68,7 +93,11 @@ final class WebSessionEndpoints {
         } finally {
             tab.busy.set(false);
         }
-        WebHttp.respondJson(exchange, 200, "{\"id\":\"" + tab.session.id() + "\"}");
+        // cwd 回显：前端建完即可见新会话工作区（deferred 会话 cwd 即落版本头）
+        var out = WebHttp.JSON.createObjectNode();
+        out.put("id", tab.session.id());
+        out.put("cwd", tab.session.cwd() != null ? tab.session.cwd().toString() : "");
+        WebHttp.respondJson(exchange, 200, out.toString());
     }
 
     /** 会话列表（侧栏）：修改时间倒序。 */
@@ -381,6 +410,8 @@ final class WebSessionEndpoints {
         String currentTitle = tab.session.title();
         root.put("currentId", currentId);
         root.put("currentTitle", currentTitle != null ? currentTitle : "新会话");
+        // 当前会话工作区（M38 工单 07）：标题区展示用；deferred 会话可能未记录（空串）
+        root.put("currentCwd", tab.session.cwd() != null ? tab.session.cwd().toString() : "");
         return root.toString();
     }
 }

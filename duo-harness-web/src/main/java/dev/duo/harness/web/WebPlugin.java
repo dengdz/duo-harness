@@ -315,8 +315,9 @@ public final class WebPlugin implements Plugin<JsonNode> {
         // /new：全新会话；/switch：换绑既有会话；新标签首请求：懒创建——三者换绑后都经
         // 会话变更回调重建 agent（ToolCallingAgent 持有 final 会话引用，不重建即分脑）。
         // 回调**返回**新 agent 归标签上下文（M24 工单 07）——不再有全局单槽 setAgent
-        face.onNewSession(() -> Session.createDeferred(DuoHome.resolve().resolveDir("agent-sessions"),
-                Cwd.path()));
+        // M38 工单 07：/new 可带工作区（端点校验后传入）；null 回落进程 cwd（CLI 直跑兼容）
+        face.onNewSession(ws -> Session.createDeferred(DuoHome.resolve().resolveDir("agent-sessions"),
+                ws != null ? ws : Cwd.path()));
         // 会话变更回调是单回调槽（覆盖式 setter，非多播）——全部换绑动作必须合并在这一次
         // 注册里。教训（BUG-20260916-01）：第二处注册会覆盖"换绑重建 agent"，切回分脑
         //（agent 写已 close 的旧会话，发消息必报错）。标题生成（工单 M13-06）随换绑同源

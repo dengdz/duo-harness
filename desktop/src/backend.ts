@@ -222,6 +222,9 @@ export interface StartBackendOptions {
   port?: number;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  /** 后端子进程工作目录（M38 工单 07：壳启动时选的工作区注入 spawn cwd——后端
+   *  Cwd 自然继承即默认会话工作区；缺省 = 继承壳进程 cwd，CLI 直跑兼容）。 */
+  cwd?: string;
   spawnFn?: SpawnFn;
 }
 
@@ -268,6 +271,7 @@ export function startBackend(options: StartBackendOptions): Promise<BackendHandl
     const child = spawnFn(options.javaPath, ['-jar', options.jarPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...options.env, DUO_WEB_PORT: String(port) },
+      ...(options.cwd ? { cwd: options.cwd } : {}), // 工作区注入（M38-07）：缺省继承壳进程 cwd
     });
     let stderrTail = '';
     let settled = false;

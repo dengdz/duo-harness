@@ -116,7 +116,7 @@ class WebFaceTabTest {
             ctx.as(AnswersView.class).answers().register(ctx,
                     new dev.duo.harness.agent.AuditingAnswerer(face::currentSession, webAnswerer));
         }
-        face.onNewSession(() -> Session.create(sessionsDir()));
+        face.onNewSession(ws -> Session.create(sessionsDir()));
         face.onSessionChanged(changed -> {
             changedSessions.add(changed);
             Function<Session, ChatAgent> factory = tabAgentFactory;

@@ -39,7 +39,7 @@ let tray: Tray | null = null;
 let quitting = false;
 let quitConfirming = false; // 探活/征询窗口内的二次退出重入守卫（Cmd-Q 连按、托盘双击）
 let backendStopRequested = false; // 已对后端发起 stop（崩溃判定的互斥位，工单 07）
-let launchParams: { javaPath: string; jarPath: string } | null = null; // 重启复用的拉起参数（工单 07）
+let launchParams: { javaPath: string; jarPath: string; cwd?: string } | null = null; // 重启复用的拉起参数（工单 07；cwd = 工作区，M38-07）
 
 /** 关窗拦截只在 darwin 生效（mac 惯例关窗驻留）；其他平台关窗即退出（window-all-closed 兜底）。 */
 const interceptHideOnClose = process.platform === 'darwin';
@@ -63,6 +63,48 @@ app.on('second-instance', () => {
 /** 数据目录解析（DUO_HOME > ~/.duo——与后端 DuoHome 环境级优先级对齐；JVM 内 sysprop 测试口对壳不可见）。 */
 function dataDir(): string {
   return process.env.DUO_HOME || path.join(os.homedir(), '.duo');
+}
+
+/* ===== 工作区选择（M38 工单 07，ADR-0040 决策六）：会话绑定工作区目录，创建时可选
+   ——壳启动时弹目录框（记住上次：defaultPath 定位；取消 = 沿用上次/进程 cwd），选中
+   目录注入 spawn cwd（后端 Cwd 自然继承即默认会话工作区）；应用菜单「新建会话（选择
+   工作区）」→ 目录框 → 注入页面 __duoWorkspacePicked 回填待确认。--smoke 跳框。 ===== */
+
+/** 上次工作区记忆文件（一行绝对路径；数据目录内，随 DUO_HOME 隔离）。 */
+function workspaceMemoryFile(): string {
+  return path.join(dataDir(), 'desktop-workspace.txt');
+}
+
+function lastWorkspace(): string | null {
+  try {
+    const line = fs.readFileSync(workspaceMemoryFile(), 'utf8').trim();
+    return line && fs.existsSync(line) && fs.statSync(line).isDirectory() ? line : null;
+  } catch {
+    return null; // 无记忆/读失败 = 首次或坏记录：启动必弹框
+  }
+}
+
+function rememberWorkspace(dir: string): void {
+  try {
+    fs.mkdirSync(path.dirname(workspaceMemoryFile()), { recursive: true });
+    fs.writeFileSync(workspaceMemoryFile(), dir + '\n', 'utf8');
+  } catch (err) {
+    console.error(`duo:shell workspace memory write failed: ${err}`);
+  }
+}
+
+/** 目录框（记住上次定位）：返回选中目录；取消 = null（调用方沿用既有 cwd）。 */
+async function pickWorkspace(defaultPath: string | null): Promise<string | null> {
+  const result = await dialog.showOpenDialog({
+    title: '选择工作区目录（本会话的读写与工具操作根）',
+    defaultPath: defaultPath ?? os.homedir(),
+    properties: ['openDirectory', 'createDirectory'],
+    buttonLabel: '用此目录',
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
 }
 
 /** 菜单/托盘点击回调兜底：编排抛错进对话框而非主进程 uncaughtException 崩壳。 */
@@ -192,6 +234,12 @@ function createWindow(url: string): BrowserWindow {
     show: false,
   });
   win.once('ready-to-show', () => win.show());
+  // 页面环境提示注入（M38-07）：home 路径供 chatHint 工作区缩 ~ 显示
+  win.webContents.on('did-finish-load', () => {
+    void win.webContents.executeJavaScript(
+      `window.duoHomeHint = ${JSON.stringify(os.homedir())};`,
+    );
+  });
   // 关窗拦截（工单 03，仅 darwin）：非退出流程一律隐藏不退出（mac 惯例，dock/托盘保持）
   win.on('close', (event) => {
     if (interceptHideOnClose && shouldInterceptClose(quitting, win as MainWindowLike | null)) {
@@ -241,6 +289,25 @@ function setupAppMenu(): void {
       { role: 'editMenu' },
       { role: 'viewMenu' },
       { role: 'windowMenu' },
+      {
+        // 新建会话选工作区（M38 工单 07）：目录框 → 注入页面 __duoWorkspacePicked
+        // 回填工作区输入条待确认（不静默创建——目录错了看得见）
+        label: '新建会话（选择工作区）',
+        click: safely(() => {
+          const win = window;
+          if (!win || win.isDestroyed()) {
+            throw new Error('主窗未就绪，无法新建会话');
+          }
+          void pickWorkspace(lastWorkspace()).then((dir) => {
+            if (!dir || !window || window.isDestroyed()) {
+              return;
+            }
+            void window.webContents.executeJavaScript(
+              `window.__duoWorkspacePicked && window.__duoWorkspacePicked(${JSON.stringify(dir)})`,
+            );
+          });
+        }),
+      },
       { label: '打开数据目录', click: safely(actions.openDataDir) },
     ]),
   );
@@ -317,10 +384,24 @@ app.whenReady().then(async () => {
     console.log(`duo:shell java=${javaPath} major=${major}`);
     const jarPath = resolveJarPath();
     console.log(`duo:shell jar=${jarPath}`);
-    launchParams = { javaPath, jarPath }; // 重启复用（工单 07）
+    // 工作区选择（M38 工单 07）：记住上次定位目录框，取消 = 沿用上次/进程 cwd；
+    // --smoke 跳框（自动化不弹模态，M37-02 模式③）
+    let workspace: string | null = null;
+    if (!smoke) {
+      const previous = lastWorkspace();
+      workspace = await pickWorkspace(previous);
+      if (workspace) {
+        rememberWorkspace(workspace);
+      }
+    }
+    const cwd = workspace ?? lastWorkspace() ?? undefined;
+    if (cwd) {
+      console.log(`duo:shell workspace=${cwd}`);
+    }
+    launchParams = { javaPath, jarPath, cwd }; // 重启复用（工单 07；含工作区）
     const port = await findFreePort();
     console.log(`duo:shell port=${port}`);
-    backend = await startBackend({ jarPath, javaPath, port });
+    backend = await startBackend({ jarPath, javaPath, port, cwd });
     backendStopRequested = false;
     monitorBackend(backend);
     console.log(`duo:shell ready url=${backend.url}`);

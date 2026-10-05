@@ -133,7 +133,7 @@ class WebFaceTest {
         }
         // 会话变更接线：/new 与 /switch 换绑后回调（装配层职责，骨架用例记录变更）——
         // 生产同款返回新 agent 归标签上下文（M24 工单 07），测试用换绑会话的同款脚本
-        face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
+        face.onNewSession(ws -> Session.create(tempDir.resolve("web-sessions")));
         face.onSessionChanged(changed -> {
             changedSessions.add(changed);
             return scriptedAgent(changed, "ok");
@@ -743,7 +743,7 @@ class WebFaceTest {
         face = WebFace.start(0, ctx, tools, session,
                 (userText, listener) -> new AgentReply("ok", List.of(), true), null, null,
                 tempDir.resolve("web-sessions"), 3);
-        face.onNewSession(() -> Session.create(tempDir.resolve("web-sessions")));
+        face.onNewSession(ws -> Session.create(tempDir.resolve("web-sessions")));
         face.onSessionChanged(changed -> {
             changedSessions.add(changed);
             return scriptedAgent(changed, "ok");
@@ -916,7 +916,7 @@ class WebFaceTest {
         Session current = Session.create(listed);
         current.append(SessionEvent.userMessage("当前会话首条")); // 头-only 文件被列表防御过滤（M30-05）
         start(current, scriptedAgent(current, "ok"));
-        face.onNewSession(() -> Session.create(listed));
+        face.onNewSession(ws -> Session.create(listed));
 
         JsonNode json = new ObjectMapper().readTree(get("/api/sessions"));
         assertTrue(json.path("sessions").isArray() && json.path("sessions").size() >= 1, "返回会话数组");

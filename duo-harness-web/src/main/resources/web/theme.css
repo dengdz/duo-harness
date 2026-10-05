@@ -394,6 +394,33 @@
   .at-item.selected { background: var(--brand-tint); }
   .at-item .at-dir { color: var(--brand-strong); font-weight: 600; }
   .at-empty { padding: 6px 10px; font-size: 11px; color: var(--text-dim); }
+
+  /* ===== §样式层 · 工作区选择条（M38 工单 07，ADR-0040 决策六）：新建会话绑定
+     工作区目录——composer 顶上弹出小卡（@补全同位同形态），壳菜单选目录回填预填 ===== */
+  .ws-pick {
+    position: absolute; left: 12px; right: 12px; bottom: calc(100% + 6px);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow-lv2); z-index: 35; padding: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .ws-pick[hidden] { display: none; }
+  .ws-pick-title { font-size: 12px; color: var(--text-dim); }
+  .ws-pick input {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface-2); color: var(--text); font-size: 12px;
+    font-family: var(--mono);
+  }
+  .ws-pick input:focus { outline: none; border-color: var(--brand); }
+  .ws-pick-ops { display: flex; justify-content: flex-end; gap: 8px; }
+  .ws-pick-ops button {
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: transparent; color: var(--text-dim); font-size: 12px; cursor: pointer;
+  }
+  .ws-pick-ops button:hover { border-color: var(--brand); color: var(--brand-strong); }
+  .ws-pick-ops .ws-create {
+    background: var(--brand); color: var(--on-brand); border-color: var(--brand);
+  }
+  .ws-pick-ops .ws-create:hover { background: var(--brand-strong); color: var(--on-brand); }
   #input {
     flex: 1; padding: 10px 6px 4px; border: none;
     background: transparent; color: var(--text);

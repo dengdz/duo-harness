@@ -290,8 +290,9 @@ public final class WebFace {
         tabs.onSessionChanged(onChanged);
     }
 
-    /** 注册 /new 的供给者（装配层接线；供 WebPlugin 调用，包级可见）。 */
-    void onNewSession(java.util.function.Supplier<Session> supplier) {
+    /** 注册 /new 的供给者（装配层接线；供 WebPlugin 调用，包级可见；入参 = 会话
+     *  工作区，null = 进程 cwd 兜底——M38 工单 07）。 */
+    void onNewSession(Function<Path, Session> supplier) {
         tabs.onNewSession(supplier);
     }
 

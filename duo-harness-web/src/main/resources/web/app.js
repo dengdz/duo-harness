@@ -2166,24 +2166,65 @@ const app = (() => {
   composerEl.addEventListener('dragover', (e) => e.preventDefault());
   composerEl.addEventListener('drop', (e) => { e.preventDefault(); handleAttachmentFiles(e.dataTransfer.files); });
 
-  // ---- 新话题：无刷新换绑（工单 03）——断 SSE → POST new → 空态反馈 → 重连收新会话尾部快照 ----
-  $('#newSession').addEventListener('click', async () => {
+  // ---- 新话题（M38 工单 07，ADR-0040 决策六）：工作区选择条——新建会话绑定工作区
+  // 目录（留空 = 回落后端进程 cwd）；壳在场经应用菜单选目录回填（__duoWorkspacePicked
+  // 预填待确认）。创建成功 cwd 回显入 chatHint ----
+  let currentCwd = '';
+  const wsPick = $('#wsPick');
+  const wsInput = $('#wsPath');
+  function shortenCwd(p) {
+    const home = window.duoHomeHint; // 壳注入的 home（纯浏览器无注入：原样显示）
+    return home && home !== '/' && p.startsWith(home) ? '~' + p.slice(home.length) : p;
+  }
+  function renderChatHint() {
+    $('#chatHint').textContent = '会话 ' + currentSessionId
+      + (currentCwd ? ' · 📁 ' + shortenCwd(currentCwd) : '')
+      + ' · /new 开新话题';
+  }
+  function openWsPick(prefill) {
+    wsInput.value = prefill !== undefined ? prefill : currentCwd;
+    wsPick.hidden = false;
+    wsInput.focus();
+    wsInput.select();
+  }
+  async function createWithWorkspace(ws) {
     sse.disconnect();
     try {
-      const res = await fetch('/api/session/new', { method: 'POST' });
+      const res = await fetch('/api/session/new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ws ? { workspace: ws } : {}),
+      });
       if (!res.ok) {
-        showToast('新建会话失败（HTTP ' + res.status + '）');
+        const body = await res.json().catch(() => null);
+        showToast((body && body.error) || '新建会话失败（HTTP ' + res.status + '）');
         sse.connect(); // 换绑未发生：恢复当前会话的事件流
         return;
       }
+      const ack = await res.json().catch(() => ({}));
+      if (ack.cwd) currentCwd = ack.cwd;
+      wsPick.hidden = true;
       render.resetToHero(); // 立即空态反馈；回放完成后 afterReplay 幂等兜底
       $('#input').value = '';
+      renderChatHint();
       sse.connect();
     } catch (err) {
       sse.connect();
       showToast('新建会话失败：' + errText(err));
     }
+  }
+  $('#newSession').addEventListener('click', () => openWsPick());
+  $('#wsCancel').addEventListener('click', () => { wsPick.hidden = true; });
+  $('#wsCreate').addEventListener('click', () => createWithWorkspace(wsInput.value.trim()));
+  wsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') createWithWorkspace(wsInput.value.trim());
+    if (e.key === 'Escape') wsPick.hidden = true;
   });
+  // 壳目录框回填（desktop 菜单「新建会话·选工作区」经 executeJavaScript 注入调用）：
+  // 预填待确认——目录错了看得见，不静默创建
+  window.__duoWorkspacePicked = (path) => {
+    openWsPick(path);
+  };
 
   // ---- 侧栏：列出 + 切换 + 当前高亮 ----
   function relativeTime(ms) {
@@ -2235,6 +2276,9 @@ const app = (() => {
     // ZCode draft 同语义）；currentTitle 缺省「新会话」，标签页标题同源
     if (data.currentId) currentSessionId = data.currentId;
     document.title = data.currentTitle || currentSessionId;
+    if (typeof data.currentCwd === 'string') {
+      currentCwd = data.currentCwd; // M38-07：当前会话工作区（标题区展示）
+    }
     for (const s of data.sessions) {
       const item = document.createElement('div');
       item.className = 'sidebar-item' + (s.current ? ' active' : '') + (s.occupied ? ' occupied' : '');
@@ -2271,7 +2315,7 @@ const app = (() => {
       });
       list.appendChild(item);
     }
-    $('#chatHint').textContent = '会话 ' + currentSessionId + ' · /new 开新话题';
+    renderChatHint(); // 会话 id + 工作区（M38-07）+ /new 提示
     // 切换/重放后把当前高亮项滚入视野（block:nearest——已可见时不动，验收反馈①）
     const active = list.querySelector('.sidebar-item.active');
     if (active) active.scrollIntoView({ block: 'nearest' });

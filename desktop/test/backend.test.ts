@@ -176,6 +176,27 @@ describe('startBackend', () => {
     expect(handle.stderrTail()).toContain('warn line'); // 崩溃诊断源（工单 07）：句柄上可取 stderr 尾部
   });
 
+  it('cwd 选项透传 spawn（M38-07 工作区注入）；缺省不设 cwd 继承壳进程', async () => {
+    const { child } = mockChild();
+    const spawnFn = vi.fn(() => child);
+    const pending = startBackend({ ...base, port: 18974, cwd: '/tmp/ws-a', spawnFn });
+    child.stdout!.write(`${ANCHOR_PREFIX}http://127.0.0.1:18974/?token=ff\n`);
+    await pending;
+    expect(spawnFn).toHaveBeenCalledWith(
+      'java',
+      ['-jar', '/jars/duo-harness-1.2.0.jar'],
+      expect.objectContaining({ cwd: '/tmp/ws-a' }),
+    );
+    // 缺省形态：spawn options 无 cwd 键（undefined 时展开零属性——继承壳进程 cwd）
+    const { child: child2 } = mockChild();
+    const spawnFn2 = vi.fn(() => child2);
+    const pending2 = startBackend({ ...base, port: 18975, spawnFn: spawnFn2 });
+    child2.stdout!.write(`${ANCHOR_PREFIX}http://127.0.0.1:18975/?token=ff\n`);
+    await pending2;
+    const opts = spawnFn2.mock.calls[0][2] as Record<string, unknown>;
+    expect('cwd' in opts).toBe(false);
+  });
+
   it('锚点前的所有人读行被忽略（壳认锚点不认文案）', async () => {
     const { child } = mockChild();
     const pending = startBackend({

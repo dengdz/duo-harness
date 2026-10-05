@@ -7,10 +7,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /**
  * 标签会话域（M28 工单 06 从 WebFace 拆出）：每浏览器标签一份会话绑定（session/agent/
@@ -33,9 +33,10 @@ final class WebTabs {
     private final Object bindLock = new Object();
     /** 匿名上下文（start 传入的初始 session；无 tabId 请求的归属）。 */
     private final TabContext defaultTab;
-    /** 新会话供给者（/new 每次给全新会话）。 */
-    private volatile Supplier<Session> newSessionSupplier =
-            () -> { throw new IllegalStateException("新会话供给者未装配"); };
+    /** 新会话供给者（/new 每次给全新会话；入参 = 会话工作区，null = 进程 cwd 兜底——
+     *  M38 工单 07：创建时可选工作区，懒创建/无参 /new 走 null）。 */
+    private volatile Function<Path, Session> newSessionSupplier =
+            ws -> { throw new IllegalStateException("新会话供给者未装配"); };
     /**
      * 会话变更回调（/new 与 /switch 与新标签创建共用）：装配层按入参会话重建 agent 并
      * **返回**——ToolCallingAgent 持有 final 会话引用，不重建即分脑（消息落旧会话、
@@ -85,8 +86,8 @@ final class WebTabs {
         this.sessionChangedCallback = java.util.Objects.requireNonNull(onChanged, "onChanged");
     }
 
-    /** 注册 /new 的供给者（装配层接线）。 */
-    void onNewSession(Supplier<Session> supplier) {
+    /** 注册 /new 的供给者（装配层接线；入参 = 会话工作区，null = 进程 cwd 兜底）。 */
+    void onNewSession(Function<Path, Session> supplier) {
         this.newSessionSupplier = java.util.Objects.requireNonNull(supplier, "supplier");
     }
 
@@ -139,7 +140,7 @@ final class WebTabs {
             }
             Session fresh = null;
             try {
-                fresh = newSessionSupplier.get();
+                fresh = newSessionSupplier.apply(null); // 懒创建不带工作区参数：进程 cwd 兜底
                 tab = new TabContext(tabId, tabSeq.getAndIncrement(), fresh);
                 bindTab(tab, fresh);
                 tab.agent = sessionChangedCallback.apply(fresh);
@@ -182,9 +183,15 @@ final class WebTabs {
         }
     }
 
-    /** 换绑标签会话并经回调重建该标签的 agent（/new 语义；回调返回值即新 agent）。 */
+    /** 换绑标签会话并经回调重建该标签的 agent（/new 语义；回调返回值即新 agent）。
+     *  无参形态 = 进程 cwd 兜底（CLI 直跑兼容、既有调用面零变化）。 */
     void newSessionFor(TabContext tab) {
-        Session fresh = newSessionSupplier.get();
+        newSessionFor(tab, null);
+    }
+
+    /** 同上，带会话工作区（M38 工单 07）：null 回落进程 cwd；路径合法性由端点校验后传入。 */
+    void newSessionFor(TabContext tab, java.nio.file.Path workspace) {
+        Session fresh = newSessionSupplier.apply(workspace);
         bindTab(tab, fresh);
         tab.agent = sessionChangedCallback.apply(fresh);
     }

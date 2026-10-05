@@ -39,6 +39,16 @@
          左侧档位选择器、右侧模型/思考两枚独立下拉与 ↑ 发送 -->
     <div class="composer">
       <div id="atDropdown" hidden></div>
+      <!-- 工作区选择条（M38 工单 07，ADR-0040 决策六）：新建会话绑定工作区目录——
+           留空回落后端进程 cwd；壳在场经应用菜单选目录回填（__duoWorkspacePicked） -->
+      <div id="wsPick" class="ws-pick" hidden>
+        <div class="ws-pick-title">新建会话 · 工作区</div>
+        <input id="wsPath" placeholder="工作区目录绝对路径（留空 = 默认目录）">
+        <div class="ws-pick-ops">
+          <button id="wsCancel" type="button">取消</button>
+          <button id="wsCreate" type="button" class="ws-create">创建会话</button>
+        </div>
+      </div>
       <div id="attDock"></div>
       <input id="input" placeholder="输入消息，回车发送…（/技能名 直调）">
       <div class="composer-toolbar">
