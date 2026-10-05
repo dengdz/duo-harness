@@ -2859,6 +2859,28 @@ sse.connect();
   });
 })();
 
+/* ===== §4.4b 选择器菜单锚定助手（M38 用户裁定 ZCode 同构）：菜单底贴触发按钮顶、
+   水平对齐按钮左缘（溢出卡片右缘时翻转右对齐）——CSS 固定锚改打开时按按钮实测
+   几何动态定位。顶层函数：§4.5 档位菜单与 §4.6 模型/思考菜单共用（零 IIFE 依赖）。 ===== */
+function anchorMenuToButton(menu, btn) {
+  const composer = document.querySelector('.composer');
+  if (!composer) return;
+  menu.hidden = false; // 先显示才能量宽
+  menu.style.visibility = 'hidden'; // 定位后再显形（防默认位闪帧）
+  const cr = composer.getBoundingClientRect();
+  const br = btn.getBoundingClientRect();
+  menu.style.bottom = (cr.bottom - br.top + 5) + 'px'; // 菜单底贴按钮顶（间距 5px）
+  menu.style.left = 'auto';
+  menu.style.right = 'auto';
+  const menuW = menu.offsetWidth;
+  if (br.left + menuW > cr.right - 8) {
+    menu.style.right = (cr.right - br.right) + 'px'; // 右缘按钮：菜单右对齐按钮右缘
+  } else {
+    menu.style.left = (br.left - cr.left) + 'px';
+  }
+  menu.style.visibility = '';
+}
+
 /* ===== §4.5 四态档位选择器（M38 工单 03，ADR-0040 决策一）：composer 左下角
    四态切换（计划模式/变更前确认/自动编辑/完全访问）——点选经斜杠分发触发 /plan
    或 /permission <档>（既有 ANY busySafe 双面命令），permission/mode 与计划态事件
@@ -2902,7 +2924,13 @@ sse.connect();
     const btn = document.getElementById('modeSelector');
     const menu = document.getElementById('modeMenu');
     if (!btn || !menu) return;
-    btn.addEventListener('click', () => { menu.hidden = !menu.hidden; });
+    btn.addEventListener('click', () => {
+      if (menu.hidden) {
+        anchorMenuToButton(menu, btn); // ZCode 同构：菜单底贴按钮顶（§4.4b）
+      } else {
+        menu.hidden = true;
+      }
+    });
     menu.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-mode]');
       if (!b) return;
@@ -3000,7 +3028,7 @@ sse.connect();
       if (menu.hidden) {
         const other = document.getElementById(otherMenuId);
         if (other) other.hidden = true;
-        menu.hidden = false;
+        anchorMenuToButton(menu, btn); // ZCode 同构：菜单底贴按钮顶（§4.4b）
         if (onOpen) onOpen();
       } else {
         menu.hidden = true;
