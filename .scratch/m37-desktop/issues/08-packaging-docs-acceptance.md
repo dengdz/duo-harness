@@ -12,12 +12,12 @@ M37 收口四件套。其一打包：electron-builder 出 macOS 包（app/dmg；
 
 ## Status
 
-in-progress（2026-10-04 实现完成、双轴审查修复毕、打包态三项程序化实证；done 判据 = 用户按 [acceptance.md](../acceptance.md) 手动验收通过）
+in-progress（2026-10-04 实现；**2026-10-05 用户裁定「双击即用」打包路线取消——electron-builder 链退役、npm start 为唯一使用形态，打包项转 removed**；图标/文档/验收件部分有效，done 判据 = 用户按 [acceptance.md](../acceptance.md) 手动验收通过）
 
 ## Checklist
 
 - [x] 应用图标首版设计落位（「哆」字标黑底 ZCode 样式——用户裁定两连；多尺寸 icns + 托盘模板版；渲染图 [resources/icon-1024.png](../../desktop/resources/icon-1024.png)）
-- [x] electron-builder mac 包产出并双击启动走通全能力（.app + zip；beforeBuild 钩子拷最新 jar 单文件入包——三版本冗余 67MB→22MB）
+- [x] ~~electron-builder mac 包产出~~（2026-10-05 用户裁定打包路线取消，npm start 为唯一使用形态；打包链退役——electron-builder.yml/钩子/devDep 移除）
 - [x] README 桌面段 + 交货指南续章（新页《桌面壳构建与打包》+ 侧栏两处）+ 已知限制三条
 - [x] 端到端验收件成文 + S4 五场景清单（[acceptance.md](../acceptance.md)）
 - [x] 作者自跑全流程留证据；逮出问题修复后验收件同 diff 更新
